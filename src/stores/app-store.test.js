@@ -1,60 +1,87 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-function createMatchMediaMock(prefersDark) {
-  return vi.fn().mockImplementation((query) => ({
-    matches: query === "(prefers-color-scheme: dark)" ? prefersDark : false,
-    media: query,
-    onchange: null,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  }));
-}
+import { createAppStore, getElectronTheme, getInitialTheme } from "./app-store";
 
-async function loadStore({ systemTheme, prefersDark = false } = {}) {
-  vi.resetModules();
+function createStorage(initialTheme = null) {
+  let value = initialTheme;
 
-  globalThis.window = {
-    electronAPI:
-      systemTheme === undefined ? {} : { getSystemTheme: () => systemTheme },
-    matchMedia: createMatchMediaMock(prefersDark),
+  return {
+    getItem: vi.fn(() => value),
+    setItem: vi.fn((_, nextTheme) => {
+      value = nextTheme;
+    }),
   };
-
-  const { useAppStore } = await import("./app-store");
-  return useAppStore;
 }
 
-afterEach(() => {
-  vi.resetModules();
-  delete globalThis.window;
-});
+function createElectronAPI(theme = null) {
+  return {
+    getSystemTheme: vi.fn(() => theme),
+  };
+}
 
 describe("app store theme behavior", () => {
-  it("initializes from the Electron-provided system theme when available", async () => {
-    const useAppStore = await loadStore({ systemTheme: "dark" });
+  it("prefers a persisted user theme over Electron and OS defaults", () => {
+    const storage = createStorage("dark");
+    const electronAPI = createElectronAPI("light");
+    const matchMedia = vi.fn(() => ({ matches: false }));
 
-    expect(useAppStore.getState().theme).toBe("dark");
-    expect(useAppStore.getState().themeSource).toBe("system");
+    expect(getInitialTheme({ electronAPI, matchMedia, storage })).toBe("dark");
+    expect(electronAPI.getSystemTheme).not.toHaveBeenCalled();
+    expect(matchMedia).not.toHaveBeenCalled();
   });
 
-  it("falls back to prefers-color-scheme when Electron theme is unavailable", async () => {
-    const useAppStore = await loadStore({ prefersDark: true });
+  it("reads the preload-provided system theme when available", () => {
+    const electronAPI = createElectronAPI("dark");
 
-    expect(useAppStore.getState().theme).toBe("dark");
-    expect(useAppStore.getState().themeSource).toBe("system");
+    expect(getElectronTheme(electronAPI)).toBe("dark");
+    expect(electronAPI.getSystemTheme).toHaveBeenCalledTimes(1);
   });
 
-  it("allows a manual toggle and reset back to system theme for the current session", async () => {
-    const useAppStore = await loadStore({ systemTheme: "light" });
+  it("falls back to the Electron system theme before matchMedia", () => {
+    const electronAPI = createElectronAPI("dark");
+    const matchMedia = vi.fn(() => ({ matches: false }));
 
-    useAppStore.getState().toggleTheme();
-    expect(useAppStore.getState().theme).toBe("dark");
-    expect(useAppStore.getState().themeSource).toBe("manual");
+    expect(getInitialTheme({ electronAPI, matchMedia })).toBe("dark");
+    expect(matchMedia).not.toHaveBeenCalled();
+  });
 
-    useAppStore.getState().initializeThemeFromSystem();
-    expect(useAppStore.getState().theme).toBe("light");
-    expect(useAppStore.getState().themeSource).toBe("system");
+  it("falls back to OS preference when storage and Electron theme are unavailable", () => {
+    const matchMedia = vi.fn(() => ({ matches: true }));
+
+    expect(getInitialTheme({ matchMedia })).toBe("dark");
+    expect(matchMedia).toHaveBeenCalledWith("(prefers-color-scheme: dark)");
+  });
+
+  it("store starts with the Electron system theme when no persisted theme exists", () => {
+    const electronAPI = createElectronAPI("dark");
+    const store = createAppStore({ electronAPI });
+
+    expect(store.getState().theme).toBe("dark");
+  });
+
+  it("setTheme updates and persists theme values", () => {
+    const storage = createStorage();
+    const store = createAppStore({ storage });
+
+    store.getState().setTheme("dark");
+    expect(store.getState().theme).toBe("dark");
+    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "dark");
+
+    store.getState().setTheme("light");
+    expect(store.getState().theme).toBe("light");
+    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "light");
+  });
+
+  it("toggleTheme flips and persists in both directions", () => {
+    const storage = createStorage("light");
+    const store = createAppStore({ storage });
+
+    store.getState().toggleTheme();
+    expect(store.getState().theme).toBe("dark");
+    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "dark");
+
+    store.getState().toggleTheme();
+    expect(store.getState().theme).toBe("light");
+    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "light");
   });
 });

@@ -1,26 +1,60 @@
 import { useQuery } from "@tanstack/react-query";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  CommandIcon,
+  DashboardSquare01Icon,
+  Moon02Icon,
+  PaintBrushIcon,
+  Sun02Icon,
+} from "@hugeicons/core-free-icons";
+
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { useAppStore } from "@/stores/app-store";
 
-const stack = [
-  "Electron",
-  "Vite",
-  "React",
-  "Tailwind",
-  "shadcn/ui",
-  "Router",
-  "Zustand",
-  "Query",
+const STACK = [
+  { label: "Electron", href: "https://www.electronjs.org" },
+  { label: "Electron Forge", href: "https://www.electronforge.io" },
+  { label: "React 19", href: "https://react.dev" },
+  { label: "React Router v7", href: "https://reactrouter.com" },
+  { label: "Vite", href: "https://vite.dev" },
+  { label: "Tailwind v4", href: "https://tailwindcss.com" },
+  { label: "shadcn/ui", href: "https://ui.shadcn.com" },
+  { label: "Zustand", href: "https://zustand.docs.pmnd.rs" },
+  { label: "Query", href: "https://tanstack.com/query/latest" },
+];
+
+const DETAILS = [
+  {
+    icon: PaintBrushIcon,
+    title: "radix-maia",
+    description: "Soft, rounded shadcn style with Geist font and Hugeicons.",
+  },
+  {
+    icon: DashboardSquare01Icon,
+    title: "55 components",
+    description: "The full shadcn/ui component set is installed and ready.",
+  },
+  {
+    icon: CommandIcon,
+    title: "Electron shell",
+    description:
+      "Forge, preload bridging, Router, Query, and Zustand stay wired for desktop apps.",
+  },
 ];
 
 function fetchRuntimeVersions() {
@@ -35,11 +69,67 @@ function fetchRuntimeVersions() {
   return window.electronAPI.getVersions();
 }
 
+function GettingStarted() {
+  return (
+    <Accordion type="single" collapsible>
+      <AccordionItem value="quick-start">
+        <AccordionTrigger>Quick start</AccordionTrigger>
+        <AccordionContent>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              Start the Electron renderer, main process, and preload bridge in
+              one command.
+            </p>
+            <div className="rounded-xl bg-muted/50 p-3 font-mono text-xs">
+              <div className="text-muted-foreground">
+                <span className="text-primary">$</span>{" "}
+                <span className="text-foreground">npm start</span>
+              </div>
+            </div>
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+      <AccordionItem value="structure">
+        <AccordionTrigger>Project structure</AccordionTrigger>
+        <AccordionContent>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            {[
+              ["src/app/routes/", "Renderer routes"],
+              ["src/components/ui/", "55 shadcn components"],
+              ["src/main.js", "Electron main process"],
+              ["src/preload.js", "Renderer bridge"],
+            ].map(([path, desc]) => (
+              <div key={path}>
+                <code className="text-xs font-medium">{path}</code>
+                <p className="text-xs text-muted-foreground">{desc}</p>
+              </div>
+            ))}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+      <AccordionItem value="scripts">
+        <AccordionTrigger>Scripts</AccordionTrigger>
+        <AccordionContent>
+          <div className="grid grid-cols-3 gap-3 text-center text-xs">
+            {[
+              ["npm start", "Develop"],
+              ["npm run package", "Package"],
+              ["npm test", "Test"],
+            ].map(([command, label]) => (
+              <div key={command}>
+                <code className="font-medium">{command}</code>
+                <p className="text-muted-foreground">{label}</p>
+              </div>
+            ))}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
+}
+
 export function HomeRoute() {
-  const ctaClicks = useAppStore((state) => state.ctaClicks);
   const theme = useAppStore((state) => state.theme);
-  const themeSource = useAppStore((state) => state.themeSource);
-  const incrementClicks = useAppStore((state) => state.incrementCtaClicks);
   const toggleTheme = useAppStore((state) => state.toggleTheme);
   const { data: versions } = useQuery({
     queryKey: ["runtime-versions"],
@@ -47,71 +137,104 @@ export function HomeRoute() {
   });
 
   return (
-    <main className="min-h-screen bg-background p-6 text-foreground sm:p-10">
-      <div className="mx-auto max-w-3xl">
-        <Card>
-          <CardHeader className="gap-4">
-            <div className="flex flex-wrap gap-2">
-              {stack.map((name) => (
-                <Badge key={name} variant="secondary">
-                  {name}
-                </Badge>
-              ))}
+    <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col items-center justify-center p-6">
+      <div className="w-full space-y-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-2xl font-semibold tracking-tight">
+                Electron Template
+              </h1>
+              <Badge variant="secondary">Desktop</Badge>
             </div>
-            <div className="space-y-1">
-              <CardTitle>Electron Template</CardTitle>
-              <CardDescription>
-                JavaScript-first Electron starter with Forge, Vite, Router,
-                Zustand, Query, and shadcn/ui.
-              </CardDescription>
-            </div>
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            <Separator />
-            <section className="space-y-2">
-              <h2 className="text-sm font-medium">Appearance</h2>
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <Badge variant="outline">Active: {theme}</Badge>
-                <Badge variant="outline">Source: {themeSource}</Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                App startup follows the current OS appearance. Manual changes
-                are in-memory and reset when the app closes.
-              </p>
-            </section>
-            <Separator />
-            <section className="space-y-2">
-              <h2 className="text-sm font-medium">Runtime versions</h2>
-              <div className="grid gap-2 text-sm sm:grid-cols-3">
-                <p className="rounded-md border border-border p-3">
-                  Electron: {versions?.electron ?? "loading..."}
-                </p>
-                <p className="rounded-md border border-border p-3">
-                  Chrome: {versions?.chrome ?? "loading..."}
-                </p>
-                <p className="rounded-md border border-border p-3">
-                  Node: {versions?.node ?? "loading..."}
-                </p>
-              </div>
-            </section>
-            <Separator />
             <p className="text-sm text-muted-foreground">
-              CTA button clicked {ctaClicks} time(s).
+              Desktop scaffold with the same shadcn, Tailwind, and theme stack
+              as the React template, plus Electron main and preload wiring.
             </p>
-          </CardContent>
+          </div>
+          <Button
+            onClick={toggleTheme}
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Toggle theme"
+          >
+            <HugeiconsIcon
+              icon={theme === "dark" ? Sun02Icon : Moon02Icon}
+              strokeWidth={2}
+            />
+          </Button>
+        </div>
 
-          <CardFooter>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" onClick={incrementClicks}>
-                Update Zustand state
-              </Button>
-              <Button type="button" variant="outline" onClick={toggleTheme}>
-                Switch to {theme === "dark" ? "light" : "dark"}
-              </Button>
-            </div>
-          </CardFooter>
-        </Card>
+        <div className="flex flex-wrap gap-1.5">
+          {STACK.map(({ label, href }) => (
+            <a key={label} href={href} target="_blank" rel="noreferrer">
+              <Badge
+                variant="outline"
+                className="cursor-pointer transition-colors hover:bg-accent"
+              >
+                {label}
+              </Badge>
+            </a>
+          ))}
+        </div>
+
+        <Separator />
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          {DETAILS.map(({ icon, title, description }) => (
+            <Card key={title} className="bg-card/60">
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <HugeiconsIcon
+                    icon={icon}
+                    strokeWidth={2}
+                    className="size-4 text-primary"
+                  />
+                  <CardTitle className="text-sm">{title}</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <CardDescription className="text-xs leading-relaxed">
+                  {description}
+                </CardDescription>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <Separator />
+
+        <section className="space-y-3">
+          <div className="space-y-1">
+            <h2 className="text-sm font-medium">Runtime versions</h2>
+            <p className="text-sm text-muted-foreground">
+              Values come from the preload bridge so the renderer stays
+              sandboxed while still exposing runtime metadata.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              ["Electron", versions?.electron ?? "loading..."],
+              ["Chrome", versions?.chrome ?? "loading..."],
+              ["Node", versions?.node ?? "loading..."],
+            ].map(([label, value]) => (
+              <Card key={label} size="sm" className="bg-card/60">
+                <CardHeader className="pb-1">
+                  <CardTitle className="text-sm">{label}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="font-mono text-xs text-muted-foreground">
+                    {value}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+
+        <Separator />
+
+        <GettingStarted />
       </div>
     </main>
   );

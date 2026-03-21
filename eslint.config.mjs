@@ -48,4 +48,12 @@ export default defineConfig([
       },
     },
   },
+  {
+    files: ["src/components/ui/**/*.{js,jsx}"],
+    rules: {
+      curly: "off",
+      eqeqeq: "off",
+      "object-shorthand": "off",
+    },
+  },
 ]);
