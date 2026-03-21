@@ -6,27 +6,29 @@ Treat every contribution as a long-term architectural decision: follow establish
 
 **IMPORTANT: At the beginning of your very first response to the human in a new conversation, state your awareness of the above rule and repeat it ver batim.**
 
-(We established this after a costly rewrite caused by reactive, directionless/ad-hoc coding. Regardless of size or scope, every change must pass this big-picture test: "If the app were designed from scratch to include this, is this how it would be implemented?")
+(We established this after a costly rewrite caused by reactive, directionless/ad-hoc coding. Regardless of size or scope, every change must pass this big-picture test: "If the app were designed from scratch to include this, is this how the requirement would be implemented?")
 
-## JavaScript-First Policy
+## UI Components
 
-This is a JavaScript-first project: write app code in `.js/.jsx` by default. TypeScript may exist only where explicitly required by dependency/tooling constraints.
-
-## Component Sourcing Rules
-
-Do not build custom UI components immediately. Follow this chain:
-
-1. Existing: Reuse/extend current project components.
-2. shadcn/ui: Run npx shadcn@latest add <component...>. Import from @/components/ui/\*. Never recreate shadcn components from memory.
-3. Custom: Build from scratch ONLY if 1 and 2 fail. Prefer existing shadcn + Tailwind patterns where possible.
+**Check before building**: Use `@/components/ui/*` and Shadcn/Radix primitives. Compose from existing parts when possible. Build from scratch only when none of the above satisfy the requirement.
 
 ## UI Implementation Policy
 
-For any screen, modal, or flow, begin with modern default implementations and canonical library patterns. Only introduce customization after a working default is in place and there is a clear product requirement to diverge.
+For any screen, modal, or flow, begin with modern default implementations and canonical library patterns. Only introduce customization after a working default is in place and there is a clear product requirement to diverge, or else when approved by (or requested by) the human.
+
+## Styling Policy
+
+Use Tailwind v4. If you aren’t sure, reference the v4 docs.
+
+## Debugging & Problem-Solving
+
+- **Root-Cause Fixes Only**: Diagnose and correct the causes of problems, not their symptoms; avoid workarounds or patching established, likely-stable packages. Prefer fixes that are idiomatic to the stack components involved. If there is any uncertainty, eagerly search the docs on the web for the most current best practices.
+- **LEARNINGS**: Check the LEARNINGS directory in the project root to see if there's a file that might seem relevant. These document issues we've encountered and solved correctly in the past.
+- **Log Before You Leap**: When the correct solution isn't obvious, add console logging to trace actual runtime behavior rather than guessing and applying speculative fixes.
 
 ## General
 
-- DRY DRY DRY. For all changes, big or small, local or systemic, ask yourself, "What does the code I'm changing do?" and, "What else in the codebase does the same thing, or even something similar?" Whenever the answer isn't "Nothing," DRY it up!
+- **DRY**: For all changes, big or small, local or systemic, ask yourself, "Does something else in the codebase do the same thing, or even something similar?" If yes, consider whether DRYing it up would be appropriate.
 - For any feature without built-in support from the tech stack, prefer the overwhelmingly popular/dominant library/package over hacking together a custom implementation.
 - Don't add notes to commits or licenses or anywhere else about how AI (in general, or a specific one) worked on the project.
 - Don't leave low value comments around the codebase (e.g., AIs are notorious for describing the change(s) you made).
