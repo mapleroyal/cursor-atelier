@@ -1,35 +1,109 @@
-# Repository Guidelines
+# Electron Template
 
-## Supreme Top Priority — The "Codebase Health" Rule
+JavaScript-first Electron starter template built for packaging and distribution with Electron Forge + Vite.
 
-Treat every contribution as a long-term architectural decision: follow established patterns, conventions, and ownership boundaries. Where sensible from a high-level, long-term perspective, extend existing constructs before introducing new ones or one-off paths. Each change should leave the codebase more coherent than before by centralizing responsibility, avoiding parallel implementations, and delivering net simplification rather than net complexity.
+## Purpose
 
-**IMPORTANT: At the beginning of your very first response to the human in a new conversation, state your awareness of the above rule and repeat it ver batim.**
+This repo is a reusable baseline for desktop apps that need:
 
-(We established this after a costly rewrite caused by reactive, directionless/ad-hoc coding. Regardless of size or scope, every change must pass this big-picture test: "If the app were designed from scratch to include this, is this how the requirement would be implemented?")
+- Electron process scaffolding with secure defaults.
+- React renderer with memory-based routing.
+- Shared global state and async query infrastructure.
+- Theme handling that starts from current OS light/dark appearance and supports in-session manual toggling.
+- shadcn/ui styling and component primitives.
+- Forge makers configured for cross-platform packaging.
 
-## UI Components
+## Stack
 
-**Check before building**: Use `@/components/ui/*` and Shadcn/Radix primitives. Compose from existing parts when possible. Build from scratch only when none of the above satisfy the requirement.
+- Electron + Electron Forge + Forge Vite plugin
+- Vite + React
+- Tailwind CSS (Vite plugin)
+- shadcn/ui (`new-york`, `neutral`, CSS variables)
+- React Router (`createMemoryRouter`)
+- Zustand
+- TanStack Query
 
-## UI Implementation Policy
+### JS-first policy
 
-For any screen, modal, or flow, begin with modern default implementations and canonical library patterns. Only introduce customization after a working default is in place and there is a clear product requirement to diverge, or else when approved by (or requested by) the human.
+- App logic is JavaScript (`.js` / `.jsx`).
+- Tooling/config files may use `.mjs` where required by the toolchain.
+- TypeScript syntax is avoided unless a specific upstream tool requires it.
 
-## Styling Policy
+## Commands
 
-Use Tailwind v4. If you aren’t sure, reference the v4 docs.
+```bash
+npm install
+npm run start
+npm run package
+npm run make
+npm run lint
+npm run lint:fix
+npm run test
+npm run test:run
+```
 
-## Debugging & Problem-Solving
+- `npm run start`: runs Forge dev mode and opens the Electron app.
+- `npm run package`: creates packaged app output.
+- `npm run make`: builds maker artifacts for the current host OS.
+- `npm run lint`: runs ESLint with the flat config.
+- `npm run lint:fix`: runs ESLint with autofix.
+- `npm run test`: runs Vitest in watch mode.
+- `npm run test:run`: runs Vitest once for CI/local verification.
 
-- **Root-Cause Fixes Only**: Diagnose and correct the causes of problems, not their symptoms; avoid workarounds or patching established, likely-stable packages. Prefer fixes that are idiomatic to the stack components involved. If there is any uncertainty, eagerly search the docs on the web for the most current best practices.
-- **LEARNINGS**: Check the LEARNINGS directory in the project root to see if there's a file that might seem relevant. These document issues we've encountered and solved correctly in the past.
-- **Log Before You Leap**: When the correct solution isn't obvious, add console logging to trace actual runtime behavior rather than guessing and applying speculative fixes.
+## Quality Baseline
 
-## General
+### ESLint
 
-- **DRY**: For all changes, big or small, local or systemic, ask yourself, "Does something else in the codebase do the same thing, or even something similar?" If yes, consider whether DRYing it up would be appropriate.
-- For any feature without built-in support from the tech stack, prefer the overwhelmingly popular/dominant library/package over hacking together a custom implementation.
-- Don't add notes to commits or licenses or anywhere else about how AI (in general, or a specific one) worked on the project.
-- Don't leave low value comments around the codebase (e.g., AIs are notorious for describing the change(s) you made).
-- Never build backwards/legacy compatability. The app is in active pre-release development.
+- Setup follows the ESLint manual setup docs: https://eslint.org/docs/latest/use/getting-started#manual-set-up
+- Config file: `eslint.config.mjs`
+- Uses `@eslint/js` recommended base plus common rules:
+  - `no-unused-vars` (warn)
+  - `no-undef` (error)
+  - `eqeqeq` (error)
+  - `curly` (error)
+  - `no-var` (error)
+  - `prefer-const` (error)
+  - `object-shorthand` (error)
+  - `no-console` (warn, allows `console.warn` and `console.error`)
+
+### Vitest
+
+- Setup follows the Vitest guide for adding Vitest to a project: https://vitest.dev/guide/#adding-vitest-to-your-project
+- Config file: `vitest.config.mjs`
+- Current high-value scaffold tests:
+  - `src/stores/app-store.test.js`: validates system-theme initialization, fallback behavior, and manual toggle reset flow.
+  - `src/lib/query-client.test.js`: validates conservative QueryClient defaults.
+  - `src/app/router.test.jsx`: validates memory router baseline at `/`.
+
+## Directory Map
+
+- `forge.config.js`: Forge makers/plugins config with Vite entry wiring.
+- `vite.main.config.mjs`: Vite config for Electron main process.
+- `vite.preload.config.mjs`: Vite config for preload process.
+- `vite.renderer.config.mjs`: Vite config for renderer (React + Tailwind + alias).
+- `eslint.config.mjs`: ESLint flat config.
+- `vitest.config.mjs`: Vitest config and alias wiring.
+- `src/main.js`: Electron main lifecycle + BrowserWindow bootstrap.
+- `src/preload.js`: safe `contextBridge` API surface.
+- `src/renderer.jsx`: React app bootstrap with Query and Router providers.
+- `src/app/router.jsx`: memory-backed route tree.
+- `src/app/routes/home.jsx`: welcome screen composed from shadcn CLI components.
+- `src/app/router.test.jsx`: router scaffold tests.
+- `src/stores/app-store.js`: baseline Zustand store.
+- `src/stores/app-store.test.js`: store scaffold tests.
+- `src/lib/query-client.js`: shared TanStack Query client.
+- `src/lib/query-client.test.js`: query client scaffold tests.
+- `src/components/ui/*`: shadcn CLI-generated UI primitives.
+- `components.json`: shadcn registry/config contract.
+- `jsconfig.json`: `@/* -> src/*` alias mapping.
+
+## Packaging Notes
+
+Forge includes makers for Windows/macOS/Linux (`squirrel`, `zip`, `deb`, `rpm`).
+
+- `npm run make` generates artifacts for maker targets supported by the current OS runtime.
+- For full cross-platform artifacts, run make on native CI runners per OS.
+
+## shadcn Setup Note
+
+This template uses shadcn manual+CLI setup because Forge uses split Vite config files, which auto-detection does not always infer reliably.
