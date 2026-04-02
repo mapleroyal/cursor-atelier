@@ -51,4 +51,3 @@ npm run package
 npm run make
 npm test
 ```
- 
