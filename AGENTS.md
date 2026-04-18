@@ -23,13 +23,10 @@ Use Tailwind v4. If you aren’t sure, reference the v4 docs.
 ## Debugging & Problem-Solving
 
 - **Root-Cause Fixes Only**: Diagnose and correct the causes of problems, not their symptoms; avoid workarounds or patching established, likely-stable packages. Prefer fixes that are idiomatic to the stack components involved. If there is any uncertainty, eagerly search the docs on the web for the most current best practices.
-- **LEARNINGS**: Check the LEARNINGS directory in the project root to see if there's a file that might seem relevant. These document issues we've encountered and solved correctly in the past.
 - **Log Before You Leap**: When the correct solution isn't obvious, add console logging to trace actual runtime behavior rather than guessing and applying speculative fixes.
 
 ## General
 
 - **DRY**: For all changes, big or small, local or systemic, ask yourself, "Does something else in the codebase do the same thing, or even something similar?" If yes, consider whether DRYing it up would be appropriate.
-- For any feature without built-in support from the tech stack, prefer the overwhelmingly popular/dominant library/package over hacking together a custom implementation.
-- Don't add notes to commits or licenses or anywhere else about how AI (in general, or a specific one) worked on the project.
-- Don't leave low value comments around the codebase (e.g., AIs are notorious for describing the change(s) you made).
+- For any feature without built-in support from the tech stack, prefer (and install, if needed) the overwhelmingly popular/dominant library/package over hacking together a custom implementation.
 - Never build backwards/legacy compatability. The app is in active pre-release development.
