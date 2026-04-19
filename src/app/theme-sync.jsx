@@ -1,13 +1,20 @@
-import { useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 
-import { useAppStore } from "@/stores/app-store";
+import {
+  applyThemeToDocument,
+  subscribeToSystemTheme,
+  useAppStore,
+} from "@/stores/app-store";
 
 export function ThemeSync() {
   const theme = useAppStore((state) => state.theme);
+  const syncSystemTheme = useAppStore((state) => state.syncSystemTheme);
 
   useLayoutEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
+    applyThemeToDocument(theme);
   }, [theme]);
+
+  useEffect(() => subscribeToSystemTheme(syncSystemTheme), [syncSystemTheme]);
 
   return null;
 }

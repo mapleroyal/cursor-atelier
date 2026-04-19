@@ -5,6 +5,7 @@ import { RouterProvider } from "react-router";
 import { router } from "@/app/router";
 import { ThemeSync } from "@/app/theme-sync";
 import { queryClient } from "@/lib/query-client";
+import { applyThemeToDocument, useAppStore } from "@/stores/app-store";
 import "@/globals.css";
 
 const rootElement = document.getElementById("root");
@@ -12,6 +13,8 @@ const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("Missing root element in index.html");
 }
+
+applyThemeToDocument(useAppStore.getState().theme);
 
 createRoot(rootElement).render(
   <StrictMode>

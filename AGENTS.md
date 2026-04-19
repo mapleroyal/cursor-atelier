@@ -14,7 +14,9 @@ Treat every contribution as a long-term architectural decision: follow establish
 
 ## UI Implementation Policy
 
-For any screen, modal, or flow, begin with modern default implementations and canonical library patterns. Only introduce customization after a working default is in place and there is a clear product requirement to diverge, or else when approved by (or requested by) the human.
+- For any screen, modal, or flow, begin with modern default implementations and canonical library patterns. Only introduce customization after a working default is in place and there is a clear product requirement to diverge, or else when approved by (or requested by) the human.
+
+- There is a typography design system at `docs/learnings/typography-design-system.md`. Follow it.
 
 ## Styling Policy
 

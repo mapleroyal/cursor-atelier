@@ -73,14 +73,16 @@ function GettingStarted() {
   return (
     <Accordion type="single" collapsible>
       <AccordionItem value="quick-start">
-        <AccordionTrigger>Quick start</AccordionTrigger>
+        <AccordionTrigger className="text-title-md">
+          Quick start
+        </AccordionTrigger>
         <AccordionContent>
-          <div className="space-y-3 text-sm">
-            <p className="text-muted-foreground">
+          <div className="space-y-3">
+            <p className="text-body-sm text-muted-foreground">
               Start the Electron renderer, main process, and preload bridge in
               one command.
             </p>
-            <div className="rounded-xl bg-muted/50 p-3 font-mono text-xs">
+            <div className="rounded-xl bg-muted/50 p-3 font-mono text-body-sm">
               <div className="text-muted-foreground">
                 <span className="text-primary">$</span>{" "}
                 <span className="text-foreground">npm start</span>
@@ -90,35 +92,43 @@ function GettingStarted() {
         </AccordionContent>
       </AccordionItem>
       <AccordionItem value="structure">
-        <AccordionTrigger>Project structure</AccordionTrigger>
+        <AccordionTrigger className="text-title-md">
+          Project structure
+        </AccordionTrigger>
         <AccordionContent>
-          <div className="grid grid-cols-2 gap-2 text-sm">
+          <div className="grid grid-cols-2 gap-2">
             {[
               ["src/app/routes/", "Renderer routes"],
               ["src/components/ui/", "55 shadcn components"],
               ["src/main.js", "Electron main process"],
               ["src/preload.js", "Renderer bridge"],
-            ].map(([path, desc]) => (
+            ].map(([path, description]) => (
               <div key={path}>
-                <code className="text-xs font-medium">{path}</code>
-                <p className="text-xs text-muted-foreground">{desc}</p>
+                <code className="font-mono text-body-sm text-foreground">
+                  {path}
+                </code>
+                <p className="text-body-sm text-muted-foreground">
+                  {description}
+                </p>
               </div>
             ))}
           </div>
         </AccordionContent>
       </AccordionItem>
       <AccordionItem value="scripts">
-        <AccordionTrigger>Scripts</AccordionTrigger>
+        <AccordionTrigger className="text-title-md">Scripts</AccordionTrigger>
         <AccordionContent>
-          <div className="grid grid-cols-3 gap-3 text-center text-xs">
+          <div className="grid grid-cols-3 gap-3 text-center">
             {[
               ["npm start", "Develop"],
               ["npm run package", "Package"],
               ["npm test", "Test"],
             ].map(([command, label]) => (
               <div key={command}>
-                <code className="font-medium">{command}</code>
-                <p className="text-muted-foreground">{label}</p>
+                <code className="font-mono text-body-sm text-foreground">
+                  {command}
+                </code>
+                <p className="text-body-sm text-muted-foreground">{label}</p>
               </div>
             ))}
           </div>
@@ -140,14 +150,12 @@ export function HomeRoute() {
     <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col items-center justify-center p-6">
       <div className="w-full space-y-6">
         <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
+          <div className="space-y-2">
             <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl font-semibold tracking-tight">
-                Electron Template
-              </h1>
+              <h1 className="text-display-sm">Electron Template</h1>
               <Badge variant="secondary">Desktop</Badge>
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="type-measure text-body-md text-muted-foreground">
               Desktop scaffold with the same shadcn, Tailwind, and theme stack
               as the React template, plus Electron main and preload wiring.
             </p>
@@ -190,11 +198,11 @@ export function HomeRoute() {
                     strokeWidth={2}
                     className="size-4 text-primary"
                   />
-                  <CardTitle className="text-sm">{title}</CardTitle>
+                  <CardTitle className="text-title-lg">{title}</CardTitle>
                 </div>
               </CardHeader>
               <CardContent>
-                <CardDescription className="text-xs leading-relaxed">
+                <CardDescription className="text-body-sm text-muted-foreground">
                   {description}
                 </CardDescription>
               </CardContent>
@@ -206,8 +214,8 @@ export function HomeRoute() {
 
         <section className="space-y-3">
           <div className="space-y-1">
-            <h2 className="text-sm font-medium">Runtime versions</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="text-headline-sm">Runtime versions</h2>
+            <p className="type-measure text-body-sm text-muted-foreground">
               Values come from the preload bridge so the renderer stays
               sandboxed while still exposing runtime metadata.
             </p>
@@ -220,10 +228,10 @@ export function HomeRoute() {
             ].map(([label, value]) => (
               <Card key={label} size="sm" className="bg-card/60">
                 <CardHeader className="pb-1">
-                  <CardTitle className="text-sm">{label}</CardTitle>
+                  <CardTitle className="text-title-lg">{label}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="font-mono text-xs text-muted-foreground">
+                  <p className="font-mono text-body-sm text-muted-foreground">
                     {value}
                   </p>
                 </CardContent>
