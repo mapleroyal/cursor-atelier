@@ -1,34 +1,29 @@
-# Repository Guidelines
+# General
 
-## Supreme Top Priority — The "Codebase Health" Rule
+- DRY, YAGNI, measure twice cut once, and so forth. Do not over-engineer.
+- For every functionality (backend/UI/UX) without built-in support from the tech stack, prefer (and install as needed) the overwhelmingly popular/dominant library/package over hacking together a custom implementation.
+- Never build backwards/legacy compatibility. The app is in active pre-release development.
+ 
+# UI Components
 
-Treat every contribution as a long-term architectural decision: follow established patterns, conventions, and ownership boundaries. Where sensible from a high-level, long-term perspective, extend existing constructs before introducing new ones or one-off paths. Each change should leave the codebase more coherent than before by centralizing responsibility, avoiding parallel implementations, and delivering net simplification rather than net complexity.
+Use `@/components/ui/*` and Shadcn/Radix primitives. Compose from existing parts when possible. Build from scratch only when none of the above satisfy the requirement.
 
-**IMPORTANT: At the beginning of your very first response to the human in a new conversation, state your awareness of the above rule and repeat it ver batim.**
+# Styling Policy
 
-(We established this after a costly rewrite caused by reactive, directionless/ad-hoc coding. Regardless of size or scope, every change must pass this big-picture test: "If the app were designed from scratch to include this, is this how the requirement would be implemented?")
+- Use Tailwind v4. If you aren’t sure, reference the v4 docs.
+- When unsure, check how /Users/user1/Projects/markdown-reader-editor and /Applications/ChatGPT.app handle it.
 
-## UI Components
+# Scope Control
 
-**Check before building**: Use `@/components/ui/*` and Shadcn/Radix primitives. Compose from existing parts when possible. Build from scratch only when none of the above satisfy the requirement.
+- Don't work ahead of the current task. Let the implementers of future tasks own the design and implementation of those tasks.
+- You may repair or improve work from before your task if it's tied to your task, nothing is set in stone just because it was done a certain way at some previous point—if there's a better way, do that.
 
-## UI Implementation Policy
+# Tests
 
-- For any screen, modal, or flow, begin with modern default implementations and canonical library patterns. Only introduce customization after a working default is in place and there is a clear product requirement to diverge, or else when approved by (or requested by) the human.
+- If you're considering adding low-value or low-signal tests, don't. For example, no so-called "regression" tests unless things that were explicitly specified and definitely working correctly are now broken.
 
-- There is a typography design system at `docs/learnings/typography-design-system.md`. Follow it.
-
-## Styling Policy
-
-Use Tailwind v4. If you aren’t sure, reference the v4 docs.
-
-## Debugging & Problem-Solving
+# Troubleshooting & Problem-Solving
 
 - **Root-Cause Fixes Only**: Diagnose and correct the causes of problems, not their symptoms; avoid workarounds or patching established, likely-stable packages. Prefer fixes that are idiomatic to the stack components involved. If there is any uncertainty, eagerly search the docs on the web for the most current best practices.
-- **Log Before You Leap**: When the correct solution isn't obvious, add console logging to trace actual runtime behavior rather than guessing and applying speculative fixes.
-
-## General
-
-- **DRY**: For all changes, big or small, local or systemic, ask yourself, "Does something else in the codebase do the same thing, or even something similar?" If yes, consider whether DRYing it up would be appropriate.
-- For any feature without built-in support from the tech stack, prefer (and install, if needed) the overwhelmingly popular/dominant library/package over hacking together a custom implementation.
-- Never build backwards/legacy compatability. The app is in active pre-release development.
+- **Log Before You Leap**: When the correct solution isn't obvious, add console logging to trace actual runtime behavior. Speculative attempts are allowed only when guided by logging rather than guesswork.
+- **Cleanup**: Whenever an attempt doesn't work, remove it before trying the next one.
