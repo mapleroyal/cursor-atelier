@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "products": [
+    {
+      "directory": "remus",
+      "productId": 2355234,
+      "archives": {
+        "Remus-Black.zip": "425e1aa9530c65cadb1b6b319b2b08ca3458c12dbd3484784f78f9f14c5dd225",
+        "Remus-Dark.zip": "d939e3642cda0cb3f51da08c2ba378754d532eb46d631386a94c4dd8769a51e7",
+        "Remus-White.zip": "9d615720e41148e1d1f12ba8a1ae0811b7544d4b874385ddde91fd5439baedf7"
+      }
+    },
+    {
+      "directory": "drop",
+      "productId": 2330173,
+      "archives": {
+        "Drop-Alien.zip": "983f230067062d36c842fc64bd5cf8689a19cb6f63ab9e22652ca9e23a6a8655",
+        "Drop-Blood.zip": "13c00a1ecf7b11f34c838d9f6df9d79ec5806cd99ca20ac7100ee421f1bd0dfb",
+        "Drop-Blue.zip": "3d1937c1c2e71777c814f8862cbbea31cddd003b11c60b195dcec1a46ffe3cb4",
+        "Drop-BlueLayan.zip": "9e0eddc936ed5c0c9524d166d9ee5824f0b5cbbddae74745729af58d5a64c805"
+      }
+    },
+    {
+      "directory": "moga-classic",
+      "productId": 2296782,
+      "archives": {
+        "Moga-Black.zip": "f7d3602759eccb223dd9fdc0c6d9d8e3ee2657851732c0c3d227dde4919d7d7f",
+        "Moga-Dark.zip": "53ef5a707f63e4efbb818907999717792b63bdaa5596a1e85e36019ecf82ff7f",
+        "Moga-White.zip": "f7f7075dfeea6ef2e18b19a9b4bdfeff6587c7b9865c0d44ec481181ebfdb0b2"
+      }
+    },
+    {
+      "directory": "moga-candy",
+      "productId": 2299255,
+      "archives": {
+        "Moga-Candy-Blue.zip": "b1572a542bb1a865c0f074457f534bb100c56e8c23ceeef2e22f8cddad90fd4d",
+        "Moga-Candy-Caramel.zip": "2d934a63a28c487f3d94942e898a8ea17a4b980ec3ac84f77b9c3cbf1187e2cd",
+        "Moga-Candy-Green.zip": "a3b989f1f5c833e44a18e741786dd3ba89f8e214053207fe033bbb80ad198a40",
+        "Moga-Candy-Grey.zip": "f0a4896ba78c11a469240615fc115bc943b10923fcc549839fb9aab40a2fc691"
+      }
+    },
+    {
+      "directory": "moga-colors",
+      "productId": 2297654,
+      "archives": {
+        "Moga-Blue.zip": "8105924dfbb67c1a2ad050be0299c61a4c05c0cf6d3022f959a367e1ac167eca",
+        "Moga-Cyan.zip": "fe06db7762dcb8c75edccd6f211460a936d56ea86d2e66ff005c74da45bdaf31",
+        "Moga-Green.zip": "462610a5f77b11092a68e0575e0acfbf53defafa399b587b1ab2338f80d442c4",
+        "Moga-Grey.zip": "164d2517d0b68ef009324d7d00e5947a8e6b4c1e69f3a51b6e29acdb6ab5565d"
+      }
+    },
+    {
+      "directory": "moga-neon",
+      "productId": 2302110,
+      "archives": {
+        "Moga-Neon-Blue.zip": "f575712629e1e4af0282d2b0a40b72ed9f5d338d4cf0c635783a2d0aa9c6994f",
+        "Moga-Neon-Butter.zip": "abd2882fbd0aac3e91186a6f668a2dffe2460a0bc5626ef596225834c27a2fb0",
+        "Moga-Neon-Cyan.zip": "7c63c6abb6e7245844d1785c992711fbb9f48ddcb0cfc1722fcf2f551ffeeedf",
+        "Moga-Neon-Green.zip": "326a2810f5d711c57eb0ef1a4362a88ebfcba43ca6840f3cf2f0ef1d524e84ba"
+      }
+    },
+    {
+      "directory": "moga-light",
+      "productId": 2364891,
+      "archives": {
+        "Moga-Light-Blue.zip": "89e6648424adbe5834557586ae052c637ee7c5784ea399e3db410b9e2f45f607"
+      }
+    }
+  ]
+}

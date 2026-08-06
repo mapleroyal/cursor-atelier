@@ -1,13 +1,25 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
 
 :root {
-  --radius: 0.875rem;
+  --radius: 0.75rem;
+  --app-corner-shape: round;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -49,8 +61,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.443 0.11 240.79);
-  --primary-foreground: oklch(0.977 0.013 236.62);
+  --primary: oklch(0.67 0.14 240);
+  --primary-foreground: oklch(0.145 0 0);
   --secondary: oklch(0.274 0.006 286.033);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -97,10 +109,10 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-sm: calc((var(--radius) - 4px) * var(--app-corner-radius-scale, 1));
+  --radius-md: calc((var(--radius) - 2px) * var(--app-corner-radius-scale, 1));
+  --radius-lg: calc(var(--radius) * var(--app-corner-radius-scale, 1));
+  --radius-xl: calc((var(--radius) + 4px) * var(--app-corner-radius-scale, 1));
   --font-sans: "Geist Variable", sans-serif;
   --font-mono:
     "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco,
@@ -178,9 +190,28 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-2xl: calc(var(--radius) * 1.8 * var(--app-corner-radius-scale, 1));
+  --radius-3xl: calc(var(--radius) * 2.2 * var(--app-corner-radius-scale, 1));
+  --radius-4xl: calc(var(--radius) * 2.6 * var(--app-corner-radius-scale, 1));
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  :root {
+    --app-corner-radius-scale: 1.2;
+    --app-corner-shape: superellipse(1.5);
+  }
+
+  :where([class*="rounded-"], [data-squircle]) {
+    corner-shape: var(--app-corner-shape);
+  }
+
+  :where(
+    [data-corner-shape="round"],
+    input[type="radio"],
+    input[type="checkbox"]
+  ) {
+    corner-shape: round;
+  }
 }
 
 @layer base {
@@ -190,10 +221,33 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    min-width: 320px;
+    height: 100dvh;
+    overflow: hidden;
   }
 
   html {
     @apply font-sans;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    color: inherit;
+    font: inherit;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
   }
 
   code,
@@ -204,6 +258,16 @@
 }
 
 @layer utilities {
+  .titlebar-drag {
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+
+  .titlebar-no-drag,
+  .titlebar-no-drag * {
+    -webkit-app-region: no-drag;
+  }
+
   .type-measure {
     max-width: 68ch;
   }

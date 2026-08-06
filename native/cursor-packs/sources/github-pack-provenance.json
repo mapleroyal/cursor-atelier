@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-05",
+  "purpose": "Pinned upstream source locations for the GitHub cursor packs used by Cursor Atelier's build-time converter.",
+  "entries": [
+    {
+      "id": "volantes-cursors",
+      "name": "Volantes Cursors",
+      "sourceUrl": "https://github.com/varlesh/volantes-cursors",
+      "sourcePath": "native/cursor-packs/sources/volantes-cursors",
+      "revision": "b13a4bbf6bd1d7e85fadf7f2ecc44acc198f8d01",
+      "revisionType": "git-commit",
+      "branchAtAcquisition": "master",
+      "commitDate": "2022-08-28T10:46:03+04:00",
+      "license": "GPL-2.0-only",
+      "licenseFiles": ["LICENSE"],
+      "noticeFiles": ["AUTHORS", "README.md"],
+      "assetFormat": ["SVG", "Xcursor xcursorgen configuration"],
+      "assetRoots": [
+        {
+          "variant": "Volantes",
+          "source": "src/volantes_cursors",
+          "generated": null,
+          "sourceSvgCount": 152
+        },
+        {
+          "variant": "Volantes Light",
+          "source": "src/volantes_light_cursors",
+          "generated": null,
+          "sourceSvgCount": 152
+        }
+      ],
+      "sharedConfig": "src/config",
+      "sharedConfigCount": 54,
+      "conversion": "The repository contains SVGs and xcursorgen config, not macOS .cursor resources. Build-time conversion needs Inkscape (or equivalent SVG rasterization) and xcursorgen-compatible hotspot parsing; map Xcursor role names and aliases to the native Apple cursor IDs before emitting the Oreo engine's .cursor format."
+    },
+    {
+      "id": "vimix-cursors",
+      "name": "Vimix Cursors",
+      "sourceUrl": "https://github.com/vinceliuice/Vimix-cursors",
+      "sourcePath": "native/cursor-packs/sources/vimix-cursors",
+      "revision": "9bc292f40904e0a33780eda5c5d92eb9a1154e9c",
+      "revisionType": "git-commit",
+      "branchAtAcquisition": "master",
+      "commitDate": "2021-09-18T20:34:26+08:00",
+      "license": "GPL-3.0-only",
+      "licenseFiles": ["LICENSE"],
+      "noticeFiles": ["README.md"],
+      "assetFormat": ["SVG", "prebuilt Xcursor", "xcursorgen configuration", "Windows .cur/.ani"],
+      "assetRoots": [
+        {
+          "variant": "Vimix",
+          "source": "src/svg",
+          "generated": "dist/cursors",
+          "sourceSvgCount": 93,
+          "generatedCursorCount": 47
+        },
+        {
+          "variant": "Vimix White",
+          "source": "src/svg-white",
+          "generated": "dist-white/cursors",
+          "sourceSvgCount": 93,
+          "generatedCursorCount": 47
+        }
+      ],
+      "sharedConfig": "src/config",
+      "sharedConfigCount": 47,
+      "conversion": "The checked-out dist directories are Linux Xcursor binaries, so they cannot be passed to CoreCursor directly. Prefer rasterizing the SVG roots with the supplied xcursorgen config to preserve hotspots, then encode each role/frame in macOS .cursor bundles; use dist only as a validation reference."
+    },
+    {
+      "id": "qogir-cursors",
+      "name": "Qogir Cursors",
+      "sourceUrl": "https://github.com/vinceliuice/Qogir-icon-theme/tree/master/src/cursors",
+      "sourcePath": "native/cursor-packs/sources/qogir-icon-theme/src/cursors",
+      "repositoryPath": "native/cursor-packs/sources/qogir-icon-theme",
+      "revision": "c633057ba0d27a504b3255144071c9691ed0264a",
+      "revisionType": "git-commit",
+      "branchAtAcquisition": "master",
+      "commitDate": "2025-11-04T11:15:34+08:00",
+      "license": "GPL-3.0-only",
+      "licenseFiles": ["LICENSE", "../../COPYING"],
+      "noticeFiles": ["../../AUTHORS", "../../README.md"],
+      "assetFormat": ["SVG", "prebuilt Xcursor", "xcursorgen configuration"],
+      "assetRoots": [
+        {
+          "variant": "Qogir",
+          "source": "src/svg",
+          "generated": "dist/cursors",
+          "sourceSvgCount": 71,
+          "generatedCursorCount": 47
+        },
+        {
+          "variant": "Qogir White",
+          "source": "src/svg-Dark",
+          "generated": "dist-Dark/cursors",
+          "sourceSvgCount": 71,
+          "generatedCursorCount": 47
+        },
+        {
+          "variant": "Qogir Manjaro",
+          "source": "src/svg",
+          "generated": "dist-Manjaro/cursors",
+          "sourceSvgCount": 71,
+          "generatedCursorCount": 47
+        },
+        {
+          "variant": "Qogir Manjaro White",
+          "source": "src/svg-Dark",
+          "generated": "dist-Manjaro-Dark/cursors",
+          "sourceSvgCount": 71,
+          "generatedCursorCount": 47
+        },
+        {
+          "variant": "Qogir Ubuntu",
+          "source": "src/svg",
+          "generated": "dist-Ubuntu/cursors",
+          "sourceSvgCount": 71,
+          "generatedCursorCount": 47
+        },
+        {
+          "variant": "Qogir Ubuntu White",
+          "source": "src/svg-Dark",
+          "generated": "dist-Ubuntu-Dark/cursors",
+          "sourceSvgCount": 71,
+          "generatedCursorCount": 47
+        }
+      ],
+      "sharedSource": "src",
+      "sharedConfig": "src/config",
+      "sharedConfigCount": 47,
+      "conversion": "The cursor source is nested at src/cursors/src rather than the repository root. Each dist variant is an Xcursor theme; convert from SVG plus config for deterministic hotspots, and use the six dist/cursors directories to verify role coverage. Keep the separate color variants as distinct macOS themes."
+    },
+    {
+      "id": "bibata-extra-cursor",
+      "name": "Bibata Extra",
+      "sourceUrl": "https://github.com/ful1e5/Bibata_Extra_Cursor",
+      "sourcePath": "native/cursor-packs/sources/bibata-extra-cursor",
+      "revision": "5643465bf904e2901ece66d4cb2062141c52394d",
+      "revisionType": "git-commit",
+      "branchAtAcquisition": "main",
+      "commitDate": "2023-02-21T18:14:04+05:30",
+      "license": "GPL-3.0-only",
+      "licenseFiles": ["LICENSE"],
+      "noticeFiles": ["README.md", "CHANGELOG.md"],
+      "assetFormat": ["SVG", "generated PNG/Xcursor via bitmapper"],
+      "assetRoots": [
+        {
+          "style": "Bibata Original",
+          "source": "svg/original/static",
+          "animatedSource": "svg/original/animated",
+          "sourceStaticCount": 55,
+          "sourceAnimatedCount": 2,
+          "variants": ["DarkRed", "DodgerBlue", "Turquoise", "Pink"]
+        },
+        {
+          "style": "Bibata Modern",
+          "source": "svg/modern/static",
+          "animatedSource": "svg/modern/animated",
+          "sourceStaticCount": 8,
+          "sourceAnimatedCount": 1,
+          "variants": ["DarkRed", "DodgerBlue", "Turquoise", "Pink"]
+        }
+      ],
+      "variantCount": 8,
+      "variantConfig": ["bitmapper/packages/original/src/config.ts", "bitmapper/packages/modern/src/config.ts"],
+      "hotspotConfig": "builder/src/constants.py",
+      "conversion": "The SVGs use placeholder base/outline colors and the checked-out revision does not include generated platform bundles. Apply the supplied TypeScript color configs for all eight style/color variants, rasterize at the required sizes, preserve animated frame ordering, and emit macOS .cursor resources with hotspots. The README marks this project deprecated but its GPL source remains available for redistribution with attribution."
+    },
+    {
+      "id": "google-cursor",
+      "name": "Google Cursor",
+      "sourceUrl": "https://github.com/ful1e5/Google_Cursor",
+      "sourcePath": "native/cursor-packs/sources/google-cursor",
+      "revision": "7e416f8ae074a9346bf860961a0c4d47a58f4f00",
+      "revisionType": "git-commit",
+      "branchAtAcquisition": "main",
+      "commitDate": "2023-12-22T10:20:47+05:30",
+      "license": "GPL-3.0-only",
+      "licenseFiles": ["LICENSE"],
+      "noticeFiles": ["README.md", "CHANGELOG.md"],
+      "assetFormat": ["SVG", "200x200 RGBA PNG bitmaps", "generated Xcursor via clickgen"],
+      "assetRoots": [
+        {
+          "variant": "GoogleDot Black",
+          "source": "bitmaps/GoogleDot-Black",
+          "svgSource": "svg",
+          "bitmapCount": 150
+        },
+        {
+          "variant": "GoogleDot Blue",
+          "source": "bitmaps/GoogleDot-Blue",
+          "svgSource": "svg",
+          "bitmapCount": 150
+        },
+        {
+          "variant": "GoogleDot Red",
+          "source": "bitmaps/GoogleDot-Red",
+          "svgSource": "svg",
+          "bitmapCount": 137
+        },
+        {
+          "variant": "GoogleDot White",
+          "source": "bitmaps/GoogleDot-White",
+          "svgSource": "svg",
+          "bitmapCount": 149
+        }
+      ],
+      "variantCount": 4,
+      "buildConfig": "build.toml",
+      "conversion": "The repository already supplies 200x200 RGBA PNG frames and hotspot/build metadata in build.toml; the four color directories have slightly different frame counts. Use clickgen-compatible hotspot settings (100,100), preserve animated left_ptr_watch frames, map Xcursor aliases to Apple IDs, and wrap generated frames as macOS .cursor resources rather than shipping the Linux output."
+    }
+  ]
+}

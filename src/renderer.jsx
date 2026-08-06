@@ -1,8 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "react-router";
-import { router } from "@/app/router";
+import { HomeRoute } from "@/app/routes/home";
 import { ThemeSync } from "@/app/theme-sync";
 import { queryClient } from "@/lib/query-client";
 import { applyThemeToDocument, useAppStore } from "@/stores/app-store";
@@ -20,7 +19,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeSync />
-      <RouterProvider router={router} />
+      <HomeRoute />
     </QueryClientProvider>
   </StrictMode>,
 );

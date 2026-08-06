@@ -26,10 +26,7 @@ export default defineConfig([
     },
     extends: ["js/recommended"],
     rules: {
-      "no-unused-vars": [
-        "warn",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^React$" },
-      ],
+      "no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
       "no-undef": "error",
       eqeqeq: ["error", "always"],
       curly: ["error", "all"],

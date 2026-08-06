@@ -1,0 +1,9 @@
+# Upstream repositories and expanded archives are an acquisition cache, not
+# application source. Keep only the small provenance/lock files in Git.
+/*
+!/.gitignore
+!/GNOME-LOOK-PROVENANCE.md
+!/PINNED_SOURCES.md
+!/github-pack-provenance.json
+!/pinned-sources.json
+!/gnome-look-sources.json

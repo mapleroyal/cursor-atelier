@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "cursor-atelier-source-repos-b",
+  "sources": [
+    {
+      "id": "simp1e",
+      "directory": "simp1e",
+      "repository": "https://gitlab.com/cursors/simp1e.git",
+      "ref": "master",
+      "revision": "f8f8f3c09dd0aa31cc9bc5499c683aad025984be",
+      "license": "GPL-3.0-or-later",
+      "licenseFiles": ["LICENSE", "COPYING"],
+      "assetRoots": ["src/color_schemes", "src/templates"],
+      "buildInputs": ["cursor-generator", "names.txt", "template_colors.txt"]
+    },
+    {
+      "id": "capitaine",
+      "directory": "capitaine-cursors",
+      "repository": "https://github.com/keeferrourke/capitaine-cursors.git",
+      "ref": "master",
+      "revision": "06c88433662a4004cf56a6e471b523a0a8880be0",
+      "license": "LGPL-3.0-or-later",
+      "licenseFiles": ["COPYING"],
+      "assetRoots": ["src/svg/dark", "src/svg/light", "src/config", "src/static-cursor-list", "src/animated-cursor-list", "src/cursor-aliases"]
+    },
+    {
+      "id": "future",
+      "directory": "Future-cursors",
+      "repository": "https://github.com/yeyushengfan258/Future-cursors.git",
+      "ref": "master",
+      "revision": "587c14d2f5bd2dc34095a4efbb1a729eb72a1d36",
+      "license": "GPL-3.0",
+      "licenseFiles": ["LICENSE"],
+      "assetRoots": ["src/svg", "src/svg-black", "src/svg-cyan", "src/svg-dark", "src/config", "dist"]
+    },
+    {
+      "id": "nordzy",
+      "directory": "Nordzy-cursors",
+      "repository": "https://github.com/guillaumeboehm/Nordzy-cursors.git",
+      "ref": "main",
+      "revision": "c7fc485e9e4fd974c4f4ff9f5f14610fa7835e7b",
+      "license": "GPL-3.0",
+      "licenseFiles": ["COPYING"],
+      "assetRoots": ["MacOs_cursors", "xcursors"]
+    },
+    {
+      "id": "colloid",
+      "directory": "Colloid-icon-theme",
+      "repository": "https://github.com/vinceliuice/Colloid-icon-theme.git",
+      "ref": "main",
+      "revision": "c9e702beb96f731e2b3bea2fa1c619fa94e79a9f",
+      "license": "GPL-3.0",
+      "licenseFiles": ["LICENSE", "cursors/LICENSE"],
+      "assetRoots": ["cursors/src/svg", "cursors/src/svg-white", "cursors/src/config", "cursors/src/cursorList", "cursors/dist", "cursors/dist-dark"]
+    },
+    {
+      "id": "bibata",
+      "directory": "Bibata_Cursor",
+      "repository": "https://github.com/ful1e5/Bibata_Cursor.git",
+      "ref": "main",
+      "revision": "35ccfe209a808e40d6c2ca60a46cbe4faf68b690",
+      "license": "GPL-3.0",
+      "licenseFiles": ["LICENSE"],
+      "assetRoots": ["svg/original", "svg/modern", "svg/original-right", "svg/modern-right", "configs/normal", "configs/right", "render.json"]
+    }
+  ]
+}

@@ -12,6 +12,7 @@ out/
 dist/
 build/
 coverage/
+test-results/
 .vite/
 .vitest/
 .webpack/
@@ -20,6 +21,16 @@ release/
 tmp/
 temp/
 *.tsbuildinfo
+
+# Upstream cursor repositories and archives are a local, reproducible build
+# cache. Keep the small pinned provenance records below versioned.
+native/cursor-packs/sources/*
+!native/cursor-packs/sources/PINNED_SOURCES.md
+!native/cursor-packs/sources/GNOME-LOOK-PROVENANCE.md
+!native/cursor-packs/sources/github-pack-provenance.json
+!native/cursor-packs/sources/pinned-sources.json
+native/cursor-packs/generated/
+native/cursor-packs/test-output/
 
 # Logs and temporary files
 *.log
