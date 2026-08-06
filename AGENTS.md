@@ -3,6 +3,13 @@
 - DRY, YAGNI, measure twice cut once, and so forth. Do not over-engineer.
 - For every functionality (backend/UI/UX) without built-in support from the tech stack, prefer (and install as needed) the overwhelmingly popular/dominant library/package over hacking together a custom implementation.
 - Never build backwards/legacy compatibility. The app is in active pre-release development.
+
+# Design Aesthetic
+- Quiet and utilitarian
+- No-or-low helper copy
+- The UI/UX should be intuitive and self-explanatory
+- No card-slop (avoid overuse of giving several UI details a container-analogous background and/or outline)
+- See /Users/user1/Projects/markdown-reader-editor or /Applications/ChatGPT.app when design questions would benefit from a favored reference
  
 # UI Components
 
@@ -16,7 +23,7 @@ Use `@/components/ui/*` and Shadcn/Radix primitives. Compose from existing parts
 # Scope Control
 
 - Don't work ahead of the current task. Let the implementers of future tasks own the design and implementation of those tasks.
-- You may repair or improve work from before your task if it's tied to your task, nothing is set in stone just because it was done a certain way at some previous point—if there's a better way, do that.
+- You may repair or improve work from before your task if it relates to your task, nothing is set in stone just because it was done a certain way at some previous point—**if there's a better way, do that**.
 
 # Tests
 
