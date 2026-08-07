@@ -111,6 +111,30 @@ Preview mode is a read-only failure mode. It can show catalogue metadata and
 available artwork, but it never changes fallback state, enables Apply/Restore,
 or reports an effective theme.
 
+## Per-theme cursor size
+
+Cursor size is a native, per-theme preference from 50% through 200%; Cursor
+Atelier does not write macOS's private Accessibility cursor-size default. That
+system setting is global, while this feature must follow the selected theme.
+The renderer slider scales the main-arrow preview immediately and saves a draft
+value when the gesture ends. Apply/Reapply is the explicit boundary that changes
+the live cursor registration.
+
+The native engine first integrity-checks and decodes the immutable theme at its
+authored 100% geometry. It then scales `PointsWide`, `PointsHigh`, and both
+hotspot coordinates together, while preserving representation pixels and
+hashes, frame order, frame count, and timing. This lets WindowServer use the
+best existing representation without a second baked resampling pass: at 200%,
+a bundled 128 px source is the 2x representation of a 64 pt cursor; at 50%, a
+32 px source is the 2x representation of a 16 pt cursor. An imported pack with
+only a 64 px source cannot remain equally sharp at the largest sizes.
+
+Configured and effective size are distinct, like selected and effective theme.
+The effective size is persisted only after scaled registrations verify. The
+login helper compares both identifier and effective size before deciding its
+loaded engine is current, so an Apply notification reloads changed geometry
+without allowing an uncommitted slider draft to race the helper.
+
 ## Cursor corpus
 
 `native/cursor-packs/inventory-lock.json` locks the exact identifier set:
@@ -130,6 +154,25 @@ the nearest millisecond; the converter preserves the complete source cycle
 duration when it downsamples a long animation. Oreo `.cursor` files remain vendored under
 `native/oreo/Resources/Themes`; the 220 external `.cursor` files and all
 preview metadata/assets are generated from pinned build inputs.
+
+Config-referenced artwork is resolved by exact relative basename and exact
+alternate-extension basename before any normalized fallback. In particular, a
+numeric suffix is not assumed to be a raster-size marker: names such as
+`wait-16.svg`, `wait-20.svg`, and `wait-22.svg` are animation frames. Trying
+the unsuffixed `wait.svg` first substitutes a static image for those frames and
+creates a visible jump once per cycle. Focused converter coverage locks this
+exact-before-normalized ordering, and corpus generation validates complete
+frame order, timing, and output resources rather than special-casing individual
+families.
+
+Resolution provenance stays explicit. Bundled vector families are rendered
+directly at the 32, 64, 96, and 128 px tiers; each tier therefore retains the
+source detail. Local import begins with already-compiled cursor rasters. The
+importer can normalize those rasters into the required representation ladder,
+but it cannot restore detail above the largest source representation. A 96 px
+import derived from a compiled pack whose largest frame is 64 px is expected to
+look softer than the bundled build from the original SVG and is not evidence of
+the animation-resolution bug above.
 
 Generation occurs in a validated staging sibling and replaces `generated/`
 only after the complete corpus passes. The source cache and generated output
@@ -170,6 +213,26 @@ before the import transaction succeeds; a failure rolls all newly promoted
 variants back. Electron admits one application instance per user, so store-cap
 checks and promotion cannot race another importer. Bundled identifiers always
 take precedence, including against differently-cased imported identifiers.
+
+An imported theme's manifest `Group` is its family and is the only mutable
+artifact metadata. Assignment uses the exact label of a case-insensitive
+existing match or a new bounded label; JavaScript and native validation reject
+the same control/format characters. Duplicate-content identity normalizes only
+`Group` back to `Imported`, so reorganizing a pack does not make a later import
+look like an identifier collision. Cursor resources, previews, hashes, IDs, and
+all other manifest metadata remain part of the immutable identity.
+
+Only imported rows expose deletion: bundled resources live inside the signed
+application and are not mutable library data. A family can be deleted only when
+all of its current members are imported. The renderer confirms either operation
+before Electron serializes it with imports and cursor mutations. If a target is
+live, Electron restores the macOS cursors first; if it is the persisted native
+selection, Electron then selects bundled `OreoWhite` while custom cursors remain
+off. Validated pack directories are atomically moved out of the indexed store
+before Electron sends them to Trash. Manifest caches, favorites, appearance and
+randomization references, and native per-theme size preferences are pruned only
+after the library removal. Cleanup failures are reported separately and never
+misrepresent an already completed removal as a failed one.
 
 ## Package layout and identities
 

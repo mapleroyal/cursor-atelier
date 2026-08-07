@@ -65,11 +65,17 @@ static NSString * const OreoStatusChangedNotification =
 - (BOOL)bringStateCurrent:(NSError **)error {
     [OreoCursorDefaults() synchronize];
     NSString *selected = [OreoCursorEngine selectedThemeIdentifier];
+    BOOL effective =
+        [OreoCursorDefaults() boolForKey:OreoCursorEffectiveDefaultsKey];
+    NSInteger expectedSize = effective
+        ? [OreoCursorEngine effectiveSizePercentage]
+        : [OreoCursorEngine sizePercentageForThemeIdentifier:selected];
     BOOL reloaded = NO;
     if (!self.engine ||
         !self.engine.supported ||
         !self.engine.themeValid ||
-        ![self.engine.themeIdentifier isEqualToString:selected]) {
+        ![self.engine.themeIdentifier isEqualToString:selected] ||
+        self.engine.themeSizePercentage != expectedSize) {
         if (![self reloadEngine:error]) {
             return NO;
         }
@@ -93,8 +99,6 @@ static NSString * const OreoStatusChangedNotification =
 
     BOOL desired =
         [OreoCursorDefaults() boolForKey:OreoCursorEnabledDefaultsKey];
-    BOOL effective =
-        [OreoCursorDefaults() boolForKey:OreoCursorEffectiveDefaultsKey];
     if (desired) {
         BOOL success = reloaded || !effective
             ? [self.engine apply:error]

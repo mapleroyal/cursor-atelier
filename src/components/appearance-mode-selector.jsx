@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  DashboardSquare01Icon,
+  ComputerIcon,
   Moon02Icon,
   Sun02Icon,
 } from "@hugeicons/core-free-icons";
@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 
 const APPEARANCE_OPTIONS = [
   { value: "light", label: "Light", icon: Sun02Icon },
-  { value: "system", label: "System", icon: DashboardSquare01Icon },
+  { value: "system", label: "System", icon: ComputerIcon },
   { value: "dark", label: "Dark", icon: Moon02Icon },
 ];
 

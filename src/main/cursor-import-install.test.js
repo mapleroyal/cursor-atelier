@@ -6,8 +6,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  assignImportedCursorFamily,
   createCursorImportStaging,
   installImportedArtifacts,
+  removeImportedCursorArtifacts,
   removeCursorImportStaging,
 } from "./cursor-import-install";
 
@@ -65,6 +67,42 @@ function fixture() {
   };
 }
 
+function copyArtifactWithIdentifier(source, directory, identifier) {
+  fs.cpSync(source, directory, { recursive: true });
+  const manifestPath = path.join(directory, "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const [theme] = manifest.themes;
+  const previousIdentifier = theme.Identifier;
+  const previousPreviewPrefix = `previews/${previousIdentifier}/`;
+  const nextPreviewPrefix = `previews/${identifier}/`;
+  const previousPreviewDirectory = path.join(
+    directory,
+    "previews",
+    previousIdentifier,
+  );
+  const temporaryPreviewDirectory = path.join(
+    directory,
+    "previews",
+    ".case-change",
+  );
+  fs.renameSync(previousPreviewDirectory, temporaryPreviewDirectory);
+  fs.renameSync(
+    temporaryPreviewDirectory,
+    path.join(directory, "previews", identifier),
+  );
+  theme.Identifier = identifier;
+  theme.preview = theme.preview.replace(
+    previousPreviewPrefix,
+    nextPreviewPrefix,
+  );
+  theme.rolePreviews = theme.rolePreviews.map((role) => ({
+    ...role,
+    asset: role.asset.replace(previousPreviewPrefix, nextPreviewPrefix),
+  }));
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  return { directory };
+}
+
 describe("imported cursor installation", () => {
   it("atomically promotes a validated artifact and converges exact duplicates", async () => {
     const first = fixture();
@@ -100,6 +138,148 @@ describe("imported cursor installation", () => {
         importedPacksRoot: first.store,
       }),
     ).resolves.toMatchObject({ importedCount: 0, duplicateCount: 1 });
+  });
+
+  it("rejects case-insensitive identifier collisions within and across imports", async () => {
+    const batched = fixture();
+    const batchedVariant = copyArtifactWithIdentifier(
+      batched.artifact.directory,
+      path.join(batched.staging, "example-case-variant"),
+      "example",
+    );
+    await expect(
+      installImportedArtifacts({
+        artifacts: [batched.artifact, batchedVariant],
+        stagingDirectory: batched.staging,
+        importedPacksRoot: batched.store,
+      }),
+    ).rejects.toMatchObject({ code: "IDENTIFIER_COLLISION" });
+    expect(fs.existsSync(batched.destination)).toBe(false);
+
+    const sequential = fixture();
+    await installImportedArtifacts({
+      artifacts: [sequential.artifact],
+      stagingDirectory: sequential.staging,
+      importedPacksRoot: sequential.store,
+    });
+    const nextStaging = fs.mkdtempSync(path.join(sequential.store, ".import-"));
+    const sequentialVariant = copyArtifactWithIdentifier(
+      sequential.destination,
+      path.join(nextStaging, "example-case-variant"),
+      "example",
+    );
+    await expect(
+      installImportedArtifacts({
+        artifacts: [sequentialVariant],
+        stagingDirectory: nextStaging,
+        importedPacksRoot: sequential.store,
+      }),
+    ).rejects.toMatchObject({ code: "IDENTIFIER_COLLISION" });
+    expect(fs.existsSync(sequential.destination)).toBe(true);
+  });
+
+  it("persists family metadata without changing duplicate content identity", async () => {
+    const first = fixture();
+    await installImportedArtifacts({
+      artifacts: [first.artifact],
+      stagingDirectory: first.staging,
+      importedPacksRoot: first.store,
+    });
+    const cursorPath = path.join(first.destination, "Example.cursor");
+    const cursorBefore = fs.readFileSync(cursorPath);
+
+    await expect(
+      assignImportedCursorFamily({
+        identifiers: ["Example"],
+        family: "  Vimix  ",
+        importedPacksRoot: first.store,
+      }),
+    ).resolves.toMatchObject({ family: "Vimix", updatedCount: 1 });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(first.destination, "manifest.json"), "utf8"),
+      ).themes[0].Group,
+    ).toBe("Vimix");
+    expect(fs.readFileSync(cursorPath)).toEqual(cursorBefore);
+
+    const secondStaging = fs.mkdtempSync(path.join(first.store, ".import-"));
+    const duplicate = path.join(
+      secondStaging,
+      path.basename(first.destination),
+    );
+    fs.cpSync(first.destination, duplicate, { recursive: true });
+    const duplicateManifestPath = path.join(duplicate, "manifest.json");
+    const duplicateManifest = JSON.parse(
+      fs.readFileSync(duplicateManifestPath, "utf8"),
+    );
+    duplicateManifest.themes[0].Group = "Imported";
+    fs.writeFileSync(duplicateManifestPath, JSON.stringify(duplicateManifest));
+
+    await expect(
+      installImportedArtifacts({
+        artifacts: [{ directory: duplicate }],
+        stagingDirectory: secondStaging,
+        importedPacksRoot: first.store,
+      }),
+    ).resolves.toMatchObject({ importedCount: 0, duplicateCount: 1 });
+  });
+
+  it("rejects family names containing native-invalid Unicode controls", async () => {
+    const data = fixture();
+    await installImportedArtifacts({
+      artifacts: [data.artifact],
+      stagingDirectory: data.staging,
+      importedPacksRoot: data.store,
+    });
+
+    await expect(
+      assignImportedCursorFamily({
+        identifiers: ["Example"],
+        family: "Studio\u200bCursors",
+        importedPacksRoot: data.store,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_FAMILY" });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(data.destination, "manifest.json"), "utf8"),
+      ).themes[0].Group,
+    ).toBe("Imported");
+  });
+
+  it("removes only validated imported artifacts after resolving every target", async () => {
+    const data = fixture();
+    await installImportedArtifacts({
+      artifacts: [data.artifact],
+      stagingDirectory: data.staging,
+      importedPacksRoot: data.store,
+    });
+
+    await expect(
+      removeImportedCursorArtifacts({
+        identifiers: ["Missing"],
+        importedPacksRoot: data.store,
+      }),
+    ).rejects.toMatchObject({ code: "CURSOR_NOT_FOUND" });
+    expect(fs.existsSync(data.destination)).toBe(true);
+
+    const disposed = [];
+    await expect(
+      removeImportedCursorArtifacts({
+        identifiers: ["Example"],
+        importedPacksRoot: data.store,
+        async disposeArtifact(artifactPath) {
+          disposed.push(path.basename(artifactPath));
+          await fs.promises.rm(artifactPath, { recursive: true, force: false });
+        },
+      }),
+    ).resolves.toMatchObject({
+      identifiers: ["Example"],
+      removedCount: 1,
+      recoverable: true,
+      cleanupPending: false,
+    });
+    expect(disposed).toEqual([path.basename(data.destination)]);
+    expect(fs.existsSync(data.destination)).toBe(false);
   });
 
   it("rolls back every newly promoted artifact when native validation fails", async () => {

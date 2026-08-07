@@ -140,7 +140,9 @@ class AppControllerContractTests(unittest.TestCase):
         engine = ENGINE.read_text(encoding="utf-8")
         initialize = self._function(
             engine,
-            "- (instancetype)initWithThemeIdentifier:",
+            "- (instancetype)initWithThemeIdentifier:(NSString *)themeIdentifier\n"
+            "                          resourceBundle:(NSBundle *)resourceBundle\n"
+            "                          sizePercentage:",
             "- (void)failWithError:",
         )
         api = "self.supported = [self loadPrivateAPI:&apiError];"
@@ -213,6 +215,121 @@ class AppControllerContractTests(unittest.TestCase):
         self.assertIn("hasThreeX = hasThreeX || scaleValue == 3", validation)
         self.assertIn("if (!hasOneX || !hasTwoX || !hasThreeX)", validation)
         self.assertNotIn("representations.count != 2", validation)
+
+    def test_theme_size_scales_registration_geometry_without_resampling(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        scaling = self._function(
+            engine,
+            "OreoThemeCursorsByScalingGeometry(",
+            "@interface OreoCursorEngine ()",
+        )
+        self.assertIn('scaledRecord[@"PointsWide"] = @(width);', scaling)
+        self.assertIn('scaledRecord[@"PointsHigh"] = @(height);', scaling)
+        self.assertIn('scaledRecord[@"HotSpotX"] = @(hotX);', scaling)
+        self.assertIn('scaledRecord[@"HotSpotY"] = @(hotY);', scaling)
+        self.assertNotIn('scaledRecord[@"Images"]', scaling)
+        self.assertNotIn('scaledRecord[@"FrameCount"]', scaling)
+        self.assertNotIn('scaledRecord[@"FrameDuration"]', scaling)
+
+        load = self._function(
+            engine,
+            "- (BOOL)loadAndValidateTheme:(NSError **)error",
+            "static NSDictionary * _Nullable OreoValidatedThemeCursor(",
+        )
+        self.assertIn("OreoDecodedThemeCursors", load)
+        self.assertIn("OreoThemeCursorsByScalingGeometry", load)
+
+        verify = self._function(
+            engine,
+            "- (BOOL)verifyThemeIdentifiers:",
+            "- (BOOL)verifySnapshot:",
+        )
+        self.assertIn("_themeCursors[identifier]", verify)
+        self.assertIn(
+            "[self recordsMatch:_themeCursors[identifier] actual:actual]", verify
+        )
+
+    def test_size_draft_and_effective_state_cannot_race_the_helper(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        controller = CONTROLLER.read_text(encoding="utf-8")
+        helper = HELPER.read_text(encoding="utf-8")
+
+        apply_theme = self._function(
+            controller,
+            "static BOOL OreoApplyTheme(",
+            "static BOOL OreoParseThemeSizePercentage(",
+        )
+        self.assertIn(
+            "sizePercentage:[OreoCursorEngine\n"
+            "                     sizePercentageForThemeIdentifier:identifier]",
+            apply_theme,
+        )
+
+        set_size = self._function(
+            controller,
+            'if ([command isEqual:@"--set-theme-size"]) {',
+            'if ([command isEqual:@"--validate-themes"]) {',
+        )
+        self.assertIn("saveSizePercentage:sizePercentage", set_size)
+        self.assertNotIn("OreoPostSettingsChangedNotification", set_size)
+
+        apply_locked = self._function(
+            engine,
+            "- (BOOL)applyLocked:(NSError **)error {",
+            "- (BOOL)restore:(NSError **)error {",
+        )
+        verification = apply_locked.index("verifyThemeIdentifiers:")
+        persist_effective = apply_locked.index("persistAppliedState:")
+        clear_journal = apply_locked.index("clearTransaction:", persist_effective)
+        self.assertLess(verification, persist_effective)
+        self.assertLess(persist_effective, clear_journal)
+
+        bring_current = self._function(
+            helper,
+            "- (BOOL)bringStateCurrent:(NSError **)error",
+            "- (void)applicationDidFinishLaunching:",
+        )
+        self.assertIn("[OreoCursorEngine effectiveSizePercentage]", bring_current)
+        self.assertIn(
+            "self.engine.themeSizePercentage != expectedSize", bring_current
+        )
+
+    def test_theme_size_map_has_a_dedicated_full_catalogue_bound(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        self.assertIn(
+            "static const NSUInteger OreoMaximumThemeSizeEntries = 2048;",
+            engine,
+        )
+        save_size = self._function(
+            engine,
+            "+ (BOOL)saveSizePercentage:(NSInteger)sizePercentage",
+            "- (instancetype)initWithError:",
+        )
+        self.assertNotIn("OreoMaximumImportedThemes", save_size)
+        self.assertIn("OreoMaximumThemeSizeEntries - 1", save_size)
+        self.assertIn("[availableIdentifiers containsObject:identifier]", save_size)
+        self.assertIn("[identifier isEqualToString:themeIdentifier]", save_size)
+
+    def test_deleted_theme_size_cleanup_does_not_require_a_manifest(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        controller = CONTROLLER.read_text(encoding="utf-8")
+        forget_size = self._function(
+            engine,
+            "+ (BOOL)forgetSizePercentageForThemeIdentifier:",
+            "- (instancetype)initWithError:",
+        )
+        self.assertIn("OreoIsSafeThemeIdentifier(themeIdentifier)", forget_size)
+        self.assertIn("removeObjectForKey:themeIdentifier", forget_size)
+        self.assertNotIn("OreoThemeSpecificationForBundle", forget_size)
+        self.assertNotIn("OreoThemeSpecificationsForBundle", forget_size)
+
+        command = self._function(
+            controller,
+            'if ([command isEqual:@"--forget-theme-size"]) {',
+            'if ([command isEqual:@"--validate-themes"]) {',
+        )
+        self.assertIn("forgetSizePercentageForThemeIdentifier", command)
+        self.assertNotIn("OreoPostSettingsChangedNotification", command)
 
     def test_failed_cursor_removal_is_verified_before_restore_fails(self) -> None:
         engine = ENGINE.read_text(encoding="utf-8")

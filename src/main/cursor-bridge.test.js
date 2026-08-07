@@ -26,6 +26,7 @@ function writeImportedPack(
     nativeThemeId = "ImportedAurora",
     catalogId = "imported-aurora",
     displayName = "Imported Aurora",
+    family = "Imported",
     cursorData = Buffer.from("cursor resource"),
     previewData = ONE_PIXEL_PNG,
   } = {},
@@ -48,26 +49,27 @@ function writeImportedPack(
     catalogId,
     DisplayName: displayName,
     ThemeName: displayName,
-    Group: "Imported",
+    Group: family,
     Variant: "Default",
     Resource: resourceFile,
     SHA256: crypto.createHash("sha256").update(cursorData).digest("hex"),
     UUID: crypto.randomUUID().toUpperCase(),
     preview: previewFile,
-    rolePreviews: [
-      {
-        role: "default",
-        macIdentifier: "com.apple.coregraphics.Arrow",
-        asset: previewFile,
-        frameCount: 1,
-        frameDuration: 1,
-      },
-    ],
+    rolePreviews: Array.from({ length: 47 }, (_, index) => ({
+      role: index === 0 ? "default" : `role-${index}`,
+      macIdentifier:
+        index === 0
+          ? "com.apple.coregraphics.Arrow"
+          : `com.example.cursor.Role${index}`,
+      asset: previewFile,
+      frameCount: 1,
+      frameDuration: 1,
+    })),
   };
   const manifestPath = path.join(packRoot, "manifest.json");
   fs.writeFileSync(
     manifestPath,
-    JSON.stringify({ schemaVersion: 2, themes: [theme] }),
+    JSON.stringify({ schemaVersion: 2, roleCount: 47, themes: [theme] }),
     { mode: 0o600 },
   );
   return {
@@ -292,6 +294,300 @@ describe("cursor bridge imported manifests", () => {
       canApply: true,
       status: "available",
     });
+  });
+
+  it("persists family assignment and canonicalizes case to an existing label", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    writeImportedPack(importedPacksRoot, {
+      packName: "vimix-blue",
+      nativeThemeId: "VimixBlueImport",
+      catalogId: "vimix-blue-import",
+      displayName: "Vimix Blue Import",
+      family: "Vimix",
+    });
+    const reassigned = writeImportedPack(importedPacksRoot, {
+      packName: "vimix-red",
+      nativeThemeId: "VimixRedImport",
+      catalogId: "vimix-red-import",
+      displayName: "Vimix Red Import",
+    });
+    const bridge = createCursorBridge({
+      nativePath: "/missing/cursor-bridge",
+      discover: false,
+      importedPacksRoot,
+    });
+
+    await expect(
+      bridge.assignImportedFamily(["VimixRedImport"], "vimix"),
+    ).resolves.toMatchObject({
+      family: "Vimix",
+      identifiers: ["VimixRedImport"],
+      updatedCount: 1,
+    });
+    expect(
+      JSON.parse(fs.readFileSync(reassigned.manifestPath, "utf8")).themes[0]
+        .Group,
+    ).toBe("Vimix");
+    expect(
+      (await bridge.listThemes())
+        .filter((theme) => theme.imported)
+        .map((theme) => theme.family),
+    ).toEqual(["Vimix", "Vimix"]);
+  });
+
+  it("tears down a selected active import and persists a bundled fallback before trashing it", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    const pack = writeImportedPack(importedPacksRoot);
+    let rawStatus = {
+      supported: true,
+      themeValid: true,
+      selectedThemeIdentifier: "ImportedAurora",
+      desiredEnabled: true,
+      effectiveApplied: true,
+      currentSentinelsMatchTheme: true,
+      launchAtLoginDesired: true,
+      loginItemRegistrationCurrent: true,
+    };
+    const calls = [];
+    const trashed = [];
+    let artifactPresentDuringSizeCleanup = null;
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner: async ({ command, arguments: args }) => {
+        calls.push([command, ...args]);
+        if (command === "--teardown") {
+          rawStatus = {
+            ...rawStatus,
+            desiredEnabled: false,
+            effectiveApplied: false,
+            currentSentinelsMatchTheme: false,
+            launchAtLoginDesired: false,
+            loginItemRegistrationCurrent: false,
+          };
+        } else if (command === "--select-theme") {
+          rawStatus = {
+            ...rawStatus,
+            selectedThemeIdentifier: args[0],
+            themeValid: true,
+          };
+        } else if (command === "--forget-theme-size") {
+          artifactPresentDuringSizeCleanup = fs.existsSync(pack.packRoot);
+        }
+        return { ...rawStatus };
+      },
+      trashImportedArtifact: async (artifactPath) => {
+        trashed.push(path.basename(artifactPath));
+        await fs.promises.rm(artifactPath, { recursive: true });
+      },
+    });
+
+    await expect(
+      bridge.deleteImportedThemes(["ImportedAurora"]),
+    ).resolves.toMatchObject({
+      identifiers: ["ImportedAurora"],
+      removedCount: 1,
+      cleanupPending: false,
+      recoverable: true,
+      restoredToMacOS: true,
+      selectionReassigned: true,
+      status: {
+        selectedNativeThemeId: "OreoWhite",
+        isEnabled: false,
+      },
+    });
+    expect(calls).toEqual([
+      ["--status"],
+      ["--teardown"],
+      ["--select-theme", "OreoWhite"],
+      ["--forget-theme-size", "ImportedAurora"],
+      ["--status"],
+    ]);
+    expect(artifactPresentDuringSizeCleanup).toBe(false);
+    expect(trashed).toEqual(["imported-aurora"]);
+    expect(fs.existsSync(pack.packRoot)).toBe(false);
+  });
+
+  it("tears down an unidentified drifted live cursor without replacing an unrelated selection", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    writeImportedPack(importedPacksRoot);
+    let rawStatus = {
+      supported: true,
+      themeValid: true,
+      selectedThemeIdentifier: "OreoWhite",
+      desiredEnabled: true,
+      effectiveApplied: true,
+      currentSentinelsMatchTheme: false,
+      launchAtLoginDesired: true,
+      loginItemRegistrationCurrent: true,
+    };
+    const calls = [];
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner: async ({ command, arguments: args }) => {
+        calls.push([command, ...args]);
+        if (command === "--teardown") {
+          rawStatus = {
+            ...rawStatus,
+            desiredEnabled: false,
+            effectiveApplied: false,
+            launchAtLoginDesired: false,
+            loginItemRegistrationCurrent: false,
+          };
+        }
+        return { ...rawStatus };
+      },
+      trashImportedArtifact: (artifactPath) =>
+        fs.promises.rm(artifactPath, { recursive: true }),
+    });
+
+    await expect(
+      bridge.deleteImportedThemes(["ImportedAurora"]),
+    ).resolves.toMatchObject({
+      restoredToMacOS: true,
+      selectionReassigned: false,
+    });
+    expect(calls).toEqual([
+      ["--status"],
+      ["--teardown"],
+      ["--forget-theme-size", "ImportedAurora"],
+      ["--status"],
+    ]);
+  });
+
+  it("forgets every deleted family member after removal and reports cleanup failures without undoing deletion", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    const blue = writeImportedPack(importedPacksRoot, {
+      packName: "aurora-blue",
+      nativeThemeId: "ImportedAuroraBlue",
+      catalogId: "imported-aurora-blue",
+      displayName: "Imported Aurora Blue",
+      family: "Aurora",
+    });
+    const red = writeImportedPack(importedPacksRoot, {
+      packName: "aurora-red",
+      nativeThemeId: "ImportedAuroraRed",
+      catalogId: "imported-aurora-red",
+      displayName: "Imported Aurora Red",
+      family: "Aurora",
+    });
+    const calls = [];
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner: async ({ command, arguments: args }) => {
+        calls.push([command, ...args]);
+        if (command === "--list-themes") {
+          return [
+            {
+              Identifier: "ImportedAuroraBlue",
+              DisplayName: "Imported Aurora Blue",
+              Group: "Aurora",
+            },
+            {
+              Identifier: "ImportedAuroraRed",
+              DisplayName: "Imported Aurora Red",
+              Group: "Aurora",
+            },
+          ];
+        }
+        if (
+          command === "--forget-theme-size" &&
+          args[0] === "ImportedAuroraBlue"
+        ) {
+          throw new Error("preferences unavailable");
+        }
+        return {
+          supported: true,
+          themeValid: true,
+          selectedThemeIdentifier: "OreoWhite",
+          desiredEnabled: false,
+          effectiveApplied: false,
+          currentSentinelsMatchTheme: false,
+        };
+      },
+      trashImportedArtifact: (artifactPath) =>
+        fs.promises.rm(artifactPath, { recursive: true }),
+    });
+
+    await expect(bridge.deleteImportedFamily("Aurora")).resolves.toMatchObject({
+      removedCount: 2,
+      sizePreferenceCleanupPending: true,
+    });
+    expect(
+      calls.filter(([command]) => command === "--forget-theme-size"),
+    ).toEqual([
+      ["--forget-theme-size", "ImportedAuroraBlue"],
+      ["--forget-theme-size", "ImportedAuroraRed"],
+    ]);
+    expect(fs.existsSync(blue.packRoot)).toBe(false);
+    expect(fs.existsSync(red.packRoot)).toBe(false);
+  });
+
+  it("refuses to delete a family containing both built-in and imported cursors", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    const pack = writeImportedPack(importedPacksRoot, { family: "Oreo" });
+    const disposeArtifact = vi.fn();
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner: async ({ command }) => {
+        if (command === "--list-themes") {
+          return [
+            { Identifier: "OreoWhite", DisplayName: "Oreo White" },
+            { Identifier: "ImportedAurora", DisplayName: "Imported Aurora" },
+          ];
+        }
+        return {};
+      },
+      trashImportedArtifact: disposeArtifact,
+    });
+
+    await expect(bridge.deleteImportedFamily("Oreo")).rejects.toMatchObject({
+      code: "MIXED_FAMILY",
+    });
+    expect(disposeArtifact).not.toHaveBeenCalled();
+    expect(fs.existsSync(pack.packRoot)).toBe(true);
+  });
+
+  it("deletes every pack in an imported-only family as one mutation", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    const blue = writeImportedPack(importedPacksRoot, {
+      packName: "studio-blue",
+      nativeThemeId: "StudioBlue",
+      catalogId: "studio-blue",
+      family: "Studio",
+    });
+    const red = writeImportedPack(importedPacksRoot, {
+      packName: "studio-red",
+      nativeThemeId: "StudioRed",
+      catalogId: "studio-red",
+      family: "Studio",
+    });
+    const disposed = [];
+    const bridge = createCursorBridge({
+      nativePath: "/missing/cursor-bridge",
+      discover: false,
+      importedPacksRoot,
+      trashImportedArtifact: async (artifactPath) => {
+        disposed.push(path.basename(artifactPath));
+        await fs.promises.rm(artifactPath, { recursive: true });
+      },
+    });
+
+    await expect(bridge.deleteImportedFamily("Studio")).resolves.toMatchObject({
+      identifiers: ["StudioBlue", "StudioRed"],
+      removedCount: 2,
+      recoverable: true,
+    });
+    expect(disposed.sort()).toEqual(["studio-blue", "studio-red"]);
+    expect(fs.existsSync(blue.packRoot)).toBe(false);
+    expect(fs.existsSync(red.packRoot)).toBe(false);
   });
 
   it("keeps bundled native and catalogue identifiers immutable on collision", async () => {
@@ -701,7 +997,13 @@ describe("cursor bridge live native state", () => {
       commandRunner: async ({ command, arguments: args }) => {
         calls.push([command, ...args]);
         if (command === "--list-themes") {
-          return [{ Identifier: "OreoBlue", DisplayName: "Oreo Blue" }];
+          return [
+            {
+              Identifier: "OreoBlue",
+              DisplayName: "Oreo Blue",
+              SizePercentage: 125,
+            },
+          ];
         }
         if (command === "--apply-theme") {
           rawStatus = {
@@ -765,6 +1067,35 @@ describe("cursor bridge live native state", () => {
       isEnabled: false,
     });
     expect(fixture.calls.slice(-2)).toEqual([["--teardown"], ["--status"]]);
+  });
+
+  it("saves bounded per-theme size without reading or changing live state", async () => {
+    const fixture = createNativeFixture();
+
+    await expect(fixture.bridge.listThemes()).resolves.toEqual([
+      expect.objectContaining({
+        nativeThemeId: "OreoBlue",
+        sizePercentage: 125,
+      }),
+    ]);
+    fixture.calls.length = 0;
+
+    await expect(
+      fixture.bridge.setThemeSize("oreo-blue", 135),
+    ).resolves.toEqual({
+      id: "oreo-blue",
+      nativeThemeId: "OreoBlue",
+      sizePercentage: 135,
+    });
+    expect(fixture.calls).toEqual([["--set-theme-size", "OreoBlue", "135"]]);
+
+    await expect(fixture.bridge.setThemeSize("oreo-blue", 49)).rejects.toThrow(
+      "between 50 and 200",
+    );
+    await expect(
+      fixture.bridge.setThemeSize("oreo-blue", 100.5),
+    ).rejects.toThrow("between 50 and 200");
+    expect(fixture.calls).toHaveLength(1);
   });
 
   it("requires every imported theme to pass the native decoder", async () => {
@@ -913,6 +1244,7 @@ describe("cursor IPC", () => {
       status: vi.fn(() => ({ isEnabled: false })),
       listThemes: vi.fn(() => []),
       applyTheme: vi.fn(),
+      setThemeSize: vi.fn(),
       restore: vi.fn(),
       openLoginSettings: vi.fn(),
     };
@@ -926,6 +1258,7 @@ describe("cursor IPC", () => {
       "cursor:status",
       "cursor:list-themes",
       "cursor:apply-theme",
+      "cursor:set-theme-size",
       "cursor:restore",
       "cursor:open-login-settings",
     ]);

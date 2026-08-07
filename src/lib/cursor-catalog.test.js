@@ -136,6 +136,17 @@ describe("cursor catalogue", () => {
     expect(vimixWhite.uuid).toBe("uuid");
   });
 
+  it("preserves an explicitly named External family for imported themes", () => {
+    expect(
+      normalizeCursorTheme({
+        Identifier: "VimixWhite",
+        DisplayName: "Imported Vimix White",
+        Group: "External",
+        imported: true,
+      }).family,
+    ).toBe("External");
+  });
+
   it("replaces family placeholders when only named variants are generated", () => {
     const bases = [
       getCursorCatalogEntry("bibata"),

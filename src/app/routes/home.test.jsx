@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyCursorTheme,
+  assignImportedCursorFamily,
+  deleteImportedCursor,
+  deleteImportedCursorFamily,
   getAutomaticSelectionId,
   getPackRailNavigationIndex,
   getSelectedStatusVariant,
@@ -13,9 +16,12 @@ import {
   isStatusVerifiedActive,
   isStatusVerifiedRestored,
   importCursorPack,
+  matchesCursorPack,
+  normalizeCursorSizePercentage,
   openLoginItemsSettings,
   resolvePackQuerySource,
   restoreCursors,
+  setCursorThemeSize,
 } from "@/lib/cursor-ui";
 
 const originalWindow = globalThis.window;
@@ -149,6 +155,18 @@ describe("cursor status presentation", () => {
           calls.push(["import"]);
           return { canceled: false, identifiers: ["ImportedTheme"] };
         }),
+        setCursorThemeSize: vi.fn(async (identifier, sizePercentage) => {
+          calls.push(["size", identifier, sizePercentage]);
+        }),
+        assignImportedCursorFamily: vi.fn(async (identifiers, family) => {
+          calls.push(["family", identifiers, family]);
+        }),
+        deleteImportedCursor: vi.fn(async (identifier) => {
+          calls.push(["delete", identifier]);
+        }),
+        deleteImportedCursorFamily: vi.fn(async (family) => {
+          calls.push(["delete-family", family]);
+        }),
         selectCursorTheme: vi.fn(),
         applyCursors: vi.fn(),
       },
@@ -159,6 +177,10 @@ describe("cursor status presentation", () => {
     await applyCursorTheme("OreoBlue");
     await openLoginItemsSettings();
     await importCursorPack();
+    await setCursorThemeSize("OreoBlue", 135);
+    await assignImportedCursorFamily(["ImportedBlue"], "Blue");
+    await deleteImportedCursor("ImportedBlue");
+    await deleteImportedCursorFamily("Blue");
 
     expect(calls).toEqual([
       ["apply", "OreoBlue"],
@@ -166,13 +188,36 @@ describe("cursor status presentation", () => {
       ["apply", "OreoBlue"],
       ["open-login-settings"],
       ["import"],
+      ["size", "OreoBlue", 135],
+      ["family", ["ImportedBlue"], "Blue"],
+      ["delete", "ImportedBlue"],
+      ["delete-family", "Blue"],
     ]);
     expect(window.electronAPI.selectCursorTheme).not.toHaveBeenCalled();
     expect(window.electronAPI.applyCursors).not.toHaveBeenCalled();
   });
+
+  it("normalizes only bounded integer cursor sizes", () => {
+    expect(normalizeCursorSizePercentage(50)).toBe(50);
+    expect(normalizeCursorSizePercentage(200)).toBe(200);
+    expect(normalizeCursorSizePercentage(100.5)).toBe(100);
+    expect(normalizeCursorSizePercentage(201, 125)).toBe(125);
+  });
 });
 
 describe("cursor rail behavior", () => {
+  it("matches native cursor identifiers case-insensitively", () => {
+    const pack = {
+      id: "imported-aurora",
+      nativeThemeId: "ImportedAurora",
+      nativeThemeIds: ["ImportedAuroraAlias"],
+    };
+
+    expect(matchesCursorPack(pack, "importedaurora")).toBe(true);
+    expect(matchesCursorPack(pack, "IMPORTEDAURORAALIAS")).toBe(true);
+    expect(matchesCursorPack(pack, "another-cursor")).toBe(false);
+  });
+
   it("moves a single roving focus target with vertical and boundary keys", () => {
     expect(getPackRailNavigationIndex("ArrowDown", 0, 239)).toBe(1);
     expect(getPackRailNavigationIndex("ArrowUp", 1, 239)).toBe(0);

@@ -15,6 +15,7 @@ const MAX_IMPORTED_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_IMPORTED_CURSOR_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORTED_CURSOR_BYTES_TOTAL = 512 * 1024 * 1024;
 const MAX_IMPORTED_PREVIEW_BYTES = 16 * 1024 * 1024;
+const CONTROL_CHARACTER_PATTERN = /[\p{Cc}\p{Cf}]/u;
 
 export class CursorImportInstallError extends Error {
   constructor(code, message) {
@@ -145,32 +146,73 @@ async function inspectTree(root, { requirePrivate = true } = {}) {
   return { files, directories };
 }
 
-async function digestTree(tree) {
+async function digestTree(tree, manifest = null) {
   const hash = crypto.createHash("sha256");
   for (const file of tree.files) {
     hash.update(file.relative);
     hash.update("\0");
-    hash.update(await fs.promises.readFile(file.path));
+    if (manifest && file.relative === "manifest.json") {
+      const identityManifest = structuredClone(manifest);
+      for (const theme of identityManifest.themes ?? []) {
+        // Family is user-editable library metadata. Excluding only that field
+        // from duplicate identity lets a re-import converge on the same
+        // content-derived pack after the user organizes it, while every cursor,
+        // preview, and immutable manifest field remains part of the comparison.
+        theme.Group = "Imported";
+      }
+      hash.update(JSON.stringify(identityManifest));
+    } else {
+      hash.update(await fs.promises.readFile(file.path));
+    }
     hash.update("\0");
   }
   return hash.digest("hex");
 }
 
-function boundedText(value, maximum) {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > maximum
-  ) {
-    return false;
+export function isBoundedCursorManifestText(value, maximum) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximum &&
+    !CONTROL_CHARACTER_PATTERN.test(value)
+  );
+}
+
+export function normalizeImportedCursorFamily(value) {
+  if (typeof value !== "string") {
+    fail("INVALID_FAMILY", "A cursor family name is required.");
   }
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
-      return false;
+  const family = value.trim();
+  if (!isBoundedCursorManifestText(family, 128)) {
+    fail(
+      "INVALID_FAMILY",
+      "Cursor family names must contain between 1 and 128 characters.",
+    );
+  }
+  return family;
+}
+
+function normalizeImportedIdentifiers(identifiers) {
+  if (
+    !Array.isArray(identifiers) ||
+    identifiers.length === 0 ||
+    identifiers.length > MAX_IMPORTED_PACKS
+  ) {
+    fail("INVALID_OPTIONS", "At least one imported cursor is required.");
+  }
+  const normalized = [];
+  const seen = new Set();
+  for (const identifier of identifiers) {
+    if (typeof identifier !== "string" || !SAFE_NAME.test(identifier)) {
+      fail("INVALID_OPTIONS", "An imported cursor identifier is invalid.");
+    }
+    const key = identifier.toLowerCase();
+    if (!seen.has(key)) {
+      normalized.push(identifier);
+      seen.add(key);
     }
   }
-  return true;
+  return normalized;
 }
 
 async function validatePreviewAsset(
@@ -276,9 +318,9 @@ async function validateArtifact(directory, expectedStagingRoot = null) {
     !SAFE_NAME.test(String(resource ?? "")) ||
     path.extname(resource).toLowerCase() !== ".cursor" ||
     !SHA256.test(expectedHash) ||
-    !boundedText(entry?.DisplayName, 256) ||
-    !boundedText(entry?.ThemeName, 256) ||
-    !boundedText(entry?.Group, 128) ||
+    !isBoundedCursorManifestText(entry?.DisplayName, 256) ||
+    !isBoundedCursorManifestText(entry?.ThemeName, 256) ||
+    !isBoundedCursorManifestText(entry?.Group, 128) ||
     typeof entry?.UUID !== "string" ||
     !UUID.test(entry.UUID) ||
     typeof entry?.preview !== "string" ||
@@ -323,9 +365,14 @@ async function validateArtifact(directory, expectedStagingRoot = null) {
     packName,
     identifier,
     entry,
+    family: entry.Group,
+    displayName: entry.DisplayName,
+    manifest,
+    manifestFile,
     resourceBytes: resourceStat.size,
     tree,
     digest: await digestTree(tree),
+    identityDigest: await digestTree(tree, manifest),
   };
 }
 
@@ -353,6 +400,9 @@ async function privateStoreRoot(importedPacksRoot) {
 }
 
 async function inspectInstalledStore(root) {
+  const artifacts = [];
+  const byIdentifier = new Map();
+  const byPackName = new Map();
   let packCount = 0;
   let cursorBytes = 0;
   const entries = await fs.promises.readdir(root, { withFileTypes: true });
@@ -384,8 +434,275 @@ async function inspectInstalledStore(root) {
         cursorBytes += file.size;
       }
     }
+
+    let artifact;
+    try {
+      artifact = await validateArtifact(packPath);
+    } catch (error) {
+      // Preserve the store accounting behavior for an incomplete/corrupt pack:
+      // it still consumes quota, but native ignores it and it has no identity
+      // that a new valid import could collide with.
+      if (
+        error?.code === "ENOENT" ||
+        error instanceof CursorImportInstallError
+      ) {
+        continue;
+      }
+      throw error;
+    }
+    const identifierKey = artifact.identifier.toLowerCase();
+    const packNameKey = artifact.packName.toLowerCase();
+    if (byIdentifier.has(identifierKey) || byPackName.has(packNameKey)) {
+      fail(
+        "IDENTIFIER_COLLISION",
+        "The imported cursor store contains duplicate themes.",
+      );
+    }
+    artifacts.push(artifact);
+    byIdentifier.set(identifierKey, artifact);
+    byPackName.set(packNameKey, artifact);
   }
-  return { packCount, cursorBytes };
+  return {
+    artifacts,
+    byIdentifier,
+    byPackName,
+    packCount,
+    cursorBytes,
+  };
+}
+
+async function resolveInstalledArtifacts(root, identifiers) {
+  const requested = new Map(
+    normalizeImportedIdentifiers(identifiers).map((identifier) => [
+      identifier.toLowerCase(),
+      identifier,
+    ]),
+  );
+  const resolved = new Map();
+  const entries = await fs.promises.readdir(root, { withFileTypes: true });
+  if (entries.length > MAX_IMPORTED_DIRECTORY_ENTRIES) {
+    fail(
+      "LIMIT_EXCEEDED",
+      "The imported cursor store contains too many entries.",
+    );
+  }
+
+  for (const entry of entries) {
+    if (!SAFE_NAME.test(entry.name)) {
+      continue;
+    }
+    const packPath = path.join(root, entry.name);
+    if (!entry.isDirectory()) {
+      fail(
+        "UNSAFE_STORE",
+        "The imported cursor store contains an unsafe pack.",
+      );
+    }
+    const artifact = await validateArtifact(packPath);
+    if (path.dirname(artifact.directory) !== root) {
+      fail("UNSAFE_STORE", "An imported cursor escaped its private store.");
+    }
+    const key = artifact.identifier.toLowerCase();
+    if (!requested.has(key)) {
+      continue;
+    }
+    if (resolved.has(key)) {
+      fail(
+        "IDENTIFIER_COLLISION",
+        `More than one imported cursor uses ${artifact.identifier}.`,
+      );
+    }
+    resolved.set(key, artifact);
+  }
+
+  const missing = [...requested].filter(([key]) => !resolved.has(key));
+  if (missing.length) {
+    fail(
+      "CURSOR_NOT_FOUND",
+      `The imported cursor ${missing[0][1]} is no longer available.`,
+    );
+  }
+  return [...requested.keys()].map((key) => resolved.get(key));
+}
+
+async function replacePrivateManifest(root, artifact, manifest) {
+  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  if (Buffer.byteLength(serialized) > MAX_IMPORTED_MANIFEST_BYTES) {
+    fail("LIMIT_EXCEEDED", "The imported cursor manifest is too large.");
+  }
+  await regularFile(artifact.manifestFile);
+  if (
+    path.dirname(artifact.directory) !== root ||
+    path.dirname(artifact.manifestFile) !== artifact.directory
+  ) {
+    fail("UNSAFE_STORE", "The imported cursor manifest escaped its pack.");
+  }
+
+  const editDirectory = await fs.promises.mkdtemp(
+    path.join(root, ".metadata-"),
+  );
+  await fs.promises.chmod(editDirectory, 0o700);
+  const temporaryManifest = path.join(editDirectory, "manifest.json");
+  let operationError = null;
+  try {
+    await fs.promises.writeFile(temporaryManifest, serialized, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await regularFile(temporaryManifest);
+    await fs.promises.rename(temporaryManifest, artifact.manifestFile);
+  } catch (error) {
+    operationError = error;
+  }
+
+  // These private edit directories are ignored by every store scanner. A
+  // cleanup failure must not hide the manifest write/rename result; a stale
+  // directory is inert and can be cleaned up by a later maintenance pass.
+  try {
+    await fs.promises.unlink(temporaryManifest);
+  } catch {
+    // The rename normally consumes this file.
+  }
+  try {
+    await fs.promises.rmdir(editDirectory);
+  } catch {
+    // Keep the ignored private directory if the filesystem rejects cleanup.
+  }
+  if (operationError) {
+    throw operationError;
+  }
+}
+
+export async function assignImportedCursorFamily({
+  identifiers,
+  family,
+  importedPacksRoot,
+}) {
+  const normalizedFamily = normalizeImportedCursorFamily(family);
+  const root = await privateStoreRoot(importedPacksRoot);
+  const artifacts = await resolveInstalledArtifacts(root, identifiers);
+  const originals = await Promise.all(
+    artifacts.map((artifact) =>
+      fs.promises.readFile(artifact.manifestFile, "utf8"),
+    ),
+  );
+  const changed = [];
+
+  try {
+    for (const artifact of artifacts) {
+      if (artifact.family === normalizedFamily) {
+        continue;
+      }
+      const manifest = structuredClone(artifact.manifest);
+      manifest.themes[0].Group = normalizedFamily;
+      await replacePrivateManifest(root, artifact, manifest);
+      changed.push(artifact);
+      const validated = await validateArtifact(artifact.directory);
+      if (validated.family !== normalizedFamily) {
+        fail("INVALID_ARTIFACT", "The cursor family change was not persisted.");
+      }
+    }
+  } catch (error) {
+    for (const artifact of changed.reverse()) {
+      const index = artifacts.indexOf(artifact);
+      try {
+        await replacePrivateManifest(
+          root,
+          artifact,
+          JSON.parse(originals[index]),
+        );
+      } catch {
+        // Preserve the original failure. The replacement path remains confined
+        // to a complete imported pack even if this best-effort rollback fails.
+      }
+    }
+    throw error;
+  }
+
+  return {
+    identifiers: artifacts.map((artifact) => artifact.identifier),
+    family: normalizedFamily,
+    updatedCount: changed.length,
+  };
+}
+
+export async function removeImportedCursorArtifacts({
+  identifiers,
+  importedPacksRoot,
+  disposeArtifact,
+}) {
+  if (disposeArtifact !== undefined && typeof disposeArtifact !== "function") {
+    fail("INVALID_OPTIONS", "The imported cursor disposal handler is invalid.");
+  }
+  const root = await privateStoreRoot(importedPacksRoot);
+  const artifacts = await resolveInstalledArtifacts(root, identifiers);
+  const deletionDirectory = await fs.promises.mkdtemp(
+    path.join(root, ".delete-"),
+  );
+  await fs.promises.chmod(deletionDirectory, 0o700);
+  const moved = [];
+
+  try {
+    for (const artifact of artifacts) {
+      const destination = path.join(deletionDirectory, artifact.packName);
+      if (
+        path.dirname(destination) !== deletionDirectory ||
+        path.dirname(artifact.directory) !== root
+      ) {
+        fail("UNSAFE_STORE", "An imported cursor deletion path is unsafe.");
+      }
+      await fs.promises.rename(artifact.directory, destination);
+      moved.push({ artifact, destination });
+    }
+  } catch (error) {
+    for (const { artifact, destination } of moved.reverse()) {
+      try {
+        await fs.promises.rename(destination, artifact.directory);
+      } catch {
+        // Preserve the original error. A failed rollback remains quarantined in
+        // a non-indexed, private direct child of the imported store.
+      }
+    }
+    try {
+      await fs.promises.rmdir(deletionDirectory);
+    } catch {
+      // Preserve the operation failure.
+    }
+    throw error;
+  }
+
+  let cleanupPending = false;
+  try {
+    for (const { destination } of moved) {
+      await validateArtifact(destination);
+      if (disposeArtifact) {
+        await disposeArtifact(destination);
+      } else {
+        await fs.promises.rm(destination, {
+          recursive: true,
+          force: false,
+        });
+      }
+    }
+    await fs.promises.rmdir(deletionDirectory);
+  } catch {
+    // Every pack has already been atomically moved out of the indexed store.
+    // A private dot-prefixed quarantine is ignored by both readers and can be
+    // cleaned later without making a successful deletion look unsuccessful.
+    cleanupPending = true;
+  }
+
+  return {
+    identifiers: artifacts.map((artifact) => artifact.identifier),
+    removed: artifacts.map((artifact) => ({
+      identifier: artifact.identifier,
+      displayName: artifact.displayName,
+      family: artifact.family,
+    })),
+    removedCount: artifacts.length,
+    cleanupPending,
+    recoverable: Boolean(disposeArtifact),
+  };
 }
 
 export async function createCursorImportStaging(importedPacksRoot) {
@@ -416,6 +733,7 @@ export async function installImportedArtifacts({
     );
   }
 
+  const installed = await inspectInstalledStore(canonicalRoot);
   const prepared = [];
   const seenPackNames = new Set();
   const seenIdentifiers = new Set();
@@ -424,48 +742,52 @@ export async function installImportedArtifacts({
       artifact?.directory,
       canonicalStaging,
     );
-    if (
-      seenPackNames.has(candidate.packName) ||
-      seenIdentifiers.has(candidate.identifier)
-    ) {
+    const packNameKey = candidate.packName.toLowerCase();
+    const identifierKey = candidate.identifier.toLowerCase();
+    if (seenPackNames.has(packNameKey) || seenIdentifiers.has(identifierKey)) {
       fail(
         "IDENTIFIER_COLLISION",
         "The cursor import contains duplicate themes.",
       );
     }
-    seenPackNames.add(candidate.packName);
-    seenIdentifiers.add(candidate.identifier);
+    seenPackNames.add(packNameKey);
+    seenIdentifiers.add(identifierKey);
     await applyPrivatePermissions(candidate.tree);
 
-    const destination = path.join(canonicalRoot, candidate.packName);
+    const existingByPackName = installed.byPackName.get(packNameKey);
+    const existingByIdentifier = installed.byIdentifier.get(identifierKey);
+    if (
+      existingByPackName &&
+      existingByIdentifier &&
+      existingByPackName !== existingByIdentifier
+    ) {
+      fail(
+        "IDENTIFIER_COLLISION",
+        `A different imported cursor already uses ${candidate.identifier}.`,
+      );
+    }
+    const existing = existingByPackName ?? existingByIdentifier ?? null;
+    const destination =
+      existing?.directory ?? path.join(canonicalRoot, candidate.packName);
     if (!isWithin(canonicalRoot, destination)) {
       fail(
         "UNSAFE_ARTIFACT",
         "The cursor destination escaped the private store.",
       );
     }
-    try {
-      const existing = await validateArtifact(destination);
-      if (
-        existing.identifier !== candidate.identifier ||
-        existing.digest !== candidate.digest
-      ) {
+    if (existing) {
+      if (existing.identityDigest !== candidate.identityDigest) {
         fail(
           "IDENTIFIER_COLLISION",
           `A different imported cursor already uses ${candidate.identifier}.`,
         );
       }
       prepared.push({ ...candidate, destination, duplicate: true });
-    } catch (error) {
-      if (error?.code === "ENOENT") {
-        prepared.push({ ...candidate, destination, duplicate: false });
-      } else {
-        throw error;
-      }
+    } else {
+      prepared.push({ ...candidate, destination, duplicate: false });
     }
   }
 
-  const installed = await inspectInstalledStore(canonicalRoot);
   const newPacks = prepared.filter((candidate) => !candidate.duplicate);
   const newCursorBytes = newPacks.reduce(
     (total, candidate) => total + candidate.resourceBytes,

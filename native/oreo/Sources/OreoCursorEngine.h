@@ -13,6 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy, nullable) NSString *lastErrorMessage;
 @property (nonatomic, readonly, copy) NSString *themeIdentifier;
 @property (nonatomic, readonly, copy) NSString *themeDisplayName;
+@property (nonatomic, readonly) NSInteger themeSizePercentage;
 
 - (instancetype)init NS_UNAVAILABLE;
 - (instancetype)initWithError:(NSError * _Nullable * _Nullable)error;
@@ -23,11 +24,19 @@ NS_ASSUME_NONNULL_BEGIN
 /// Application Support store.
 - (instancetype)initWithThemeIdentifier:(NSString *)themeIdentifier
                           resourceBundle:(NSBundle *)resourceBundle
+                                   error:(NSError * _Nullable * _Nullable)error;
+
+/// Initializes a theme with registration geometry scaled independently from
+/// its validated raster representations. The resource itself remains
+/// immutable, including frame order and timing.
+- (instancetype)initWithThemeIdentifier:(NSString *)themeIdentifier
+                          resourceBundle:(NSBundle *)resourceBundle
+                          sizePercentage:(NSInteger)sizePercentage
                                    error:(NSError * _Nullable * _Nullable)error
     NS_DESIGNATED_INITIALIZER;
 
 /// Trusted theme metadata used by the graphical selector.
-+ (NSArray<NSDictionary<NSString *, NSString *> *> *)availableThemes;
++ (NSArray<NSDictionary<NSString *, id> *> *)availableThemes;
 
 /// Returns integrity-checked property-list bytes for a discovered theme.
 /// Installed resources are opened without following links and are never
@@ -42,6 +51,23 @@ NS_ASSUME_NONNULL_BEGIN
 /// Persists an allowlisted selection for both the app and login helper.
 + (BOOL)saveSelectedThemeIdentifier:(NSString *)themeIdentifier
                               error:(NSError * _Nullable * _Nullable)error;
+
+/// Returns the saved registration size for a theme (50–200, default 100).
++ (NSInteger)sizePercentageForThemeIdentifier:(NSString *)themeIdentifier;
+
+/// Returns the size used by the currently effective registration.
++ (NSInteger)effectiveSizePercentage;
+
+/// Saves a per-theme size preference without changing live cursor state.
++ (BOOL)saveSizePercentage:(NSInteger)sizePercentage
+        forThemeIdentifier:(NSString *)themeIdentifier
+                     error:(NSError * _Nullable * _Nullable)error;
+
+/// Removes a saved size using identifier syntax alone, so deletion cleanup
+/// remains possible after an imported theme's manifest has been removed.
++ (BOOL)forgetSizePercentageForThemeIdentifier:(NSString *)themeIdentifier
+                                          error:
+    (NSError * _Nullable * _Nullable)error;
 
 /// Rolls back an interrupted apply/restore transaction. Returns YES when no
 /// transaction existed or when recovery completed and was verified.

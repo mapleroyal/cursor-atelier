@@ -63,8 +63,9 @@ retain the same nonempty TeamIdentifier while using distinct identifiers:
 - `com.cursoratelier.CursorAtelier.NativeCursor.LoginHelper`
 
 Both versions are stamped from the root `package.json`. The outer personal
-Electron app uses `com.cursoratelier.CursorAtelier` and is independently
-ad-hoc signed by Forge; Developer ID distribution signing and notarization are
+Electron app uses `com.cursoratelier.CursorAtelier`; Forge signs it with the
+same Apple Development identity so its background launch registration is
+stable across builds. Developer ID distribution signing and notarization are
 not required for the personal build.
 
 `native:preflight` verifies signatures, identities, versions, macOS 13.0,

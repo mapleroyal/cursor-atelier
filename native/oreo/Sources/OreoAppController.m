@@ -373,16 +373,17 @@ static NSDictionary *OreoCombinedDiagnostics(OreoCursorEngine *engine,
 }
 
 static NSDictionary *OreoValidateThemeResources(void) {
-    NSArray<NSDictionary<NSString *, NSString *> *> *themes =
+    NSArray<NSDictionary<NSString *, id> *> *themes =
         [OreoCursorEngine availableThemes];
     NSMutableArray<NSDictionary *> *results =
         [NSMutableArray arrayWithCapacity:themes.count];
     NSUInteger invalidCount = 0;
-    for (NSDictionary<NSString *, NSString *> *theme in themes) {
+    for (NSDictionary<NSString *, id> *theme in themes) {
         NSError *error = nil;
         OreoCursorEngine *engine = [[OreoCursorEngine alloc]
             initWithThemeIdentifier:theme[@"Identifier"]
                      resourceBundle:NSBundle.mainBundle
+                     sizePercentage:100
                               error:&error];
         BOOL valid = engine.supported && engine.themeValid;
         if (!valid) {
@@ -436,6 +437,8 @@ static BOOL OreoSelectTheme(NSString *identifier,
     OreoCursorEngine *candidate = [[OreoCursorEngine alloc]
         initWithThemeIdentifier:identifier
                  resourceBundle:NSBundle.mainBundle
+                 sizePercentage:[OreoCursorEngine
+                     sizePercentageForThemeIdentifier:identifier]
                           error:error];
     if (!candidate.supported || !candidate.themeValid) {
         return NO;
@@ -510,6 +513,8 @@ static BOOL OreoApplyTheme(NSString *identifier,
     OreoCursorEngine *candidate = [[OreoCursorEngine alloc]
         initWithThemeIdentifier:identifier
                  resourceBundle:NSBundle.mainBundle
+                 sizePercentage:[OreoCursorEngine
+                     sizePercentageForThemeIdentifier:identifier]
                           error:&actionError];
     if (!candidate.supported || !candidate.themeValid) {
         if (error) {
@@ -603,6 +608,23 @@ static BOOL OreoApplyTheme(NSString *identifier,
     return NO;
 }
 
+static BOOL OreoParseThemeSizePercentage(const char *value,
+                                         NSInteger *result) {
+    if (!value || value[0] == '\0') {
+        return NO;
+    }
+    errno = 0;
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (errno != 0 || !end || *end != '\0' || parsed < 50 || parsed > 200) {
+        return NO;
+    }
+    if (result) {
+        *result = (NSInteger)parsed;
+    }
+    return YES;
+}
+
 int OreoRunCommandLineIfRequested(
     int argc, const char * _Nonnull * _Nonnull argv) {
     if (argc < 2) {
@@ -612,17 +634,22 @@ int OreoRunCommandLineIfRequested(
     NSSet *supportedCommands = [NSSet setWithArray:@[
         @"--status", @"--setup", @"--enable", @"--disable", @"--teardown",
         @"--list-themes", @"--validate-themes", @"--validate-theme",
-        @"--select-theme",
+        @"--select-theme", @"--set-theme-size", @"--forget-theme-size",
         @"--validate-system-fallbacks", @"--apply-theme",
         @"--open-login-settings"
     ]];
     BOOL commandNeedsIdentifier =
         [command isEqual:@"--select-theme"] ||
         [command isEqual:@"--apply-theme"] ||
-        [command isEqual:@"--validate-theme"];
+        [command isEqual:@"--validate-theme"] ||
+        [command isEqual:@"--forget-theme-size"];
+    BOOL commandNeedsIdentifierAndSize =
+        [command isEqual:@"--set-theme-size"];
     if (![supportedCommands containsObject:command] ||
         (commandNeedsIdentifier && argc != 3) ||
-        (!commandNeedsIdentifier && argc != 2)) {
+        (commandNeedsIdentifierAndSize && argc != 4) ||
+        (!commandNeedsIdentifier && !commandNeedsIdentifierAndSize &&
+         argc != 2)) {
         fprintf(stderr,
                 "Usage: OreoCursor "
                 "[--status|--setup|--enable|--disable|--teardown|"
@@ -630,6 +657,8 @@ int OreoRunCommandLineIfRequested(
                 "--validate-theme IDENTIFIER|"
                 "--validate-system-fallbacks|"
                 "--select-theme IDENTIFIER|--apply-theme IDENTIFIER|"
+                "--set-theme-size IDENTIFIER PERCENTAGE|"
+                "--forget-theme-size IDENTIFIER|"
                 "--open-login-settings]\n");
         return 64;
     }
@@ -637,6 +666,53 @@ int OreoRunCommandLineIfRequested(
     if ([command isEqual:@"--list-themes"]) {
         OreoPrintJSON([OreoCursorEngine availableThemes]);
         return 0;
+    }
+
+    if ([command isEqual:@"--set-theme-size"]) {
+        NSString *identifier = [NSString stringWithUTF8String:argv[2]];
+        NSInteger sizePercentage = 0;
+        NSError *sizeError = nil;
+        BOOL success = OreoParseThemeSizePercentage(argv[3], &sizePercentage);
+        if (!success) {
+            sizeError = OreoSetupError(
+                13, @"Cursor size must be an integer between 50%% and 200%%.");
+        } else {
+            success = [OreoCursorEngine saveSizePercentage:sizePercentage
+                                        forThemeIdentifier:identifier
+                                                     error:&sizeError];
+        }
+        NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:@{
+            @"action": command,
+            @"identifier": identifier ?: @"",
+            @"sizePercentage": @(sizePercentage),
+            @"saved": @(success),
+        }];
+        if (sizeError) {
+            result[@"actionError"] = sizeError.localizedDescription;
+        }
+        OreoPrintJSON([result copy]);
+        // Saving a draft size intentionally does not notify the login helper;
+        // live registrations change only through an explicit Apply.
+        return success ? 0 : 2;
+    }
+
+    if ([command isEqual:@"--forget-theme-size"]) {
+        NSString *identifier = [NSString stringWithUTF8String:argv[2]];
+        NSError *forgetError = nil;
+        BOOL success =
+            [OreoCursorEngine
+                forgetSizePercentageForThemeIdentifier:identifier
+                                                  error:&forgetError];
+        NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:@{
+            @"action": command,
+            @"identifier": identifier ?: @"",
+            @"forgotten": @(success),
+        }];
+        if (forgetError) {
+            result[@"actionError"] = forgetError.localizedDescription;
+        }
+        OreoPrintJSON([result copy]);
+        return success ? 0 : 2;
     }
 
     if ([command isEqual:@"--validate-themes"]) {
@@ -658,6 +734,7 @@ int OreoRunCommandLineIfRequested(
         OreoCursorEngine *validationEngine = [[OreoCursorEngine alloc]
             initWithThemeIdentifier:identifier
                      resourceBundle:NSBundle.mainBundle
+                     sizePercentage:100
                               error:&validationError];
         BOOL valid = validationEngine.supported &&
             validationEngine.themeValid;
@@ -712,6 +789,9 @@ int OreoRunCommandLineIfRequested(
             initWithThemeIdentifier:
                 [NSString stringWithUTF8String:argv[2]]
                  resourceBundle:NSBundle.mainBundle
+                 sizePercentage:[OreoCursorEngine
+                     sizePercentageForThemeIdentifier:
+                         [NSString stringWithUTF8String:argv[2]]]
                           error:&candidateError];
         if (!recoveryEngine.supported || !recoveryEngine.themeValid) {
             engineError = candidateError;

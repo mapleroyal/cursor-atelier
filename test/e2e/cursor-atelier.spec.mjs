@@ -10,6 +10,14 @@ const projectRoot = path.resolve(
 );
 const packagedOutput = path.join(projectRoot, "out");
 
+function packList(scope) {
+  return scope.getByRole("navigation", { name: "Cursor packs" });
+}
+
+function packButtons(scope) {
+  return packList(scope).locator("button[aria-label]");
+}
+
 function findPackagedAsar() {
   if (process.env.CURSOR_ATELIER_ASAR) {
     return path.resolve(process.env.CURSOR_ATELIER_ASAR);
@@ -127,10 +135,12 @@ test.describe("Cursor Atelier packaged app", () => {
     await search.fill("Moga Neon");
 
     await expect(
-      page.getByRole("option", { name: /^Moga Neon/ }).first(),
+      packList(page)
+        .getByRole("button", { name: /^Moga Neon/ })
+        .first(),
     ).toBeVisible();
     await expect(
-      page.getByRole("option", { name: /^Moga Classic/ }),
+      packList(page).getByRole("button", { name: /^Moga Classic/ }),
     ).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Neon" })).toBeVisible();
     await expect(page.getByText("Moga", { exact: true }).last()).toBeVisible();
@@ -139,9 +149,15 @@ test.describe("Cursor Atelier packaged app", () => {
   test("uses one tab stop and arrow-key navigation for the pack list", async ({
     cursorPage: page,
   }) => {
-    const options = page.getByRole("option");
+    const firstFamily = packList(page).locator("button[aria-expanded]").first();
+    await expect(firstFamily).toHaveAttribute("aria-expanded", "false");
+    await expect(packButtons(page)).toHaveCount(0);
+    await firstFamily.click();
+    await expect(firstFamily).toHaveAttribute("aria-expanded", "true");
+
+    const options = packButtons(page);
     await expect(options.first()).toBeVisible();
-    expect(await options.count()).toBeGreaterThan(20);
+    expect(await options.count()).toBeGreaterThan(1);
     expect(
       await options.evaluateAll(
         (entries) => entries.filter((entry) => entry.tabIndex === 0).length,
@@ -151,11 +167,11 @@ test.describe("Cursor Atelier packaged app", () => {
     await options.first().focus();
     await options.first().press("ArrowDown");
     await expect(options.nth(1)).toBeFocused();
-    await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(options.nth(1)).toHaveAttribute("aria-current", "true");
 
     await options.nth(1).press("End");
     await expect(options.last()).toBeFocused();
-    await expect(options.last()).toHaveAttribute("aria-selected", "true");
+    await expect(options.last()).toHaveAttribute("aria-current", "true");
     expect(
       await options.evaluateAll(
         (entries) => entries.filter((entry) => entry.tabIndex === 0).length,
@@ -178,8 +194,8 @@ test.describe("Cursor Atelier packaged app", () => {
     await drawer
       .getByRole("textbox", { name: "Search cursor packs" })
       .fill("Moga Neon");
-    await drawer
-      .getByRole("option", { name: /^Moga Neon/ })
+    await packList(drawer)
+      .getByRole("button", { name: /^Moga Neon/ })
       .first()
       .click();
 
@@ -255,7 +271,12 @@ test.describe("Cursor Atelier packaged app", () => {
   test("does not present preview-only selection as a live cursor", async ({
     cursorPage: page,
   }) => {
-    await page.getByRole("option", { name: /^Oreo Blue/ }).click();
+    await page
+      .getByRole("textbox", { name: "Search cursor packs" })
+      .fill("Oreo Blue");
+    await packList(page)
+      .getByRole("button", { name: /^Oreo Blue/ })
+      .click();
 
     await expect(page.getByText("In use", { exact: true })).toHaveCount(0);
     await expect(
@@ -273,6 +294,45 @@ test.describe("Cursor Atelier packaged app", () => {
       effectiveVariantId: null,
       effectiveApplied: false,
     });
+  });
+
+  test("persists a cursor favorite and exposes the focused settings screen", async ({
+    cursorPage: page,
+  }) => {
+    const search = page.getByRole("textbox", { name: "Search cursor packs" });
+    await search.fill("Oreo Blue");
+    await packList(page)
+      .getByRole("button", { name: /^Oreo Blue/ })
+      .click();
+
+    await page.getByRole("button", { name: "Add to Favorites" }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const preferences = await window.electronAPI.getCursorPreferences();
+          return preferences.favorites.cursorIds.includes("OreoBlue");
+        }),
+      )
+      .toBe(true);
+    await expect(page.getByText("Favorites", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Remove from Favorites" }),
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByText("Favorites", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Settings", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("switch", { name: "Menu Bar Item" }),
+    ).toBeVisible();
+    await page.locator("#random-schedule").selectOption("interval");
+    await expect(page.locator("#random-interval")).toHaveValue("1");
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
   });
 
   test("keeps every requested external family visible but non-mutating", async ({

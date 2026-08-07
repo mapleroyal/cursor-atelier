@@ -9,6 +9,12 @@ import {
   getCursorCatalogEntry,
   normalizeCursorTheme,
 } from "../lib/cursor-catalog.js";
+import {
+  assignImportedCursorFamily,
+  isBoundedCursorManifestText,
+  normalizeImportedCursorFamily,
+  removeImportedCursorArtifacts,
+} from "./cursor-import-install.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_NATIVE_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -36,6 +42,9 @@ const MAX_IMPORTED_PACK_CURSOR_BYTES = 128 * 1024 * 1024;
 const MAX_IMPORTED_CURSOR_BYTES_TOTAL = 512 * 1024 * 1024;
 const MAX_IMPORTED_PREVIEW_BYTES = 16 * 1024 * 1024;
 const MAX_IMPORTED_ROLE_PREVIEWS = 128;
+const DEFAULT_THEME_SIZE_PERCENTAGE = 100;
+const MIN_THEME_SIZE_PERCENTAGE = 50;
+const MAX_THEME_SIZE_PERCENTAGE = 200;
 
 function isSafeIdentifier(value) {
   return (
@@ -45,21 +54,13 @@ function isSafeIdentifier(value) {
   );
 }
 
-function isBoundedManifestText(value, maximumLength) {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > maximumLength
-  ) {
-    return false;
-  }
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
-      return false;
-    }
-  }
-  return true;
+function normalizedThemeSizePercentage(value, fallback = null) {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_THEME_SIZE_PERCENTAGE &&
+    value <= MAX_THEME_SIZE_PERCENTAGE
+    ? value
+    : fallback;
 }
 
 function isSafeResourceName(value) {
@@ -77,6 +78,9 @@ const COMMAND_TIMEOUTS = Object.freeze({
   "--validate-theme": 45_000,
   "--validate-themes": 90_000,
   "--apply-theme": 45_000,
+  "--set-theme-size": 12_000,
+  "--forget-theme-size": 12_000,
+  "--select-theme": 45_000,
   "--disable": 45_000,
   "--setup": 45_000,
   "--teardown": 45_000,
@@ -543,15 +547,18 @@ function validateImportedManifestTheme(manifest, rawTheme) {
   if (!rawTheme || typeof rawTheme !== "object" || Array.isArray(rawTheme)) {
     return null;
   }
-  const normalized = normalizeCursorTheme(rawTheme, CURSOR_CATALOG);
+  const normalized = normalizeCursorTheme(
+    { ...rawTheme, imported: true },
+    CURSOR_CATALOG,
+  );
   if (
     !normalized ||
     rawTheme.Identifier !== normalized.nativeThemeId ||
     !isSafeIdentifier(normalized.nativeThemeId) ||
     !isSafeIdentifier(normalized.id) ||
-    !isBoundedManifestText(rawTheme.DisplayName, 256) ||
-    !isBoundedManifestText(rawTheme.ThemeName, 256) ||
-    !isBoundedManifestText(rawTheme.Group, 128) ||
+    !isBoundedCursorManifestText(rawTheme.DisplayName, 256) ||
+    !isBoundedCursorManifestText(rawTheme.ThemeName, 256) ||
+    !isBoundedCursorManifestText(rawTheme.Group, 128) ||
     typeof rawTheme.UUID !== "string" ||
     !UUID_PATTERN.test(rawTheme.UUID)
   ) {
@@ -651,6 +658,7 @@ function readImportedManifest(packRoot) {
     const manifest = {
       path: canonicalManifest,
       root: canonicalPackRoot,
+      packIdentifier: path.basename(canonicalPackRoot),
       schemaVersion: 2,
       imported: true,
       themes: parsed.themes,
@@ -812,6 +820,7 @@ function createUnavailableState(reason) {
     selectedNativeThemeId: null,
     effectiveNativeThemeId: null,
     themeIdentifier: null,
+    themeSizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
     resourceAvailable: false,
     canApply: false,
     isEnabled: false,
@@ -876,6 +885,7 @@ export function createCursorBridge({
   appPath = process.cwd(),
   verifySignature = isPackaged,
   commandRunner = null,
+  trashImportedArtifact = null,
 } = {}) {
   const resolution = { isPackaged, resourcesPath, appPath, verifySignature };
   let bridgePath = null;
@@ -1028,7 +1038,10 @@ export function createCursorBridge({
     for (const manifest of manifests) {
       const candidates = manifest.themes
         .map((rawTheme) => {
-          const normalized = normalizeCursorTheme(rawTheme, CURSOR_CATALOG);
+          const normalized = normalizeCursorTheme(
+            manifest.imported ? { ...rawTheme, imported: true } : rawTheme,
+            CURSOR_CATALOG,
+          );
           if (!normalized) {
             return null;
           }
@@ -1043,6 +1056,12 @@ export function createCursorBridge({
           return exposePreviews(
             {
               ...normalized,
+              ...(manifest.imported
+                ? {
+                    imported: true,
+                    importedPackIdentifier: manifest.packIdentifier,
+                  }
+                : {}),
               resourceFile,
               resourceInstalled,
               resourceAvailable: resourceInstalled,
@@ -1268,6 +1287,10 @@ export function createCursorBridge({
       "lastError",
       "LastError",
     ]);
+    const themeSizePercentage = normalizedThemeSizePercentage(
+      firstThemeValue(raw, ["themeSizePercentage", "ThemeSizePercentage"]),
+      DEFAULT_THEME_SIZE_PERCENTAGE,
+    );
 
     fallbackState = {
       ...fallbackState,
@@ -1289,6 +1312,7 @@ export function createCursorBridge({
       effectiveNativeThemeId: liveApplied ? selectedNativeThemeId : null,
       nativeThemeId: selectedNativeThemeId,
       themeIdentifier: selectedNativeThemeId,
+      themeSizePercentage,
       resourceAvailable,
       canApply: Boolean(
         bridgePath && supported && themeValid && resourceAvailable,
@@ -1398,6 +1422,10 @@ export function createCursorBridge({
         ? manifestEntry.resourceInstalled
         : catalogEntry?.availability === "bundled";
       const canApply = Boolean(bridgePath && resourceInstalled);
+      const sizePercentage = normalizedThemeSizePercentage(
+        firstThemeValue(rawTheme, ["sizePercentage", "SizePercentage"]),
+        DEFAULT_THEME_SIZE_PERCENTAGE,
+      );
       const availability = resourceInstalled
         ? manifestEntry?.imported
           ? "imported"
@@ -1410,6 +1438,7 @@ export function createCursorBridge({
         id: catalogIdentifier(nativeThemeId),
         nativeThemeId,
         identifier: nativeThemeId,
+        sizePercentage,
         resourceInstalled,
         resourceAvailable: resourceInstalled,
         available: resourceInstalled,
@@ -1435,6 +1464,7 @@ export function createCursorBridge({
       }
       result.push({
         ...theme,
+        sizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
         canApply: false,
         nativeListed: listedNativeIds.has(theme.nativeThemeId.toLowerCase()),
         status: theme.resourceInstalled ? "preview" : "unavailable",
@@ -1447,6 +1477,7 @@ export function createCursorBridge({
 
     return CURSOR_CATALOG.map((theme) => ({
       ...theme,
+      sizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
       available: Boolean(theme.availability === "bundled"),
       isAvailable: Boolean(theme.availability === "bundled"),
       resourceAvailable: Boolean(theme.availability === "bundled"),
@@ -1462,6 +1493,198 @@ export function createCursorBridge({
     mutationQueue = result.catch(() => undefined);
     return result;
   };
+
+  const importedThemesForIdentifiers = (identifiers) => {
+    if (
+      !Array.isArray(identifiers) ||
+      identifiers.length === 0 ||
+      identifiers.length > MAX_IMPORTED_PACKS
+    ) {
+      throw new TypeError("At least one imported cursor is required.");
+    }
+    const themes = [];
+    const seen = new Set();
+    for (const identifier of identifiers) {
+      if (
+        typeof identifier !== "string" ||
+        !IDENTIFIER_PATTERN.test(identifier)
+      ) {
+        throw new TypeError("A valid imported cursor identifier is required.");
+      }
+      const theme = manifestTheme(identifier);
+      if (!theme?.imported) {
+        const error = new Error("Only imported cursor packs can be changed.");
+        error.code = "NOT_IMPORTED";
+        throw error;
+      }
+      const key = theme.nativeThemeId.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        themes.push(theme);
+      }
+    }
+    return themes;
+  };
+
+  const hasRestorableCursorState = (currentStatus) =>
+    [
+      "desiredEnabled",
+      "persistedEffectiveApplied",
+      "effectiveApplied",
+      "launchAtLoginDesired",
+      "loginItemRegistrationCurrent",
+      "transactionPending",
+    ].some(
+      (key) => currentStatus?.[key] === true || currentStatus?.[key] === 1,
+    );
+
+  const deleteImportedThemeRecords = async (themes) => {
+    const identifiers = themes.map((theme) => theme.nativeThemeId);
+    const targets = new Set(
+      themes
+        .flatMap((theme) => [theme.nativeThemeId, theme.id])
+        .map((identifier) => identifier.toLowerCase()),
+    );
+    let restoredToMacOS = false;
+    let selectionReassigned = false;
+
+    if (bridgePath) {
+      const currentStatus = await status();
+      if (currentStatus.statusAvailable === false) {
+        const error = new Error(
+          "Cursor status must be available before an imported cursor can be deleted.",
+        );
+        error.code = "STATUS_UNAVAILABLE";
+        throw error;
+      }
+      const selectedIdentifier = String(
+        currentStatus.selectedNativeThemeId ??
+          currentStatus.themeIdentifier ??
+          "",
+      ).toLowerCase();
+      const selectedIsTarget =
+        Boolean(selectedIdentifier) && targets.has(selectedIdentifier);
+      const effectiveIdentifiers = [
+        currentStatus.effectiveNativeThemeId,
+        currentStatus.effectiveVariantId,
+      ]
+        .filter(Boolean)
+        .map((identifier) => String(identifier).toLowerCase());
+      const effectiveIsTarget = effectiveIdentifiers.some((identifier) =>
+        targets.has(identifier),
+      );
+      // When a lower-level theme selection changes while a cursor remains
+      // registered, native status can verify that the persisted cursor is
+      // still applied without being able to name it. Treat a drifted live
+      // registration as a possible target rather than deleting its files
+      // while macOS still references them.
+      const unidentifiedLiveCursor =
+        currentStatus.persistedEffectiveApplied === true &&
+        currentStatus.currentSentinelsMatchTheme !== true;
+      if (
+        hasRestorableCursorState(currentStatus) &&
+        (selectedIsTarget || effectiveIsTarget || unidentifiedLiveCursor)
+      ) {
+        await runNative("--teardown");
+        restoredToMacOS = true;
+      }
+      if (selectedIsTarget) {
+        // Teardown intentionally leaves SelectedThemeIdentifier untouched. A
+        // valid bundled fallback must be persisted before the imported files
+        // disappear or every subsequent native status invocation would start
+        // from a missing theme.
+        await runNative("--select-theme", ["OreoWhite"]);
+        selectionReassigned = true;
+      }
+    }
+
+    const removed = await removeImportedCursorArtifacts({
+      identifiers,
+      importedPacksRoot,
+      ...(typeof trashImportedArtifact === "function"
+        ? { disposeArtifact: trashImportedArtifact }
+        : {}),
+    });
+    let sizePreferenceCleanupPending = false;
+    if (bridgePath) {
+      for (const identifier of identifiers) {
+        try {
+          await runNative("--forget-theme-size", [identifier]);
+        } catch {
+          // Artifact deletion is already complete (and may have moved the pack
+          // to Trash), so preference cleanup failure cannot honestly turn the
+          // deletion into a failed operation. Continue through family members
+          // and expose the remaining cleanup state to the caller.
+          sizePreferenceCleanupPending = true;
+        }
+      }
+    }
+    resetManifestIndex();
+    const nextStatus = bridgePath ? await status() : { ...fallbackState };
+    return {
+      ...removed,
+      restoredToMacOS,
+      selectionReassigned,
+      sizePreferenceCleanupPending,
+      status: nextStatus,
+    };
+  };
+
+  const assignImportedFamily = (identifiers, family) =>
+    serializeMutation(async () => {
+      const themes = importedThemesForIdentifiers(identifiers);
+      const requestedFamily = normalizeImportedCursorFamily(family);
+      const currentFamilies = (await listThemes())
+        .map((theme) => theme.family)
+        .filter(Boolean);
+      const normalizedFamily =
+        currentFamilies.find(
+          (currentFamily) => currentFamily === requestedFamily,
+        ) ??
+        currentFamilies.find(
+          (currentFamily) =>
+            currentFamily.toLocaleLowerCase() ===
+            requestedFamily.toLocaleLowerCase(),
+        ) ??
+        requestedFamily;
+      const result = await assignImportedCursorFamily({
+        identifiers: themes.map((theme) => theme.nativeThemeId),
+        family: normalizedFamily,
+        importedPacksRoot,
+      });
+      resetManifestIndex();
+      return result;
+    });
+
+  const deleteImportedThemes = (identifiers) =>
+    serializeMutation(() =>
+      deleteImportedThemeRecords(importedThemesForIdentifiers(identifiers)),
+    );
+
+  const deleteImportedFamily = (family) =>
+    serializeMutation(async () => {
+      const normalizedFamily = normalizeImportedCursorFamily(family);
+      const members = (await listThemes()).filter(
+        (theme) => theme.family === normalizedFamily,
+      );
+      if (!members.length) {
+        const error = new Error("That cursor family is no longer available.");
+        error.code = "FAMILY_NOT_FOUND";
+        throw error;
+      }
+      if (members.some((theme) => !theme.imported)) {
+        const error = new Error(
+          "A family containing built-in cursor packs cannot be deleted.",
+        );
+        error.code = "MIXED_FAMILY";
+        throw error;
+      }
+      return deleteImportedThemeRecords(
+        importedThemesForIdentifiers(
+          members.map((theme) => theme.nativeThemeId),
+        ),
+      );
+    });
 
   const invalidateManifests = () =>
     serializeMutation(() => {
@@ -1531,6 +1754,35 @@ export function createCursorBridge({
       );
     });
 
+  const setThemeSize = (identifier, sizePercentage) =>
+    serializeMutation(async () => {
+      if (
+        typeof identifier !== "string" ||
+        !IDENTIFIER_PATTERN.test(identifier)
+      ) {
+        throw new TypeError("A valid cursor theme identifier is required.");
+      }
+      const normalizedSize = normalizedThemeSizePercentage(sizePercentage);
+      if (normalizedSize === null) {
+        throw new TypeError(
+          "Cursor size must be an integer between 50 and 200.",
+        );
+      }
+      const theme = resolveTheme(identifier);
+      if (!theme?.nativeThemeId || !bridgePath) {
+        throw new Error("That cursor theme is not available to customize.");
+      }
+      await runNative("--set-theme-size", [
+        theme.nativeThemeId,
+        String(normalizedSize),
+      ]);
+      return {
+        id: catalogIdentifier(theme.nativeThemeId),
+        nativeThemeId: theme.nativeThemeId,
+        sizePercentage: normalizedSize,
+      };
+    });
+
   const restore = () =>
     serializeMutation(() =>
       // Restoring from the Electron app also removes its internal login item;
@@ -1555,8 +1807,12 @@ export function createCursorBridge({
     status,
     listThemes,
     applyTheme,
+    setThemeSize,
     restore,
     openLoginSettings,
+    assignImportedFamily,
+    deleteImportedThemes,
+    deleteImportedFamily,
     invalidateManifests,
     validateImportedThemes,
     resolvePreviewAsset(requestUrl) {
@@ -1605,6 +1861,9 @@ export function registerCursorIpc({ ipcMain, bridge, isTrustedSender } = {}) {
   register("cursor:status", () => bridge.status());
   register("cursor:list-themes", () => bridge.listThemes());
   register("cursor:apply-theme", (identifier) => bridge.applyTheme(identifier));
+  register("cursor:set-theme-size", (identifier, sizePercentage) =>
+    bridge.setThemeSize(identifier, sizePercentage),
+  );
   register("cursor:restore", () => bridge.restore());
   register("cursor:open-login-settings", () => bridge.openLoginSettings());
 

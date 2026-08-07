@@ -1,3 +1,19 @@
+export const MIN_CURSOR_SIZE_PERCENTAGE = 50;
+export const MAX_CURSOR_SIZE_PERCENTAGE = 200;
+export const DEFAULT_CURSOR_SIZE_PERCENTAGE = 100;
+
+export function normalizeCursorSizePercentage(
+  value,
+  fallback = DEFAULT_CURSOR_SIZE_PERCENTAGE,
+) {
+  const size = Number(value);
+  return Number.isInteger(size) &&
+    size >= MIN_CURSOR_SIZE_PERCENTAGE &&
+    size <= MAX_CURSOR_SIZE_PERCENTAGE
+    ? size
+    : fallback;
+}
+
 export function getStatusVariant(status) {
   if (!status || typeof status !== "object") {
     return null;
@@ -63,10 +79,11 @@ export function matchesCursorPack(pack, identifier) {
   if (!pack || !identifier) {
     return false;
   }
-  return (
-    pack.id === identifier ||
-    pack.nativeThemeId === identifier ||
-    pack.nativeThemeIds?.includes(identifier)
+  const expected = String(identifier).toLowerCase();
+  return [pack.id, pack.nativeThemeId, ...(pack.nativeThemeIds ?? [])].some(
+    (candidate) =>
+      typeof candidate === "string" &&
+      candidate.toLowerCase() === expected,
   );
 }
 
@@ -150,6 +167,14 @@ export async function applyCursorTheme(packId) {
   return apply(packId);
 }
 
+export async function setCursorThemeSize(packId, sizePercentage) {
+  const setSize = window.electronAPI?.setCursorThemeSize;
+  if (typeof setSize !== "function") {
+    throw new Error("Cursor size customization is unavailable in this build.");
+  }
+  return setSize(packId, sizePercentage);
+}
+
 export async function restoreCursors() {
   const restore = window.electronAPI?.restoreCursors;
   if (typeof restore !== "function") {
@@ -172,4 +197,34 @@ export async function importCursorPack() {
     throw new Error("Importing cursor packs is unavailable in this build.");
   }
   return importPack();
+}
+
+export async function assignImportedCursorFamily(identifiers, family) {
+  const assignFamily = window.electronAPI?.assignImportedCursorFamily;
+  if (typeof assignFamily !== "function") {
+    throw new Error(
+      "Organizing imported cursor packs is unavailable in this build.",
+    );
+  }
+  return assignFamily(identifiers, family);
+}
+
+export async function deleteImportedCursor(identifier) {
+  const deleteCursor = window.electronAPI?.deleteImportedCursor;
+  if (typeof deleteCursor !== "function") {
+    throw new Error(
+      "Deleting imported cursor packs is unavailable in this build.",
+    );
+  }
+  return deleteCursor(identifier);
+}
+
+export async function deleteImportedCursorFamily(family) {
+  const deleteFamily = window.electronAPI?.deleteImportedCursorFamily;
+  if (typeof deleteFamily !== "function") {
+    throw new Error(
+      "Deleting imported cursor families is unavailable in this build.",
+    );
+  }
+  return deleteFamily(family);
 }

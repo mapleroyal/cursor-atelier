@@ -733,6 +733,56 @@ png = 'wait-*.png'
                     (size / 8, size / 8),
                 )
 
+    def test_svg_config_prefers_exact_animation_frame_over_size_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            svg_dir = root / "svg"
+            config_dir = root / "config"
+            svg_dir.mkdir()
+            config_dir.mkdir()
+            svg = (
+                '<svg xmlns="http://www.w3.org/2000/svg" '
+                'viewBox="0 0 24 24"/>'
+            )
+            for name in (
+                "default.svg",
+                "wait.svg",
+                "wait-15.svg",
+                "wait-16.svg",
+                "wait-17.svg",
+            ):
+                (svg_dir / name).write_text(svg)
+            (config_dir / "default.cursor").write_text(
+                "24 4 4 x1/default.png\n"
+            )
+            (config_dir / "wait.cursor").write_text(
+                "24 12 12 x1/wait-15.png 30\n"
+                "24 12 12 x1/wait-16.png 30\n"
+                "24 12 12 x1/wait-17.png 30\n"
+            )
+            colors = {
+                "wait-15.svg": (255, 0, 0, 255),
+                "wait-16.svg": (0, 255, 0, 255),
+                "wait-17.svg": (0, 0, 255, 255),
+            }
+
+            def render_at_size(
+                path: Path, size: int, _cache: Path
+            ) -> Image.Image:
+                color = colors.get(path.name, (0, 0, 0, 255))
+                return Image.new("RGBA", (size, size), color)
+
+            with mock.patch.object(
+                converter, "render_svg", side_effect=render_at_size
+            ):
+                frames = converter.frames_from_svg_config(svg_dir, config_dir)
+
+            for tier in frames["wait"].values():
+                self.assertEqual(
+                    [frame.image.getpixel((0, 0)) for frame in tier],
+                    list(colors.values()),
+                )
+
     def test_smil_sampling_preserves_the_complete_source_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

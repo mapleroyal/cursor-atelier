@@ -69,8 +69,9 @@ The host and helper are versioned from the root `package.json`, target macOS
 - `com.cursoratelier.CursorAtelier.NativeCursor`
 - `com.cursoratelier.CursorAtelier.NativeCursor.LoginHelper`
 
-For the current personal app, Forge preserves these signatures inside an
-ad-hoc-signed outer Electron app. Developer ID distribution signing and
+For the current personal app, Forge preserves these signatures and uses the
+same Apple Development identity for the outer Electron app so its background
+launch registration remains stable. Developer ID distribution signing and
 notarization are intentionally outside this milestone.
 
 ## JSON command line

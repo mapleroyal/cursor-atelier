@@ -1191,10 +1191,29 @@ def frames_from_svg_assets(
 
 def _candidate_asset(root: Path, filename: str, role: str) -> Path | None:
     relative = Path(filename)
-    candidates: list[Path] = [root / relative]
     basename = relative.name
-    stem = relative.stem
+    exact_stem = relative.stem
+    # Animation frame numbers can also be conventional cursor sizes (for
+    # example ``wait-16.png``). Resolve the exact basename, including an
+    # alternate SVG extension, before interpreting a trailing number as a
+    # generated bitmap-size suffix.
+    exact_candidates: list[Path] = [root / relative]
+    for suffix in (".png", ".svg"):
+        exact_candidates += [
+            root / f"{exact_stem}{suffix}",
+            root / "svg" / f"{exact_stem}{suffix}",
+        ]
+    for candidate in exact_candidates:
+        if candidate.is_file():
+            return candidate
+    for pattern in (f"{exact_stem}.svg", basename):
+        for candidate in root.rglob(pattern):
+            if candidate.is_file():
+                return candidate
+
+    stem = exact_stem
     stem = re.sub(r"(?:[-_]?(?:16|20|22|24|28|30|32|36|40|48|56|64|72|80|88|96)(?:x\d+)?)$", "", stem)
+    candidates: list[Path] = []
     for suffix in (".png", ".svg"):
         candidates += [root / f"{stem}{suffix}", root / "svg" / f"{stem}{suffix}"]
     static_stem = re.sub(r"[-_]\d+$", "", stem)
@@ -1203,8 +1222,6 @@ def _candidate_asset(root: Path, filename: str, role: str) -> Path | None:
             candidates += [root / f"{static_stem}{suffix}", root / "svg" / f"{static_stem}{suffix}"]
     # Configured asset names often live in a per-theme svg directory.
     for candidate in root.rglob(f"{stem}.svg"):
-        candidates.append(candidate)
-    for candidate in root.rglob(basename):
         candidates.append(candidate)
     for candidate in candidates:
         if candidate.is_file():

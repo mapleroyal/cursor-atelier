@@ -644,8 +644,9 @@ export function normalizeCursorTheme(theme = {}, catalog = CURSOR_CATALOG) {
     "Group",
     "group",
   ]);
+  const imported = theme.imported === true;
   const family = String(
-    (explicitFamily && explicitFamily !== "External"
+    (explicitFamily && (explicitFamily !== "External" || imported)
       ? explicitFamily
       : (base?.family ?? explicitFamily)) ?? "Cursor pack",
   );

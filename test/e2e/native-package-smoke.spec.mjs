@@ -118,6 +118,8 @@ test.describe("packaged native integration", () => {
     const environment = { ...process.env };
     delete environment.CURSOR_NATIVE_BRIDGE;
     delete environment.CURSOR_PACK_MANIFEST;
+    // This is a read-only discovery smoke, not a launch-at-login exercise.
+    environment.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION = "1";
     environment.HOME = userDataDirectory;
     environment.CFFIXED_USER_HOME = userDataDirectory;
     const debuggingPort = await reserveLoopbackPort();

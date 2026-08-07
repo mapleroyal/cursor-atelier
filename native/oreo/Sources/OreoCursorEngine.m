@@ -23,8 +23,14 @@ NSString * const OreoCursorStatusSourceCursor = @"cursor";
 NSString * const OreoCursorStatusSourceLogin = @"login";
 
 static NSString * const OreoCursorActiveBootDefaultsKey = @"ActiveBootSessionUUID";
+static NSString * const OreoCursorThemeSizesDefaultsKey = @"ThemeSizePercentages";
+static NSString * const OreoCursorEffectiveThemeSizeDefaultsKey =
+    @"EffectiveThemeSizePercentage";
 static NSString * const OreoCursorErrorDomain =
     @"com.cursoratelier.CursorAtelier.NativeCursor.Engine";
+static const NSInteger OreoDefaultThemeSizePercentage = 100;
+static const NSInteger OreoMinimumThemeSizePercentage = 50;
+static const NSInteger OreoMaximumThemeSizePercentage = 200;
 static const NSInteger OreoSnapshotSchemaVersion = 1;
 static const NSUInteger OreoMaximumThemeFrames = 24;
 static const NSUInteger OreoMaximumThemeRepresentations = 16;
@@ -41,6 +47,9 @@ static const NSUInteger OreoMaximumImportedManifestBytes = 16 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedThemeBytes = 32 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedPackThemeBytes = 128 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedThemeBytesTotal = 512 * 1024 * 1024;
+// Covers the complete built-in, build-generated, and imported catalogue while
+// still bounding malformed preference data independently of import limits.
+static const NSUInteger OreoMaximumThemeSizeEntries = 2048;
 
 static NSString * const OreoThemeIdentifierSpecKey = @"Identifier";
 static NSString * const OreoThemeDisplayNameSpecKey = @"DisplayName";
@@ -74,6 +83,23 @@ NSUserDefaults *OreoCursorDefaults(void) {
         }
     });
     return defaults;
+}
+
+static BOOL OreoReadThemeSizePercentage(id value, NSInteger *result) {
+    if (![value isKindOfClass:[NSNumber class]] ||
+        CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) {
+        return NO;
+    }
+    double number = [value doubleValue];
+    if (!isfinite(number) || floor(number) != number ||
+        number < OreoMinimumThemeSizePercentage ||
+        number > OreoMaximumThemeSizePercentage) {
+        return NO;
+    }
+    if (result) {
+        *result = (NSInteger)number;
+    }
+    return YES;
 }
 
 BOOL OreoCursorSaveStatus(NSString *message,
@@ -1470,6 +1496,47 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
     return fabs(lhs - rhs) <= 0.01;
 }
 
+static NSDictionary<NSString *, NSDictionary *> * _Nullable
+OreoThemeCursorsByScalingGeometry(
+    NSDictionary<NSString *, NSDictionary *> *cursors,
+    NSInteger sizePercentage,
+    NSError **error) {
+    if (sizePercentage == OreoDefaultThemeSizePercentage) {
+        return cursors;
+    }
+    double factor = sizePercentage / 100.0;
+    NSMutableDictionary<NSString *, NSDictionary *> *scaled =
+        [NSMutableDictionary dictionaryWithCapacity:cursors.count];
+    for (NSString *identifier in cursors) {
+        NSDictionary *record = cursors[identifier];
+        double width = [record[@"PointsWide"] doubleValue] * factor;
+        double height = [record[@"PointsHigh"] doubleValue] * factor;
+        double hotX = [record[@"HotSpotX"] doubleValue] * factor;
+        double hotY = [record[@"HotSpotY"] doubleValue] * factor;
+        if (!isfinite(width) || !isfinite(height) || !isfinite(hotX) ||
+            !isfinite(hotY) || width <= 0 || height <= 0 || width > 256 ||
+            height > 256 || hotX < 0 || hotY < 0 || hotX >= width ||
+            hotY >= height) {
+            if (error) {
+                *error = OreoError(
+                    372, @"Cursor %@ cannot be registered at %ld%%.",
+                    identifier, (long)sizePercentage);
+            }
+            return nil;
+        }
+        NSMutableDictionary *scaledRecord = [record mutableCopy];
+        scaledRecord[@"PointsWide"] = @(width);
+        scaledRecord[@"PointsHigh"] = @(height);
+        scaledRecord[@"HotSpotX"] = @(hotX);
+        scaledRecord[@"HotSpotY"] = @(hotY);
+        // Images, hashes, frame count, duration, and representation order stay
+        // byte-for-byte identical. WindowServer scales those source rasters to
+        // the registration geometry, avoiding a second baked resampling pass.
+        scaled[identifier] = [scaledRecord copy];
+    }
+    return [scaled copy];
+}
+
 @interface OreoCursorEngine () {
     OreoPrivateCursorAPI _api;
     NSDictionary<NSString *, NSDictionary *> *_themeCursors;
@@ -1489,6 +1556,10 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
 @property (nonatomic, readwrite, copy) NSString *themeSHA256;
 @property (nonatomic, readwrite, copy) NSString *themeIdentifier;
 @property (nonatomic, readwrite, copy) NSString *themeDisplayName;
+@property (nonatomic, readwrite) NSInteger themeSizePercentage;
+
++ (NSInteger)resolvedSizePercentageForThemeIdentifier:
+    (NSString *)themeIdentifier;
 
 @end
 
@@ -1498,8 +1569,19 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
     return [self initWithError:NULL];
 }
 
-+ (NSArray<NSDictionary<NSString *, NSString *> *> *)availableThemes {
-    return OreoThemeSpecificationsForBundle(NSBundle.mainBundle);
++ (NSArray<NSDictionary<NSString *, id> *> *)availableThemes {
+    NSMutableArray<NSDictionary<NSString *, id> *> *themes =
+        [NSMutableArray array];
+    for (NSDictionary<NSString *, NSString *> *specification in
+             OreoThemeSpecificationsForBundle(NSBundle.mainBundle)) {
+        NSMutableDictionary<NSString *, id> *theme =
+            [specification mutableCopy];
+        NSString *identifier = specification[OreoThemeIdentifierSpecKey];
+        theme[@"SizePercentage"] =
+            @([self sizePercentageForThemeIdentifier:identifier]);
+        [themes addObject:[theme copy]];
+    }
+    return [themes copy];
 }
 
 + (NSData *)themeResourceDataForIdentifier:(NSString *)identifier
@@ -1554,15 +1636,178 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
     return YES;
 }
 
++ (NSInteger)sizePercentageForThemeIdentifier:(NSString *)themeIdentifier {
+    if (!OreoIsSafeThemeIdentifier(themeIdentifier)) {
+        return OreoDefaultThemeSizePercentage;
+    }
+    NSDictionary *saved =
+        [OreoCursorDefaults() dictionaryForKey:OreoCursorThemeSizesDefaultsKey];
+    NSInteger result = OreoDefaultThemeSizePercentage;
+    return OreoReadThemeSizePercentage(saved[themeIdentifier], &result)
+        ? result
+        : OreoDefaultThemeSizePercentage;
+}
+
++ (NSInteger)effectiveSizePercentage {
+    NSInteger result = OreoDefaultThemeSizePercentage;
+    return OreoReadThemeSizePercentage(
+        [OreoCursorDefaults()
+            objectForKey:OreoCursorEffectiveThemeSizeDefaultsKey],
+        &result)
+        ? result
+        : OreoDefaultThemeSizePercentage;
+}
+
++ (BOOL)saveSizePercentage:(NSInteger)sizePercentage
+        forThemeIdentifier:(NSString *)themeIdentifier
+                     error:(NSError **)error {
+    if (sizePercentage < OreoMinimumThemeSizePercentage ||
+        sizePercentage > OreoMaximumThemeSizePercentage) {
+        if (error) {
+            *error = OreoError(
+                370, @"Cursor size must be between 50%% and 200%%.");
+        }
+        return NO;
+    }
+    if (!OreoThemeSpecificationForBundle(themeIdentifier,
+                                         NSBundle.mainBundle)) {
+        if (error) {
+            *error = OreoError(87, @"Unknown cursor theme: %@.",
+                               themeIdentifier);
+        }
+        return NO;
+    }
+
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    id previous = [defaults objectForKey:OreoCursorThemeSizesDefaultsKey];
+    NSDictionary *stored = [previous isKindOfClass:[NSDictionary class]]
+        ? previous
+        : @{};
+    NSMutableDictionary<NSString *, NSNumber *> *sizes =
+        [NSMutableDictionary dictionary];
+    NSSet<NSString *> *availableIdentifiers = [NSSet setWithArray:
+        [OreoThemeSpecificationsForBundle(NSBundle.mainBundle)
+            valueForKey:OreoThemeIdentifierSpecKey]];
+    NSMutableArray<NSString *> *storedIdentifiers = [NSMutableArray array];
+    for (id identifier in stored) {
+        if ([identifier isKindOfClass:[NSString class]]) {
+            [storedIdentifiers addObject:identifier];
+        }
+    }
+    [storedIdentifiers sortUsingSelector:@selector(compare:)];
+    NSUInteger retainedLimit = sizePercentage == OreoDefaultThemeSizePercentage
+        ? OreoMaximumThemeSizeEntries
+        : OreoMaximumThemeSizeEntries - 1;
+    for (NSString *identifier in storedIdentifiers) {
+        NSInteger savedSize = 0;
+        if (sizes.count >= retainedLimit ||
+            [identifier isEqualToString:themeIdentifier] ||
+            ![availableIdentifiers containsObject:identifier] ||
+            !OreoIsSafeThemeIdentifier(identifier) ||
+            !OreoReadThemeSizePercentage(stored[identifier], &savedSize)) {
+            continue;
+        }
+        sizes[identifier] = @(savedSize);
+    }
+    if (sizePercentage == OreoDefaultThemeSizePercentage) {
+        [sizes removeObjectForKey:themeIdentifier];
+    } else {
+        sizes[themeIdentifier] = @(sizePercentage);
+    }
+    if (sizes.count > 0) {
+        [defaults setObject:[sizes copy]
+                     forKey:OreoCursorThemeSizesDefaultsKey];
+    } else {
+        [defaults removeObjectForKey:OreoCursorThemeSizesDefaultsKey];
+    }
+    if (![defaults synchronize]) {
+        if (previous) {
+            [defaults setObject:previous
+                         forKey:OreoCursorThemeSizesDefaultsKey];
+        } else {
+            [defaults removeObjectForKey:OreoCursorThemeSizesDefaultsKey];
+        }
+        [defaults synchronize];
+        if (error) {
+            *error = OreoError(371, @"Could not save the cursor size.");
+        }
+        return NO;
+    }
+    return YES;
+}
+
++ (BOOL)forgetSizePercentageForThemeIdentifier:(NSString *)themeIdentifier
+                                          error:(NSError **)error {
+    if (!OreoIsSafeThemeIdentifier(themeIdentifier)) {
+        if (error) {
+            *error = OreoError(373, @"Invalid cursor theme identifier.");
+        }
+        return NO;
+    }
+
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    [defaults synchronize];
+    id previous = [defaults objectForKey:OreoCursorThemeSizesDefaultsKey];
+    NSDictionary *stored = [previous isKindOfClass:[NSDictionary class]]
+        ? previous
+        : nil;
+    if (!stored[themeIdentifier]) {
+        return YES;
+    }
+    NSMutableDictionary *sizes = [stored mutableCopy];
+    [sizes removeObjectForKey:themeIdentifier];
+    if (sizes.count > 0) {
+        [defaults setObject:[sizes copy]
+                     forKey:OreoCursorThemeSizesDefaultsKey];
+    } else {
+        [defaults removeObjectForKey:OreoCursorThemeSizesDefaultsKey];
+    }
+    if (![defaults synchronize]) {
+        [defaults setObject:previous forKey:OreoCursorThemeSizesDefaultsKey];
+        [defaults synchronize];
+        if (error) {
+            *error = OreoError(
+                374, @"Could not forget the deleted cursor's size.");
+        }
+        return NO;
+    }
+    return YES;
+}
+
 - (instancetype)initWithError:(NSError **)error {
     return [self initWithThemeIdentifier:
                      [OreoCursorEngine selectedThemeIdentifier]
                             resourceBundle:NSBundle.mainBundle
+                            sizePercentage:[OreoCursorEngine
+                                resolvedSizePercentageForThemeIdentifier:
+                                    [OreoCursorEngine selectedThemeIdentifier]]
                                      error:error];
 }
 
 - (instancetype)initWithThemeIdentifier:(NSString *)themeIdentifier
                           resourceBundle:(NSBundle *)resourceBundle
+                                   error:(NSError **)error {
+    return [self initWithThemeIdentifier:themeIdentifier
+                           resourceBundle:resourceBundle
+                           sizePercentage:[OreoCursorEngine
+                               resolvedSizePercentageForThemeIdentifier:
+                                   themeIdentifier]
+                                    error:error];
+}
+
++ (NSInteger)resolvedSizePercentageForThemeIdentifier:
+    (NSString *)themeIdentifier {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    if ([defaults boolForKey:OreoCursorEffectiveDefaultsKey] &&
+        [themeIdentifier isEqualToString:[self selectedThemeIdentifier]]) {
+        return [self effectiveSizePercentage];
+    }
+    return [self sizePercentageForThemeIdentifier:themeIdentifier];
+}
+
+- (instancetype)initWithThemeIdentifier:(NSString *)themeIdentifier
+                          resourceBundle:(NSBundle *)resourceBundle
+                          sizePercentage:(NSInteger)sizePercentage
                                    error:(NSError **)error {
     self = [super init];
     if (!self) {
@@ -1576,6 +1821,7 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
     self.themeIdentifier = themeIdentifier ?: @"";
     self.themeDisplayName =
         _themeSpecification[OreoThemeDisplayNameSpecKey] ?: @"Unknown";
+    self.themeSizePercentage = sizePercentage;
     self.bootSessionUUID = OreoSysctlString("kern.bootsessionuuid");
     self.osBuild = OreoSysctlString("kern.osversion");
     self.themeSHA256 = @"";
@@ -1631,6 +1877,17 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
         [self failWithError:themeSelectionError];
         if (error) {
             *error = themeSelectionError;
+        }
+        return self;
+    }
+    if (sizePercentage < OreoMinimumThemeSizePercentage ||
+        sizePercentage > OreoMaximumThemeSizePercentage) {
+        NSError *themeSizeError = OreoError(
+            370, @"Cursor size must be between 50%% and 200%%.");
+        self.themeValid = NO;
+        [self failWithError:themeSizeError];
+        if (error) {
+            *error = themeSizeError;
         }
         return self;
     }
@@ -1724,6 +1981,28 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
     return YES;
 }
 
+- (BOOL)persistAppliedState:(NSError **)error {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    id previousSize =
+        [defaults objectForKey:OreoCursorEffectiveThemeSizeDefaultsKey];
+    [defaults setInteger:self.themeSizePercentage
+                  forKey:OreoCursorEffectiveThemeSizeDefaultsKey];
+    if ([self persistDesiredState:YES
+                  effectiveState:YES
+                  activeSnapshot:YES
+                            error:error]) {
+        return YES;
+    }
+    if (previousSize) {
+        [defaults setObject:previousSize
+                     forKey:OreoCursorEffectiveThemeSizeDefaultsKey];
+    } else {
+        [defaults removeObjectForKey:OreoCursorEffectiveThemeSizeDefaultsKey];
+    }
+    [defaults synchronize];
+    return NO;
+}
+
 - (BOOL)loadPrivateAPI:(NSError **)error {
     dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
            RTLD_LAZY | RTLD_GLOBAL);
@@ -1794,7 +2073,11 @@ static BOOL OreoNearlyEqual(double lhs, double rhs) {
     if (!decoded) {
         return NO;
     }
-    _themeCursors = decoded;
+    _themeCursors = OreoThemeCursorsByScalingGeometry(
+        decoded, self.themeSizePercentage, error);
+    if (!_themeCursors) {
+        return NO;
+    }
     return YES;
 }
 
@@ -3437,11 +3720,7 @@ OreoDecodedThemeCursors(NSData *data,
         [self verifyThemeIdentifiers:OreoSortedTargetIdentifiers()
                                error:&applyError];
     }
-    if (!applyError &&
-        ![self persistDesiredState:YES
-                    effectiveState:YES
-                    activeSnapshot:YES
-                              error:&applyError]) {
+    if (!applyError && ![self persistAppliedState:&applyError]) {
         // The journal intentionally remains until state is durable.
     }
     if (!applyError && ![self clearTransaction:&applyError]) {
@@ -3718,6 +3997,7 @@ OreoDecodedThemeCursors(NSData *data,
         @"themeValid": @(self.themeValid),
         @"themeIdentifier": self.themeIdentifier ?: @"",
         @"themeDisplayName": self.themeDisplayName ?: @"",
+        @"themeSizePercentage": @(self.themeSizePercentage),
         @"themeSHA256": self.themeSHA256 ?: @"",
         @"bootSessionUUID": self.bootSessionUUID ?: @"unknown",
         @"osBuild": self.osBuild ?: @"unknown",

@@ -153,6 +153,26 @@ function codesignDetails(appPath) {
   return result.stderr;
 }
 
+let resolvedOuterSigningIdentity;
+
+function codesignAuthority(details) {
+  return details.match(/^Authority=(.+)$/m)?.[1] ?? null;
+}
+
+function outerSigningIdentity() {
+  if (resolvedOuterSigningIdentity) {
+    return resolvedOuterSigningIdentity;
+  }
+  const identity = codesignAuthority(codesignDetails(nativeAppPath));
+  if (!identity?.startsWith("Apple Development: ")) {
+    throw new Error(
+      "The native app must use an Apple Development signing identity.",
+    );
+  }
+  resolvedOuterSigningIdentity = identity;
+  return resolvedOuterSigningIdentity;
+}
+
 function codesignTeamIdentifier(details) {
   return details.match(/^TeamIdentifier=([A-Z0-9]+)$/m)?.[1] ?? null;
 }
@@ -255,7 +275,7 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
       [
         "--force",
         "--sign",
-        "-",
+        outerSigningIdentity(),
         "--timestamp=none",
         "--preserve-metadata=identifier,entitlements,requirements,flags,runtime",
         appPath,
@@ -309,22 +329,30 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
     const outerSignature = codesignDetails(appPath);
     const nativeSignature = codesignDetails(packagedNativeApp);
     const helperSignature = codesignDetails(packagedHelperApp);
+    const outerAuthority = codesignAuthority(outerSignature);
+    const nativeAuthority = codesignAuthority(nativeSignature);
+    const helperAuthority = codesignAuthority(helperSignature);
+    const outerTeamIdentifier = codesignTeamIdentifier(outerSignature);
     const nativeTeamIdentifier = codesignTeamIdentifier(nativeSignature);
     const helperTeamIdentifier = codesignTeamIdentifier(helperSignature);
     if (
       !outerSignature.includes(`Identifier=${outerBundleId}`) ||
-      !outerSignature.includes("Signature=adhoc") ||
-      !outerSignature.includes("TeamIdentifier=not set")
+      !outerTeamIdentifier ||
+      outerTeamIdentifier !== nativeTeamIdentifier ||
+      !outerAuthority ||
+      outerAuthority !== nativeAuthority
     ) {
       throw new Error(
-        "The outer personal application signature is inconsistent.",
+        "The outer application does not have the stable native-app signing identity.",
       );
     }
     if (
       !nativeSignature.includes(`Identifier=${nativeBundleId}`) ||
       !helperSignature.includes(`Identifier=${helperBundleId}`) ||
       !nativeTeamIdentifier ||
-      nativeTeamIdentifier !== helperTeamIdentifier
+      nativeTeamIdentifier !== helperTeamIdentifier ||
+      !nativeAuthority ||
+      nativeAuthority !== helperAuthority
     ) {
       throw new Error(
         "The packaged native signing identities are inconsistent.",
@@ -353,13 +381,18 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
       ),
     ];
     for (const electronApp of electronApps) {
+      if (codesignAuthority(codesignDetails(electronApp)) !== nativeAuthority) {
+        throw new Error(
+          `The Electron runtime has an inconsistent signing identity: ${electronApp}.`,
+        );
+      }
       const entitlements = codesignEntitlements(electronApp);
       if (
         entitlements["com.apple.security.cs.disable-library-validation"] !==
         true
       ) {
         throw new Error(
-          `The ad-hoc Electron runtime cannot load its framework: ${electronApp}.`,
+          `The Electron runtime cannot load its framework: ${electronApp}.`,
         );
       }
       const unexpectedPrivacyEntitlement = Object.keys(entitlements).find(
@@ -420,12 +453,13 @@ module.exports = {
       },
       NSHighResolutionCapable: true,
     },
-    // Personal builds are ad-hoc signed after Electron fuses and metadata are
-    // applied. The signed native app is staged by postPackage and the outer
-    // resource seal is then refreshed without altering the nested signature.
+    // The outer app and its background service registration need the same
+    // stable Apple-issued identity used by the signed native cursor helper.
+    // The native app is staged by postPackage and the outer resource seal is
+    // then refreshed without altering the nested signature.
     osxSign: {
-      identity: "-",
-      identityValidation: false,
+      identity: outerSigningIdentity(),
+      continueOnError: false,
       preEmbedProvisioningProfile: false,
       optionsForFile: electronSignOptions,
     },

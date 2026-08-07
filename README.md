@@ -75,12 +75,12 @@ npm run package
 npm run make
 ```
 
-Forge runs the native preflight for `package` and `make`. It produces an
-ad-hoc-signed outer Electron app while preserving the stable Apple signatures
-on the nested native app and login helper. The native app and helper must have
-the same nonempty TeamIdentifier and keep their distinct bundle identifiers.
-No Developer ID distribution certificate or notarization is needed for this
-personal local build.
+Forge runs the native preflight for `package` and `make`. It uses the nested
+native app's Apple Development identity for the outer Electron app, then
+preserves the signatures on the nested native app and login helper. All three
+bundles must have the same nonempty TeamIdentifier and keep their distinct
+bundle identifiers. No Developer ID distribution certificate or notarization
+is needed for this personal local build.
 
 Forge writes its output under `out`; neither command installs or opens the app.
 Move the resulting outer `Cursor Atelier.app` to a stable location such as

@@ -1,28 +1,67 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowUpRight01Icon,
+  ArrowRight01Icon,
   Cancel01Icon,
   CheckmarkCircle02Icon,
   CommandIcon,
   Cursor01Icon,
+  Delete01Icon,
   Delete02Icon,
+  FavouriteIcon,
   FileImportIcon,
+  FolderEditIcon,
+  FolderFavouriteIcon,
   InformationCircleIcon,
+  Moon02Icon,
   Search01Icon,
+  Settings02Icon,
+  Sun02Icon,
 } from "@hugeicons/core-free-icons";
 
 import { AppearanceModeSelector } from "@/components/appearance-mode-selector";
+import { SettingsScreen } from "@/components/settings-screen";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
 import {
   Sheet,
   SheetContent,
@@ -31,10 +70,28 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import * as catalog from "@/lib/cursor-catalog";
 import {
+  createDefaultCursorPreferences,
+  getCursorPreferenceId,
+  mergeCursorPreferences,
+  normalizeCursorPreferences,
+} from "@/lib/cursor-preferences";
+import {
+  DEFAULT_CURSOR_SIZE_PERCENTAGE,
+  MAX_CURSOR_SIZE_PERCENTAGE,
+  MIN_CURSOR_SIZE_PERCENTAGE,
   applyCursorTheme,
+  assignImportedCursorFamily,
+  deleteImportedCursor,
+  deleteImportedCursorFamily,
   getAutomaticSelectionId,
   getPackRailNavigationIndex,
   getSelectedStatusVariant,
@@ -46,14 +103,17 @@ import {
   isStatusVerifiedRestored,
   importCursorPack,
   matchesCursorPack,
+  normalizeCursorSizePercentage,
   openLoginItemsSettings,
   resolvePackQuerySource,
   restoreCursors,
+  setCursorThemeSize,
 } from "@/lib/cursor-ui";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 
 const DEFAULT_ROLES = ["default", "text", "pointer", "wait", "progress"];
+const CONTEXT_MENU_DISMISS_MS = 100;
 
 const FALLBACK_PACK = {
   id: "oreo-white",
@@ -246,6 +306,9 @@ function normalisePack(pack = {}) {
     available,
     canApply,
     nativeThemeId: pack.nativeThemeId ?? id,
+    sizePercentage: normalizeCursorSizePercentage(
+      pack.sizePercentage ?? pack.SizePercentage,
+    ),
     preview:
       previewSource(pack.preview) ??
       roles.find(
@@ -291,6 +354,30 @@ async function getNativeThemes() {
   }
   const result = await listThemes();
   return Array.isArray(result) ? result : [];
+}
+
+async function getNativePreferences() {
+  const getPreferences = window.electronAPI?.getCursorPreferences;
+  if (typeof getPreferences !== "function") {
+    return createDefaultCursorPreferences();
+  }
+  return normalizeCursorPreferences(await getPreferences());
+}
+
+async function updateNativePreferences(patch) {
+  const updatePreferences = window.electronAPI?.updateCursorPreferences;
+  if (typeof updatePreferences !== "function") {
+    throw new Error("Cursor settings are unavailable in this build.");
+  }
+  return normalizeCursorPreferences(await updatePreferences(patch));
+}
+
+async function randomizeNativeCursor() {
+  const randomize = window.electronAPI?.randomizeCursor;
+  if (typeof randomize !== "function") {
+    throw new Error("Cursor randomization is unavailable in this build.");
+  }
+  return randomize();
 }
 
 function getErrorMessage(error) {
@@ -344,22 +431,218 @@ function PackPreview({ pack, active = false, size = "md", className }) {
   );
 }
 
+function PackContextActions({
+  pack,
+  favorite,
+  appearanceRoles,
+  familyNames = [],
+  managementDisabled = false,
+  onAssignFamily,
+  onCreateFamily,
+  onDelete,
+  onToggleFavorite,
+  onToggleAppearanceRole,
+  children,
+}) {
+  const preferenceId = getCursorPreferenceId(pack);
+  const roles = Array.isArray(appearanceRoles) ? appearanceRoles : [];
+  const canManageImport = pack.imported === true;
+  const otherFamilies = familyNames.filter(
+    (family) => family.toLocaleLowerCase() !== pack.family.toLocaleLowerCase(),
+  );
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          onSelect={() => onToggleFavorite(preferenceId, !favorite)}
+        >
+          <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} />
+          {favorite ? "Remove from Favorites" : "Add to Favorites"}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuCheckboxItem
+          checked={roles.includes("light")}
+          onCheckedChange={(checked) =>
+            onToggleAppearanceRole(preferenceId, "light", checked === true)
+          }
+        >
+          <HugeiconsIcon icon={Sun02Icon} strokeWidth={2} />
+          Light mode
+        </ContextMenuCheckboxItem>
+        <ContextMenuCheckboxItem
+          checked={roles.includes("dark")}
+          onCheckedChange={(checked) =>
+            onToggleAppearanceRole(preferenceId, "dark", checked === true)
+          }
+        >
+          <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />
+          Dark mode
+        </ContextMenuCheckboxItem>
+        {canManageImport ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuSub>
+              <ContextMenuSubTrigger disabled={managementDisabled}>
+                <HugeiconsIcon icon={FolderEditIcon} strokeWidth={2} />
+                Move to family
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent className="max-w-72 min-w-48">
+                {otherFamilies.map((family) => (
+                  <ContextMenuItem
+                    key={family}
+                    onSelect={() => onAssignFamily?.(pack, family)}
+                  >
+                    <span className="truncate">{family}</span>
+                  </ContextMenuItem>
+                ))}
+                {otherFamilies.length ? <ContextMenuSeparator /> : null}
+                <ContextMenuItem
+                  onSelect={() => {
+                    window.setTimeout(
+                      () => onCreateFamily?.(pack),
+                      CONTEXT_MENU_DISMISS_MS,
+                    );
+                  }}
+                >
+                  New family…
+                </ContextMenuItem>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              variant="destructive"
+              disabled={managementDisabled}
+              onSelect={() => {
+                window.setTimeout(
+                  () => onDelete?.(pack),
+                  CONTEXT_MENU_DISMISS_MS,
+                );
+              }}
+            >
+              <HugeiconsIcon icon={Delete01Icon} strokeWidth={2} />
+              Delete cursor…
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function FamilyContextActions({
+  family,
+  familyPacks = [],
+  favorite,
+  managementDisabled = false,
+  onDelete,
+  onToggleFavorite,
+  children,
+}) {
+  const canDelete =
+    familyPacks.length > 0 && familyPacks.every((pack) => pack.imported === true);
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => onToggleFavorite(family, !favorite)}>
+          <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} />
+          {favorite ? "Remove from Favorites" : "Add to Favorites"}
+        </ContextMenuItem>
+        {canDelete ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              variant="destructive"
+              disabled={managementDisabled}
+              onSelect={() => {
+                window.setTimeout(
+                  () => onDelete?.(family, familyPacks),
+                  CONTEXT_MENU_DISMISS_MS,
+                );
+              }}
+            >
+              <HugeiconsIcon icon={Delete01Icon} strokeWidth={2} />
+              Delete family…
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function PackRailShortcut({
+  pack,
+  label,
+  active,
+  favorite,
+  appearanceRoles,
+  libraryActions,
+  onSelect,
+  onToggleFavorite,
+  onToggleAppearanceRole,
+}) {
+  return (
+    <PackContextActions
+      pack={pack}
+      favorite={favorite}
+      appearanceRoles={appearanceRoles}
+      {...libraryActions}
+      onToggleFavorite={onToggleFavorite}
+      onToggleAppearanceRole={onToggleAppearanceRole}
+    >
+      <button
+        type="button"
+        onClick={() => onSelect(pack.id)}
+        className="group flex w-full min-w-0 items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <PackPreview pack={pack} active={active} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-title-md">{pack.variant}</span>
+          <span className="block truncate text-body-sm text-muted-foreground">
+            {label ?? pack.family}
+          </span>
+        </span>
+        {active ? (
+          <HugeiconsIcon
+            icon={CheckmarkCircle02Icon}
+            strokeWidth={2.2}
+            className="size-4 shrink-0 text-primary"
+            aria-hidden="true"
+          />
+        ) : null}
+      </button>
+    </PackContextActions>
+  );
+}
+
 function PackRail({
   packs,
+  allPacks = packs,
   selectedId,
   effectiveId,
   verifiedActive,
   engineAvailable,
+  preferences,
   search,
   onSearch,
   onSelect,
   onClearSearch,
+  onToggleCursorFavorite,
+  onToggleFamilyFavorite,
+  onToggleAppearanceRole,
+  libraryActions = {},
   loadError,
   onClose,
   className,
 }) {
-  const listboxId = useId();
   const optionRefs = useRef(new Map());
+  const familyRefs = useRef(new Map());
+  const [expandedFamilies, setExpandedFamilies] = useState(() => new Set());
+  const searchActive = Boolean(search.trim());
   const groups = useMemo(() => {
     const grouped = new Map();
     for (const pack of packs) {
@@ -370,24 +653,91 @@ function PackRail({
     }
     return [...grouped.entries()];
   }, [packs]);
-  const rovingId = packs.some((pack) => pack.id === selectedId)
+  const visiblePacks = useMemo(
+    () =>
+      groups.flatMap(([family, familyPacks]) =>
+        searchActive || expandedFamilies.has(family) ? familyPacks : [],
+      ),
+    [expandedFamilies, groups, searchActive],
+  );
+  const rovingId = visiblePacks.some((pack) => pack.id === selectedId)
     ? selectedId
-    : packs[0]?.id;
+    : visiblePacks[0]?.id;
+  const favoriteCursorIds = new Set(preferences.favorites.cursorIds);
+  const favoriteFamilies = new Set(preferences.favorites.families);
+  const allPacksByFamily = useMemo(() => {
+    const result = new Map();
+    for (const pack of allPacks) {
+      if (!result.has(pack.family)) {
+        result.set(pack.family, []);
+      }
+      result.get(pack.family).push(pack);
+    }
+    return result;
+  }, [allPacks]);
+  const familyNames = useMemo(
+    () =>
+      [...new Set(allPacks.map((pack) => pack.family).filter(Boolean))].sort(
+        (left, right) => left.localeCompare(right),
+      ),
+    [allPacks],
+  );
+  const packLibraryActions = { ...libraryActions, familyNames };
+  const currentPack = verifiedActive
+    ? allPacks.find((pack) => matchesCursorPack(pack, effectiveId))
+    : null;
+  const favoritePacks = allPacks.filter((pack) =>
+    favoriteCursorIds.has(getCursorPreferenceId(pack)),
+  );
+  const hasFavorites = favoritePacks.length > 0 || favoriteFamilies.size > 0;
+
+  const setFamilyExpanded = useCallback((family, expanded) => {
+    setExpandedFamilies((current) => {
+      const next = new Set(current);
+      if (expanded) {
+        next.add(family);
+      } else {
+        next.delete(family);
+      }
+      return next;
+    });
+  }, []);
+
+  const revealFavoriteFamily = useCallback(
+    (family) => {
+      onClearSearch();
+      setFamilyExpanded(family, true);
+      window.setTimeout(() => {
+        familyRefs.current
+          .get(family)
+          ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }, 0);
+    },
+    [onClearSearch, setFamilyExpanded],
+  );
+
+  const selectShortcut = useCallback(
+    (packId) => {
+      onSelect(packId);
+      onClose?.();
+    },
+    [onClose, onSelect],
+  );
 
   const handleOptionKeyDown = useCallback(
     (event, packId) => {
-      const currentIndex = packs.findIndex((pack) => pack.id === packId);
+      const currentIndex = visiblePacks.findIndex((pack) => pack.id === packId);
       const nextIndex = getPackRailNavigationIndex(
         event.key,
         currentIndex,
-        packs.length,
+        visiblePacks.length,
       );
       if (nextIndex === null) {
         return;
       }
 
       event.preventDefault();
-      const nextPack = packs[nextIndex];
+      const nextPack = visiblePacks[nextIndex];
       if (!nextPack) {
         return;
       }
@@ -397,7 +747,7 @@ function PackRail({
       optionRefs.current.get(nextPack.id)?.focus({ preventScroll: true });
       optionRefs.current.get(nextPack.id)?.scrollIntoView({ block: "nearest" });
     },
-    [onSelect, packs],
+    [onSelect, visiblePacks],
   );
 
   return (
@@ -482,88 +832,264 @@ function PackRail({
 
       <div
         data-testid="pack-rail-scroll"
-        aria-label={loadError ? undefined : "Cursor packs"}
-        role={loadError ? undefined : "listbox"}
         className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pb-3 sm:px-3"
       >
+        {!loadError && (currentPack || hasFavorites) ? (
+          <nav aria-label="Cursor shortcuts" className="pb-2">
+            {currentPack ? (
+              <div>
+                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground">
+                  Current
+                </h3>
+                <PackRailShortcut
+                  pack={currentPack}
+                  label={currentPack.family}
+                  active
+                  favorite={favoriteCursorIds.has(
+                    getCursorPreferenceId(currentPack),
+                  )}
+                  appearanceRoles={
+                    preferences.appearance.roles[
+                      getCursorPreferenceId(currentPack)
+                    ]
+                  }
+                  libraryActions={packLibraryActions}
+                  onSelect={selectShortcut}
+                  onToggleFavorite={onToggleCursorFavorite}
+                  onToggleAppearanceRole={onToggleAppearanceRole}
+                />
+              </div>
+            ) : null}
+
+            {currentPack && hasFavorites ? (
+              <Separator className="mx-2 my-2 w-auto" />
+            ) : null}
+
+            {hasFavorites ? (
+              <div>
+                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground">
+                  Favorites
+                </h3>
+                <div className="space-y-0.5">
+                  {[...favoriteFamilies].map((family) => {
+                    const familyActive = currentPack?.family === family;
+                    return (
+                      <FamilyContextActions
+                        key={family}
+                        family={family}
+                        familyPacks={allPacksByFamily.get(family) ?? []}
+                        favorite
+                        managementDisabled={libraryActions.managementDisabled}
+                        onDelete={libraryActions.onDeleteFamily}
+                        onToggleFavorite={onToggleFamilyFavorite}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => revealFavoriteFamily(family)}
+                          className="flex w-full min-w-0 items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60"
+                        >
+                          <span className="flex size-8 shrink-0 items-center justify-center rounded-2xl bg-muted/70 text-muted-foreground">
+                            <HugeiconsIcon
+                              icon={FolderFavouriteIcon}
+                              strokeWidth={1.9}
+                              className="size-4"
+                              aria-hidden="true"
+                            />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-title-md">
+                            {family}
+                          </span>
+                          {familyActive ? (
+                            <HugeiconsIcon
+                              icon={CheckmarkCircle02Icon}
+                              strokeWidth={2.2}
+                              className="size-4 shrink-0 text-primary"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </button>
+                      </FamilyContextActions>
+                    );
+                  })}
+                  {favoritePacks.map((pack) => (
+                    <PackRailShortcut
+                      key={pack.id}
+                      pack={pack}
+                      active={
+                        verifiedActive && matchesCursorPack(pack, effectiveId)
+                      }
+                      favorite
+                      appearanceRoles={
+                        preferences.appearance.roles[
+                          getCursorPreferenceId(pack)
+                        ]
+                      }
+                      libraryActions={packLibraryActions}
+                      onSelect={selectShortcut}
+                      onToggleFavorite={onToggleCursorFavorite}
+                      onToggleAppearanceRole={onToggleAppearanceRole}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <Separator className="mx-2 mt-2 w-auto" />
+          </nav>
+        ) : null}
+
         {loadError ? (
           <p className="px-3 py-8 text-center text-body-sm text-muted-foreground">
             Unavailable
           </p>
         ) : groups.length ? (
-          groups.map(([family, familyPacks], groupIndex) => {
-            const familyId = `${listboxId}-family-${groupIndex}`;
-            return (
-              <section
-                key={family}
-                className="mb-3 min-w-0 last:mb-0"
-                role="group"
-                aria-labelledby={familyId}
-              >
-                <h3
-                  id={familyId}
-                  className="truncate px-2.5 pt-2 pb-1 text-label-sm tracking-[0.02em] text-muted-foreground"
+          <nav aria-label="Cursor packs">
+            {groups.map(([family, familyPacks]) => {
+              const expanded = searchActive || expandedFamilies.has(family);
+              const familyActive = familyPacks.some(
+                (pack) =>
+                  verifiedActive && matchesCursorPack(pack, effectiveId),
+              );
+              const familyFavorite = favoriteFamilies.has(family);
+              return (
+                <Collapsible
+                  key={family}
+                  open={expanded}
+                  onOpenChange={(open) => {
+                    if (!searchActive) {
+                      setFamilyExpanded(family, open);
+                    }
+                  }}
+                  asChild
                 >
-                  {family}
-                </h3>
-                <div className="min-w-0 space-y-0.5">
-                  {familyPacks.map((pack) => {
-                    const selected = pack.id === selectedId;
-                    const active =
-                      verifiedActive && matchesCursorPack(pack, effectiveId);
-                    const canApply = engineAvailable && pack.canApply;
-
-                    return (
-                      <button
-                        type="button"
-                        key={pack.id}
-                        ref={(node) => {
-                          if (node) {
-                            optionRefs.current.set(pack.id, node);
-                          } else {
-                            optionRefs.current.delete(pack.id);
-                          }
-                        }}
-                        onClick={() => {
-                          onSelect(pack.id);
-                          onClose?.();
-                        }}
-                        onKeyDown={(event) =>
-                          handleOptionKeyDown(event, pack.id)
-                        }
-                        className={cn(
-                          "group relative flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-2xl px-2 py-2 text-left outline-none transition-colors before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent focus-visible:ring-2 focus-visible:ring-ring/60",
-                          selected
-                            ? "bg-accent text-accent-foreground before:bg-primary"
-                            : "hover:bg-muted/60",
-                          !canApply && "opacity-60",
-                        )}
-                        aria-selected={selected}
-                        aria-label={`${pack.family} ${pack.variant}${active ? ", active" : ""}${canApply ? "" : ", unavailable"}`}
-                        role="option"
-                        tabIndex={pack.id === rovingId ? 0 : -1}
-                      >
-                        <PackPreview pack={pack} active={active} />
-                        <span className="min-w-0 flex-1 overflow-hidden">
-                          <span className="block truncate text-title-md">
-                            {pack.variant}
-                          </span>
-                        </span>
-                        {active ? (
+                  <section
+                    ref={(node) => {
+                      if (node) {
+                        familyRefs.current.set(family, node);
+                      } else {
+                        familyRefs.current.delete(family);
+                      }
+                    }}
+                    className="mb-1 min-w-0 last:mb-0"
+                  >
+                    <FamilyContextActions
+                      family={family}
+                      familyPacks={allPacksByFamily.get(family) ?? []}
+                      favorite={familyFavorite}
+                      managementDisabled={libraryActions.managementDisabled}
+                      onDelete={libraryActions.onDeleteFamily}
+                      onToggleFavorite={onToggleFamilyFavorite}
+                    >
+                      <CollapsibleTrigger asChild>
+                        <button
+                          type="button"
+                          className="group flex w-full min-w-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                        >
                           <HugeiconsIcon
-                            icon={CheckmarkCircle02Icon}
-                            strokeWidth={2.2}
-                            className="size-4 shrink-0 text-primary"
+                            icon={ArrowRight01Icon}
+                            strokeWidth={2}
+                            className={cn(
+                              "size-3.5 shrink-0 transition-transform",
+                              expanded && "rotate-90",
+                            )}
                             aria-hidden="true"
                           />
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            );
-          })
+                          <span className="min-w-0 flex-1 truncate">
+                            {family}
+                          </span>
+                          {familyFavorite ? (
+                            <HugeiconsIcon
+                              icon={FavouriteIcon}
+                              strokeWidth={2}
+                              className="size-3.5 shrink-0"
+                              aria-label="Favorite family"
+                            />
+                          ) : null}
+                          {familyActive && !expanded ? (
+                            <HugeiconsIcon
+                              icon={CheckmarkCircle02Icon}
+                              strokeWidth={2.2}
+                              className="size-4 shrink-0 text-primary"
+                              aria-label="Contains current cursor"
+                            />
+                          ) : null}
+                          <span className="type-numeric text-[0.65rem] font-normal text-muted-foreground/75">
+                            {familyPacks.length}
+                          </span>
+                        </button>
+                      </CollapsibleTrigger>
+                    </FamilyContextActions>
+                    <CollapsibleContent>
+                      <div className="min-w-0 space-y-0.5 pb-1">
+                        {familyPacks.map((pack) => {
+                          const selected = pack.id === selectedId;
+                          const active =
+                            verifiedActive &&
+                            matchesCursorPack(pack, effectiveId);
+                          const canApply =
+                            engineAvailable && pack.canApply === true;
+                          const preferenceId = getCursorPreferenceId(pack);
+
+                          return (
+                            <PackContextActions
+                              key={pack.id}
+                              pack={pack}
+                              favorite={favoriteCursorIds.has(preferenceId)}
+                              appearanceRoles={
+                                preferences.appearance.roles[preferenceId]
+                              }
+                              {...packLibraryActions}
+                              onToggleFavorite={onToggleCursorFavorite}
+                              onToggleAppearanceRole={onToggleAppearanceRole}
+                            >
+                              <button
+                                type="button"
+                                ref={(node) => {
+                                  if (node) {
+                                    optionRefs.current.set(pack.id, node);
+                                  } else {
+                                    optionRefs.current.delete(pack.id);
+                                  }
+                                }}
+                                onClick={() => selectShortcut(pack.id)}
+                                onKeyDown={(event) =>
+                                  handleOptionKeyDown(event, pack.id)
+                                }
+                                className={cn(
+                                  "group relative flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-2xl px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
+                                  selected
+                                    ? "bg-accent text-accent-foreground"
+                                    : "hover:bg-muted/60",
+                                  !canApply && "opacity-60",
+                                )}
+                                aria-current={selected ? "true" : undefined}
+                                aria-label={`${pack.family} ${pack.variant}${active ? ", active" : ""}${canApply ? "" : ", unavailable"}`}
+                                tabIndex={pack.id === rovingId ? 0 : -1}
+                              >
+                                <PackPreview pack={pack} active={active} />
+                                <span className="min-w-0 flex-1 overflow-hidden">
+                                  <span className="block truncate text-title-md">
+                                    {pack.variant}
+                                  </span>
+                                </span>
+                                {active ? (
+                                  <HugeiconsIcon
+                                    icon={CheckmarkCircle02Icon}
+                                    strokeWidth={2.2}
+                                    className="size-4 shrink-0 text-primary"
+                                    aria-hidden="true"
+                                  />
+                                ) : null}
+                              </button>
+                            </PackContextActions>
+                          );
+                        })}
+                      </div>
+                    </CollapsibleContent>
+                  </section>
+                </Collapsible>
+              );
+            })}
+          </nav>
         ) : (
           <p className="px-3 py-8 text-center text-body-sm text-muted-foreground">
             No matches
@@ -611,9 +1137,14 @@ function CursorRolePreview({ role }) {
 function PackDetails({
   pack,
   active,
+  favorite,
+  appearanceRoles = [],
   selectedBySystem,
   operation,
   onApply,
+  onSizeCommit,
+  onToggleFavorite,
+  onToggleAppearanceRole,
   onRestore,
   onOpenLoginSettings,
   feedback,
@@ -624,11 +1155,32 @@ function PackDetails({
   statusErrorMessage,
   onRetryStatus,
   statusRetrying,
+  effectiveSizePercentage,
 }) {
   const busy = operation !== "idle";
   const canApply = engineAvailable && pack.canApply === true;
+  const [previewSize, setPreviewSize] = useState(pack.sizePercentage);
+  useEffect(() => {
+    setPreviewSize(pack.sizePercentage);
+  }, [pack.id, pack.sizePercentage]);
+  const sizeNeedsApply =
+    active && pack.sizePercentage !== effectiveSizePercentage;
   const previewRoles = pack.roles.filter((role) => role.src);
   const count = previewRoles.length || pack.roleCount || pack.cursorCount;
+  const previewPixels = (32 * previewSize) / 100;
+
+  const commitSize = useCallback(
+    (values) => {
+      const nextSize = normalizeCursorSizePercentage(
+        values?.[0],
+        pack.sizePercentage,
+      );
+      Promise.resolve(onSizeCommit(nextSize)).catch(() => {
+        setPreviewSize(pack.sizePercentage);
+      });
+    },
+    [onSizeCommit, pack.sizePercentage],
+  );
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
@@ -659,49 +1211,128 @@ function PackDetails({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5">
-            {pack.sourceUrl ? (
-              <Button variant="ghost" size="sm" asChild>
-                <a href={pack.sourceUrl} target="_blank" rel="noreferrer">
-                  Source
-                  <HugeiconsIcon
-                    icon={ArrowUpRight01Icon}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                </a>
-              </Button>
-            ) : null}
-            {engineAvailable ? (
-              <>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onRestore}
-                  disabled={busy || !canRestore}
-                >
-                  {operation === "restoring" ? "Restoring…" : "Restore"}
+          <TooltipProvider>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {pack.sourceUrl ? (
+                <Button variant="ghost" size="sm" asChild>
+                  <a href={pack.sourceUrl} target="_blank" rel="noreferrer">
+                    Source
+                    <HugeiconsIcon
+                      icon={ArrowUpRight01Icon}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                  </a>
                 </Button>
-                <Button
-                  type="button"
-                  onClick={onApply}
-                  disabled={busy || active || !canApply}
-                  size="sm"
-                  className="min-w-20"
-                  title={canApply ? undefined : "This pack is unavailable"}
-                >
-                  {operation === "applying"
-                    ? "Applying…"
-                    : active
-                      ? "Applied"
-                      : !canApply
-                        ? "Unavailable"
-                        : "Apply"}
-                </Button>
-              </>
-            ) : null}
-          </div>
+              ) : null}
+              {engineAvailable ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={onRestore}
+                    disabled={busy || !canRestore}
+                  >
+                    {operation === "restoring" ? "Restoring…" : "Restore"}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={onApply}
+                    disabled={busy || (active && !sizeNeedsApply) || !canApply}
+                    size="sm"
+                    className="min-w-20"
+                    title={canApply ? undefined : "This pack is unavailable"}
+                  >
+                    {operation === "applying"
+                      ? "Applying…"
+                      : active
+                        ? sizeNeedsApply
+                          ? "Reapply"
+                          : "Applied"
+                        : !canApply
+                          ? "Unavailable"
+                          : "Apply"}
+                  </Button>
+                </>
+              ) : null}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={
+                      favorite ? "Remove from Favorites" : "Add to Favorites"
+                    }
+                    className={cn(
+                      "text-muted-foreground",
+                      favorite && "text-rose-500 hover:text-rose-500",
+                    )}
+                    onClick={onToggleFavorite}
+                  >
+                    <HugeiconsIcon
+                      icon={FavouriteIcon}
+                      strokeWidth={2}
+                      className={cn("size-4", favorite && "fill-current")}
+                      aria-hidden="true"
+                    />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {favorite ? "Remove from Favorites" : "Add to Favorites"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-pressed={appearanceRoles.includes("light")}
+                    aria-label="Light mode cursor"
+                    className={cn(
+                      "text-muted-foreground",
+                      appearanceRoles.includes("light") && "text-primary",
+                    )}
+                    onClick={() => onToggleAppearanceRole("light")}
+                  >
+                    <HugeiconsIcon
+                      icon={Sun02Icon}
+                      strokeWidth={2}
+                      className="size-4"
+                      aria-hidden="true"
+                    />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Light mode cursor</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-pressed={appearanceRoles.includes("dark")}
+                    aria-label="Dark mode cursor"
+                    className={cn(
+                      "text-muted-foreground",
+                      appearanceRoles.includes("dark") && "text-primary",
+                    )}
+                    onClick={() => onToggleAppearanceRole("dark")}
+                  >
+                    <HugeiconsIcon
+                      icon={Moon02Icon}
+                      strokeWidth={2}
+                      className="size-4"
+                      aria-hidden="true"
+                    />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Dark mode cursor</TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
         </div>
       </header>
 
@@ -779,6 +1410,53 @@ function PackDetails({
               </Button>
             </div>
           ) : null}
+
+          <div className="mb-6 grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-5 border-b border-border/60 pb-6">
+            <div className="flex size-20 items-center justify-center rounded-xl bg-muted/45">
+              {pack.preview ? (
+                <img
+                  src={pack.preview}
+                  alt=""
+                  draggable="false"
+                  className="object-contain"
+                  style={{ width: previewPixels, height: previewPixels }}
+                />
+              ) : (
+                <HugeiconsIcon
+                  icon={Cursor01Icon}
+                  strokeWidth={1.7}
+                  className="text-muted-foreground"
+                  style={{ width: previewPixels, height: previewPixels }}
+                  aria-hidden="true"
+                />
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="mb-3 flex items-baseline justify-between gap-4">
+                <span className="text-title-md">Size</span>
+                <span className="type-numeric text-body-sm text-muted-foreground">
+                  {previewSize}%
+                </span>
+              </div>
+              <Slider
+                aria-label={`${pack.variant} cursor size`}
+                min={MIN_CURSOR_SIZE_PERCENTAGE}
+                max={MAX_CURSOR_SIZE_PERCENTAGE}
+                step={5}
+                value={[previewSize]}
+                onValueChange={(values) =>
+                  setPreviewSize(
+                    normalizeCursorSizePercentage(
+                      values?.[0],
+                      DEFAULT_CURSOR_SIZE_PERCENTAGE,
+                    ),
+                  )
+                }
+                onValueCommit={commitSize}
+                disabled={busy || !canApply}
+              />
+            </div>
+          </div>
 
           <div className="mb-4 flex items-baseline justify-between gap-4">
             <h2 className="text-title-md">Cursors</h2>
@@ -862,6 +1540,7 @@ export function HomeRoute() {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const initialCatalogue = useMemo(getCatalogue, []);
+  const [view, setView] = useState("catalog");
   const [selectedId, setSelectedId] = useState(
     () => initialCatalogue[0]?.id ?? "",
   );
@@ -869,7 +1548,27 @@ export function HomeRoute() {
   const [operation, setOperation] = useState("idle");
   const [feedback, setFeedback] = useState(null);
   const [railOpen, setRailOpen] = useState(false);
+  const [familyEditor, setFamilyEditor] = useState(null);
+  const [familyName, setFamilyName] = useState("");
+  const [familyDialogError, setFamilyDialogError] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const selectionWasChanged = useRef(false);
+  const selectedIdRef = useRef(selectedId);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  const preferencesQuery = useQuery({
+    queryKey: ["cursor-preferences"],
+    queryFn: getNativePreferences,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const preferences = useMemo(
+    () => normalizeCursorPreferences(preferencesQuery.data),
+    [preferencesQuery.data],
+  );
 
   const nativeThemesQuery = useQuery({
     queryKey: ["cursor-themes"],
@@ -914,6 +1613,9 @@ export function HomeRoute() {
 
   const effectiveId = getStatusVariant(statusQuery.data);
   const selectedStatusId = getSelectedStatusVariant(statusQuery.data);
+  const effectiveSizePercentage = normalizeCursorSizePercentage(
+    statusQuery.data?.themeSizePercentage,
+  );
   const previewMode = Boolean(statusQuery.data?.previewMode);
   const statusUnavailable = isStatusQueryUnavailable(statusQuery);
   const statusErrorMessage =
@@ -1005,6 +1707,53 @@ export function HomeRoute() {
     };
   }, [queryClient]);
 
+  useEffect(() => {
+    const api = window.electronAPI;
+    const unsubscribers = [];
+    if (typeof api?.onCursorPreferencesChanged === "function") {
+      unsubscribers.push(
+        api.onCursorPreferencesChanged((nextPreferences) => {
+          queryClient.setQueryData(
+            ["cursor-preferences"],
+            normalizeCursorPreferences(nextPreferences),
+          );
+        }),
+      );
+    }
+    if (typeof api?.onCursorChanged === "function") {
+      unsubscribers.push(
+        api.onCursorChanged((event) => {
+          if (event?.reason === "renderer-size-preference") {
+            void queryClient.invalidateQueries({ queryKey: ["cursor-themes"] });
+            return;
+          }
+          void queryClient.invalidateQueries({ queryKey: ["cursor-status"] });
+        }),
+      );
+    }
+    if (typeof api?.onNavigate === "function") {
+      unsubscribers.push(
+        api.onNavigate((destination) => {
+          if (destination === "settings") {
+            setView("settings");
+            setRailOpen(false);
+            setFeedback(null);
+          } else if (destination === "catalog") {
+            setView("catalog");
+          }
+        }),
+      );
+    }
+
+    return () => {
+      for (const unsubscribe of unsubscribers) {
+        if (typeof unsubscribe === "function") {
+          unsubscribe();
+        }
+      }
+    };
+  }, [queryClient]);
+
   const selectedPack = useMemo(
     () =>
       packs.find((pack) => pack.id === selectedId) ??
@@ -1020,6 +1769,96 @@ export function HomeRoute() {
     setFeedback(null);
   }, []);
 
+  const handlePreferenceChange = useCallback(
+    async (patch) => {
+      setFeedback(null);
+      const previous = normalizeCursorPreferences(
+        queryClient.getQueryData(["cursor-preferences"]),
+      );
+      const optimistic = mergeCursorPreferences(previous, patch);
+      queryClient.setQueryData(["cursor-preferences"], optimistic);
+      try {
+        const updated = await updateNativePreferences(patch);
+        queryClient.setQueryData(["cursor-preferences"], updated);
+      } catch (error) {
+        queryClient.setQueryData(["cursor-preferences"], previous);
+        setFeedback({
+          scope: "preferences",
+          type: "error",
+          message: getErrorMessage(error),
+        });
+      }
+    },
+    [queryClient],
+  );
+
+  const handleToggleCursorFavorite = useCallback(
+    (preferenceId, favorite) => {
+      if (!preferenceId) {
+        return;
+      }
+      const current = normalizeCursorPreferences(
+        queryClient.getQueryData(["cursor-preferences"]),
+      );
+      const cursorIds = new Set(current.favorites.cursorIds);
+      if (favorite) {
+        cursorIds.add(preferenceId);
+      } else {
+        cursorIds.delete(preferenceId);
+      }
+      void handlePreferenceChange({
+        favorites: { cursorIds: [...cursorIds] },
+      });
+    },
+    [handlePreferenceChange, queryClient],
+  );
+
+  const handleToggleFamilyFavorite = useCallback(
+    (family, favorite) => {
+      if (!family) {
+        return;
+      }
+      const current = normalizeCursorPreferences(
+        queryClient.getQueryData(["cursor-preferences"]),
+      );
+      const families = new Set(current.favorites.families);
+      if (favorite) {
+        families.add(family);
+      } else {
+        families.delete(family);
+      }
+      void handlePreferenceChange({
+        favorites: { families: [...families] },
+      });
+    },
+    [handlePreferenceChange, queryClient],
+  );
+
+  const handleToggleAppearanceRole = useCallback(
+    (preferenceId, role, enabled) => {
+      if (!preferenceId || (role !== "light" && role !== "dark")) {
+        return;
+      }
+      const current = normalizeCursorPreferences(
+        queryClient.getQueryData(["cursor-preferences"]),
+      );
+      const roles = { ...current.appearance.roles };
+      const cursorRoles = new Set(roles[preferenceId] ?? []);
+      if (enabled) {
+        cursorRoles.add(role);
+      } else {
+        cursorRoles.delete(role);
+      }
+      if (cursorRoles.size) {
+        roles[preferenceId] = [...cursorRoles];
+      } else {
+        delete roles[preferenceId];
+      }
+      void handlePreferenceChange({ appearance: { roles } });
+    },
+    [handlePreferenceChange, queryClient],
+  );
+
   const refreshStatus = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["cursor-status"] });
     return queryClient.fetchQuery({
@@ -1027,6 +1866,90 @@ export function HomeRoute() {
       queryFn: getNativeStatus,
     });
   }, [queryClient]);
+
+  const refreshLibraryQueries = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["cursor-themes"] }),
+      queryClient.invalidateQueries({ queryKey: ["cursor-preferences"] }),
+      queryClient.invalidateQueries({ queryKey: ["cursor-status"] }),
+    ]);
+  }, [queryClient]);
+
+  const handleRandomize = useCallback(async () => {
+    setFeedback(null);
+    setOperation("randomizing");
+    try {
+      const result = await randomizeNativeCursor();
+      const randomizedId =
+        result?.cursor?.nativeThemeId ??
+        result?.cursor?.id ??
+        result?.nativeThemeId ??
+        null;
+      const randomizedPack = randomizedId
+        ? packs.find((pack) => matchesCursorPack(pack, randomizedId))
+        : null;
+      if (randomizedPack) {
+        selectionWasChanged.current = true;
+        setSelectedId(randomizedPack.id);
+      }
+      await refreshStatus();
+      setFeedback({
+        scope: "randomization",
+        type: "success",
+        message: randomizedPack
+          ? `${randomizedPack.variant} is active.`
+          : "A new random cursor is active.",
+      });
+    } catch (error) {
+      setFeedback({
+        scope: "randomization",
+        type: "error",
+        message: getErrorMessage(error),
+      });
+    } finally {
+      setOperation("idle");
+    }
+  }, [packs, refreshStatus]);
+
+  const handleSizeCommit = useCallback(
+    async (sizePercentage) => {
+      if (!engineAvailable || !selectedPack || selectedPack.canApply !== true) {
+        throw new Error("Cursor size customization is unavailable.");
+      }
+      setFeedback(null);
+      setOperation("sizing");
+      try {
+        const result = await setCursorThemeSize(
+          selectedPack.nativeThemeId ?? selectedPack.id,
+          sizePercentage,
+        );
+        queryClient.setQueryData(["cursor-themes"], (themes) =>
+          Array.isArray(themes)
+            ? themes.map((theme) =>
+                matchesCursorPack(theme, result.nativeThemeId)
+                  ? {
+                      ...theme,
+                      sizePercentage: result.sizePercentage,
+                      SizePercentage: result.sizePercentage,
+                    }
+                  : theme,
+              )
+            : themes,
+        );
+        return result;
+      } catch (error) {
+        setFeedback({
+          scope: "catalog",
+          type: "error",
+          message: getErrorMessage(error),
+        });
+        throw error;
+      } finally {
+        setOperation("idle");
+      }
+    },
+    [engineAvailable, queryClient, selectedPack],
+  );
 
   const handleApply = useCallback(async () => {
     if (!engineAvailable || !selectedPack || selectedPack.canApply !== true) {
@@ -1043,6 +1966,7 @@ export function HomeRoute() {
         );
       }
       setFeedback({
+        scope: "catalog",
         type: "success",
         message: `${selectedPack.variant} is active.`,
       });
@@ -1052,7 +1976,11 @@ export function HomeRoute() {
       } catch {
         // Preserve the operation error; the query retains its previous state.
       }
-      setFeedback({ type: "error", message: getErrorMessage(error) });
+      setFeedback({
+        scope: "catalog",
+        type: "error",
+        message: getErrorMessage(error),
+      });
     } finally {
       setOperation("idle");
     }
@@ -1068,6 +1996,7 @@ export function HomeRoute() {
         throw new Error("The macOS cursor restore could not be verified.");
       }
       setFeedback({
+        scope: "catalog",
         type: "success",
         message: "macOS cursor restored.",
       });
@@ -1077,7 +2006,11 @@ export function HomeRoute() {
       } catch {
         // Preserve the operation error; the query retains its previous state.
       }
-      setFeedback({ type: "error", message: getErrorMessage(error) });
+      setFeedback({
+        scope: "catalog",
+        type: "error",
+        message: getErrorMessage(error),
+      });
     } finally {
       setOperation("idle");
     }
@@ -1125,15 +2058,163 @@ export function HomeRoute() {
           ? "That cursor pack is already imported."
           : "Cursor import completed.";
       setFeedback({
+        scope: "catalog",
         type: "success",
         message: warning ? `${message} ${warning}` : message,
       });
     } catch (error) {
-      setFeedback({ type: "error", message: getErrorMessage(error) });
+      setFeedback({
+        scope: "catalog",
+        type: "error",
+        message: getErrorMessage(error),
+      });
     } finally {
       setOperation("idle");
     }
   }, [queryClient]);
+
+  const handleAssignFamily = useCallback(
+    async (pack, family) => {
+      const identifier = pack?.nativeThemeId ?? pack?.id;
+      if (!identifier || pack?.imported !== true) {
+        return { ok: false, message: "Only imported cursors can be organized." };
+      }
+      setFeedback(null);
+      setOperation("organizing");
+      try {
+        const result = await assignImportedCursorFamily([identifier], family);
+        await refreshLibraryQueries();
+        const assignedFamily = result?.family ?? String(family).trim();
+        setFeedback({
+          scope: "catalog",
+          type: "success",
+          message: `${pack.variant} moved to ${assignedFamily}.`,
+        });
+        return { ok: true, family: assignedFamily };
+      } catch (error) {
+        const message = getErrorMessage(error);
+        setFeedback({ scope: "catalog", type: "error", message });
+        return { ok: false, message };
+      } finally {
+        setOperation("idle");
+      }
+    },
+    [refreshLibraryQueries],
+  );
+
+  const handleOpenFamilyEditor = useCallback((pack) => {
+    setFamilyName("");
+    setFamilyDialogError(null);
+    setFamilyEditor(pack);
+  }, []);
+
+  const handleCreateFamily = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (!familyEditor) {
+        return;
+      }
+      const result = await handleAssignFamily(familyEditor, familyName);
+      if (result.ok) {
+        setFamilyEditor(null);
+        setFamilyName("");
+        setFamilyDialogError(null);
+      } else {
+        setFamilyDialogError(result.message);
+      }
+    },
+    [familyEditor, familyName, handleAssignFamily],
+  );
+
+  const handleRequestCursorDeletion = useCallback((pack) => {
+    if (pack?.imported !== true) {
+      return;
+    }
+    setDeleteTarget({
+      kind: "cursor",
+      label: pack.variant,
+      identifier: pack.nativeThemeId ?? pack.id,
+      identifiers: [pack.nativeThemeId ?? pack.id],
+    });
+  }, []);
+
+  const handleRequestFamilyDeletion = useCallback((family, familyPacks) => {
+    if (
+      !family ||
+      !familyPacks?.length ||
+      familyPacks.some((pack) => pack.imported !== true)
+    ) {
+      return;
+    }
+    setDeleteTarget({
+      kind: "family",
+      label: family,
+      family,
+      identifiers: familyPacks.map(
+        (pack) => pack.nativeThemeId ?? pack.id,
+      ),
+      count: familyPacks.length,
+    });
+  }, []);
+
+  const handleDeleteConfirmed = useCallback(async () => {
+    const target = deleteTarget;
+    if (!target) {
+      return;
+    }
+    setDeleteTarget(null);
+    setFeedback(null);
+    setOperation("deleting");
+    try {
+      const result =
+        target.kind === "family"
+          ? await deleteImportedCursorFamily(target.family)
+          : await deleteImportedCursor(target.identifier);
+      const removedIds = new Set(
+        target.identifiers.map((identifier) => identifier.toLowerCase()),
+      );
+      const currentSelectedPack = packs.find(
+        (pack) => pack.id === selectedIdRef.current,
+      );
+      const selectedWasRemoved =
+        currentSelectedPack &&
+        [...removedIds].some((identifier) =>
+          matchesCursorPack(currentSelectedPack, identifier),
+        );
+      if (selectedWasRemoved) {
+        const nextPack = packs.find(
+          (pack) =>
+            ![...removedIds].some((identifier) =>
+              matchesCursorPack(pack, identifier),
+            ),
+        );
+        selectionWasChanged.current = true;
+        setSearch("");
+        setSelectedId(nextPack?.id ?? "");
+      }
+      await refreshLibraryQueries();
+      const cleanupPending = Boolean(
+        result?.cleanupPending ||
+          result?.preferenceCleanupPending ||
+          result?.sizePreferenceCleanupPending,
+      );
+      setFeedback({
+        scope: "catalog",
+        type: "success",
+        message: cleanupPending
+          ? `${target.label} was removed; some cleanup is still pending.`
+          : `${target.label} was moved to Trash.`,
+      });
+    } catch (error) {
+      setFeedback({
+        scope: "catalog",
+        type: "error",
+        message: getErrorMessage(error),
+      });
+    } finally {
+      setOperation("idle");
+    }
+  }, [deleteTarget, packs, refreshLibraryQueries]);
 
   const handleOpenLoginSettings = useCallback(async () => {
     setFeedback(null);
@@ -1141,7 +2222,11 @@ export function HomeRoute() {
     try {
       await openLoginItemsSettings();
     } catch (error) {
-      setFeedback({ type: "error", message: getErrorMessage(error) });
+      setFeedback({
+        scope: "catalog",
+        type: "error",
+        message: getErrorMessage(error),
+      });
     } finally {
       setOperation("idle");
     }
@@ -1153,36 +2238,58 @@ export function HomeRoute() {
     matchesCursorPack(selectedPack, effectiveId);
   const selectedBySystem =
     selectedPack && matchesCursorPack(selectedPack, selectedStatusId);
+  const selectedPreferenceId = getCursorPreferenceId(selectedPack);
+  const selectedFavorite = Boolean(
+    selectedPreferenceId &&
+    preferences.favorites.cursorIds.includes(selectedPreferenceId),
+  );
+  const selectedAppearanceRoles = selectedPreferenceId
+    ? (preferences.appearance.roles[selectedPreferenceId] ?? [])
+    : [];
+  const libraryActions = useMemo(
+    () => ({
+      managementDisabled: operation !== "idle",
+      onAssignFamily: (pack, family) => {
+        void handleAssignFamily(pack, family);
+      },
+      onCreateFamily: handleOpenFamilyEditor,
+      onDelete: handleRequestCursorDeletion,
+      onDeleteFamily: handleRequestFamilyDeletion,
+    }),
+    [
+      handleAssignFamily,
+      handleOpenFamilyEditor,
+      handleRequestCursorDeletion,
+      handleRequestFamilyDeletion,
+      operation,
+    ],
+  );
 
   return (
     <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background">
-      <header className="titlebar-drag flex h-14 shrink-0 items-center justify-between border-b border-border/60 pr-3 pl-[78px] sm:pr-4">
-        <div className="hidden min-w-0 items-center gap-2 sm:flex">
-          <HugeiconsIcon
-            icon={Cursor01Icon}
-            strokeWidth={1.9}
-            className="size-4 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <h1 className="truncate text-title-md">Cursor Atelier</h1>
-        </div>
+      <header className="titlebar-drag relative flex h-14 shrink-0 items-center justify-end border-b border-border/60 pr-3 pl-[78px] sm:pr-4">
+        <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 truncate text-title-md">
+          Cursor Atelier
+        </h1>
 
         <div className="titlebar-no-drag flex shrink-0 items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={handleImport}
-            disabled={operation !== "idle"}
-          >
-            <HugeiconsIcon
-              icon={FileImportIcon}
-              strokeWidth={2}
-              aria-hidden="true"
-            />
-            {operation === "importing" ? "Importing…" : "Import"}
-          </Button>
-          {isMobile ? (
+          {view === "catalog" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleImport}
+              disabled={operation !== "idle"}
+            >
+              <HugeiconsIcon
+                icon={FileImportIcon}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+              {operation === "importing" ? "Importing…" : "Import"}
+            </Button>
+          ) : null}
+          {view === "catalog" && isMobile ? (
             <Sheet open={railOpen} onOpenChange={setRailOpen}>
               <SheetTrigger asChild>
                 <Button variant="ghost" size="sm">
@@ -1206,64 +2313,213 @@ export function HomeRoute() {
                 </SheetHeader>
                 <PackRail
                   packs={filteredPacks}
+                  allPacks={packs}
                   selectedId={selectedId}
                   effectiveId={effectiveId}
                   verifiedActive={verifiedActive}
                   engineAvailable={engineAvailable}
+                  preferences={preferences}
                   search={search}
                   onSearch={setSearch}
                   onSelect={handleSelect}
                   onClearSearch={() => setSearch("")}
+                  onToggleCursorFavorite={handleToggleCursorFavorite}
+                  onToggleFamilyFavorite={handleToggleFamilyFavorite}
+                  onToggleAppearanceRole={handleToggleAppearanceRole}
+                  libraryActions={libraryActions}
                   loadError={catalogueLoadError}
                   onClose={() => setRailOpen(false)}
                 />
               </SheetContent>
             </Sheet>
           ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={view === "settings" ? "Close Settings" : "Settings"}
+            aria-pressed={view === "settings"}
+            className={cn(view === "settings" && "bg-muted")}
+            onClick={() => {
+              setFeedback(null);
+              setView((current) =>
+                current === "settings" ? "catalog" : "settings",
+              );
+            }}
+          >
+            <HugeiconsIcon
+              icon={Settings02Icon}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+          </Button>
           <AppearancePicker />
         </div>
       </header>
 
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <aside className="hidden min-h-0 min-w-0 w-[276px] shrink-0 overflow-hidden border-r border-border/60 bg-sidebar/45 md:flex lg:w-[296px]">
-          <PackRail
-            packs={filteredPacks}
-            selectedId={selectedId}
-            effectiveId={effectiveId}
-            verifiedActive={verifiedActive}
-            engineAvailable={engineAvailable}
-            search={search}
-            onSearch={setSearch}
-            onSelect={handleSelect}
-            onClearSearch={() => setSearch("")}
-            loadError={catalogueLoadError}
-          />
-        </aside>
-        {selectedPack ? (
-          <PackDetails
-            pack={selectedPack}
-            active={active}
-            selectedBySystem={selectedBySystem}
-            operation={operation}
-            onApply={handleApply}
-            onRestore={handleRestore}
-            onOpenLoginSettings={handleOpenLoginSettings}
-            feedback={feedback}
-            engineAvailable={engineAvailable}
-            canRestore={canRestore}
-            loginApprovalRequired={loginApprovalRequired}
-            statusError={statusUnavailable}
-            statusErrorMessage={statusErrorMessage}
-            onRetryStatus={() => void statusQuery.refetch()}
-            statusRetrying={statusQuery.isFetching}
-          />
-        ) : (
-          <CatalogueFailure
-            onRetry={() => void nativeThemesQuery.refetch()}
-            retrying={nativeThemesQuery.isFetching}
-          />
-        )}
-      </div>
+      {view === "settings" ? (
+        <SettingsScreen
+          packs={packs}
+          preferences={preferences}
+          onChange={handlePreferenceChange}
+          onRandomize={() => void handleRandomize()}
+          randomizing={operation === "randomizing"}
+          feedback={feedback}
+          onClose={() => setView("catalog")}
+        />
+      ) : (
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <aside className="hidden min-h-0 min-w-0 w-[276px] shrink-0 overflow-hidden border-r border-border/60 bg-sidebar/45 md:flex lg:w-[296px]">
+            <PackRail
+              packs={filteredPacks}
+              allPacks={packs}
+              selectedId={selectedId}
+              effectiveId={effectiveId}
+              verifiedActive={verifiedActive}
+              engineAvailable={engineAvailable}
+              preferences={preferences}
+              search={search}
+              onSearch={setSearch}
+              onSelect={handleSelect}
+              onClearSearch={() => setSearch("")}
+              onToggleCursorFavorite={handleToggleCursorFavorite}
+              onToggleFamilyFavorite={handleToggleFamilyFavorite}
+              onToggleAppearanceRole={handleToggleAppearanceRole}
+              libraryActions={libraryActions}
+              loadError={catalogueLoadError}
+            />
+          </aside>
+          {selectedPack ? (
+            <PackDetails
+              key={selectedPack.id}
+              pack={selectedPack}
+              active={active}
+              favorite={selectedFavorite}
+              appearanceRoles={selectedAppearanceRoles}
+              selectedBySystem={selectedBySystem}
+              operation={operation}
+              onApply={handleApply}
+              onSizeCommit={handleSizeCommit}
+              effectiveSizePercentage={effectiveSizePercentage}
+              onToggleFavorite={() =>
+                handleToggleCursorFavorite(
+                  selectedPreferenceId,
+                  !selectedFavorite,
+                )
+              }
+              onToggleAppearanceRole={(role) =>
+                handleToggleAppearanceRole(
+                  selectedPreferenceId,
+                  role,
+                  !selectedAppearanceRoles.includes(role),
+                )
+              }
+              onRestore={handleRestore}
+              onOpenLoginSettings={handleOpenLoginSettings}
+              feedback={feedback}
+              engineAvailable={engineAvailable}
+              canRestore={canRestore}
+              loginApprovalRequired={loginApprovalRequired}
+              statusError={statusUnavailable}
+              statusErrorMessage={statusErrorMessage}
+              onRetryStatus={() => void statusQuery.refetch()}
+              statusRetrying={statusQuery.isFetching}
+            />
+          ) : (
+            <CatalogueFailure
+              onRetry={() => void nativeThemesQuery.refetch()}
+              retrying={nativeThemesQuery.isFetching}
+            />
+          )}
+        </div>
+      )}
+
+      <Dialog
+        open={Boolean(familyEditor)}
+        onOpenChange={(open) => {
+          if (!open && operation !== "organizing") {
+            setFamilyEditor(null);
+            setFamilyName("");
+            setFamilyDialogError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <form className="grid gap-5" onSubmit={handleCreateFamily}>
+            <DialogHeader>
+              <DialogTitle>New family</DialogTitle>
+              <DialogDescription>
+                Move {familyEditor?.variant ?? "this cursor"} into a new family.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Input
+                value={familyName}
+                onChange={(event) => {
+                  setFamilyName(event.target.value);
+                  setFamilyDialogError(null);
+                }}
+                maxLength={128}
+                autoFocus
+                aria-label="Family name"
+                placeholder="Family name"
+                aria-invalid={familyDialogError ? "true" : undefined}
+              />
+              {familyDialogError ? (
+                <p role="alert" className="text-body-sm text-destructive">
+                  {familyDialogError}
+                </p>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={operation === "organizing"}
+                >
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button
+                type="submit"
+                disabled={!familyName.trim() || operation === "organizing"}
+              >
+                {operation === "organizing" ? "Moving…" : "Create"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open && operation !== "deleting") {
+            setDeleteTarget(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {deleteTarget?.label ?? "imported cursor"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.kind === "family"
+                ? `This moves all ${deleteTarget.count} imported cursor packs in the family to Trash.`
+                : "This moves the imported cursor pack to Trash."}{" "}
+              The original downloaded archive is not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleDeleteConfirmed()}>
+              Move to Trash
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }
