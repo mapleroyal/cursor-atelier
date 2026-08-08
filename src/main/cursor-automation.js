@@ -1,4 +1,5 @@
 import {
+  CURSOR_APPEARANCES,
   chooseRandomCursor,
   cursorMatchesIdentifier,
   getCursorPreferenceId,
@@ -47,9 +48,9 @@ function appearanceForNativeTheme(nativeTheme) {
   return nativeTheme?.shouldUseDarkColors ? "dark" : "light";
 }
 
-function fixedAppearancePreferences(preferences) {
+function automaticAppearancePreferences(preferences) {
   return {
-    enabled: preferences?.appearance?.enabled === true,
+    automaticSwitching: preferences?.appearance?.automaticSwitching === true,
     lightCursorId: preferences?.appearance?.lightCursorId ?? null,
     darkCursorId: preferences?.appearance?.darkCursorId ?? null,
   };
@@ -165,11 +166,8 @@ export function createCursorAutomation({
     const preferences = preferencesStore.get();
     const themes = await authoritativeThemes();
     const status = await bridge.status();
-    const pool = resolveRandomCursorPool(
-      themes,
-      preferences,
-      getSystemAppearance(),
-    );
+    const appearance = getSystemAppearance();
+    const pool = resolveRandomCursorPool(themes, preferences, appearance);
     const cursor = chooseRandomCursor(
       pool,
       currentCursorIdentifier(status),
@@ -195,6 +193,9 @@ export function createCursorAutomation({
       cursor,
     );
     preferencesStore.update({
+      appearance: {
+        [`${appearance}CursorId`]: identifier,
+      },
       randomization: { lastRunAt: getNow().toISOString() },
     });
     retryAt = null;
@@ -211,10 +212,9 @@ export function createCursorAutomation({
     }
 
     const preferences = preferencesStore.get();
-    if (!preferences.appearance.enabled) {
+    if (preferences.appearance.automaticSwitching !== true) {
       return null;
     }
-
     const targetIdentifier =
       appearance === "dark"
         ? preferences.appearance.darkCursorId
@@ -239,6 +239,20 @@ export function createCursorAutomation({
     const status = await bridge.status();
     if (isCurrentCursorActive(status, cursor)) {
       return { cursor: cursorSummary(cursor), status };
+    }
+
+    const latestPreferences = preferencesStore.get();
+    const latestAppearance = getSystemAppearance();
+    const latestTargetIdentifier =
+      latestAppearance === "dark"
+        ? latestPreferences.appearance.darkCursorId
+        : latestPreferences.appearance.lightCursorId;
+    if (
+      latestPreferences.appearance.automaticSwitching !== true ||
+      latestAppearance !== appearance ||
+      latestTargetIdentifier !== targetIdentifier
+    ) {
+      return null;
     }
 
     const identifier = getCursorPreferenceId(cursor);
@@ -320,8 +334,8 @@ export function createCursorAutomation({
 
   const preferencesChanged = (preferences) => {
     const appearanceChanged =
-      JSON.stringify(fixedAppearancePreferences(preferences)) !==
-      JSON.stringify(fixedAppearancePreferences(observedPreferences));
+      JSON.stringify(automaticAppearancePreferences(preferences)) !==
+      JSON.stringify(automaticAppearancePreferences(observedPreferences));
     observedPreferences = preferences;
     retryAt = null;
     clearScheduledTimer();
@@ -383,6 +397,63 @@ export function createCursorAutomation({
         }
       });
     },
+    setAppearanceCursor(appearance, identifier) {
+      return enqueue(async () => {
+        if (!CURSOR_APPEARANCES.includes(appearance)) {
+          throw new TypeError("A valid system appearance is required.");
+        }
+        if (identifier === null) {
+          const preferences = preferencesStore.update({
+            appearance: { [`${appearance}CursorId`]: null },
+          });
+          return { cursor: null, preferences, status: null };
+        }
+        if (typeof identifier !== "string" || !identifier.trim()) {
+          throw new TypeError("A valid cursor identifier is required.");
+        }
+
+        const themes = await authoritativeThemes();
+        const cursor = themes.find(
+          (theme) =>
+            theme?.canApply === true &&
+            cursorMatchesIdentifier(theme, identifier),
+        );
+        if (!cursor) {
+          throw plainError(
+            "That cursor is unavailable.",
+            "APPEARANCE_CURSOR_UNAVAILABLE",
+          );
+        }
+
+        const preferencePatch = {
+          appearance: {
+            [`${appearance}CursorId`]: getCursorPreferenceId(cursor),
+          },
+        };
+        if (getSystemAppearance() !== appearance) {
+          const preferences = preferencesStore.update(preferencePatch);
+          return { cursor: cursorSummary(cursor), preferences, status: null };
+        }
+
+        const status = await bridge.status();
+        if (isCurrentCursorActive(status, cursor)) {
+          const preferences = preferencesStore.update(preferencePatch);
+          return { cursor: cursorSummary(cursor), preferences, status };
+        }
+
+        const nextStatus = requireVerifiedApplication(
+          await bridge.applyTheme(getCursorPreferenceId(cursor)),
+          cursor,
+        );
+        const preferences = preferencesStore.update(preferencePatch);
+        notifyCursorChanged(cursor, nextStatus, `assign:${appearance}`);
+        return {
+          cursor: cursorSummary(cursor),
+          preferences,
+          status: nextStatus,
+        };
+      });
+    },
     appearanceChanged() {
       return enqueue(async () => {
         try {
@@ -394,7 +465,14 @@ export function createCursorAutomation({
       });
     },
     wake() {
-      return enqueue(runScheduledIfDue);
+      return enqueue(async () => {
+        try {
+          await syncAppearance("wake", { force: true });
+        } catch (error) {
+          reportError(error, "wake-appearance");
+        }
+        return runScheduledIfDue();
+      });
     },
     reschedule() {
       return enqueue(() => scheduleNext());

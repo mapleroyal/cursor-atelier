@@ -340,6 +340,17 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
     ) {
       throw new Error("The packaged application icon is missing.");
     }
+    const packagedResources = path.join(appPath, "Contents", "Resources");
+    for (const templateName of [
+      "MenuBarIconTemplate.png",
+      "MenuBarIconTemplate@2x.png",
+    ]) {
+      if (!fs.existsSync(path.join(packagedResources, templateName))) {
+        throw new Error(
+          `The packaged menu-bar icon is missing: ${templateName}.`,
+        );
+      }
+    }
     const outerSignature = codesignDetails(appPath);
     const nativeSignature = codesignDetails(packagedNativeApp);
     const helperSignature = codesignDetails(packagedHelperApp);
@@ -484,9 +495,12 @@ module.exports = {
       preEmbedProvisioningProfile: false,
       optionsForFile: electronSignOptions,
     },
-    // An empty list deliberately activates Packager's post-copy hook without
-    // adding a marker file to the application resources.
-    extraResource: [],
+    // Keep the menu-bar template at the Resources root so Electron can load
+    // the correct raster density without unpacking the application archive.
+    extraResource: [
+      path.join(rootDirectory, "assets", "MenuBarIconTemplate.png"),
+      path.join(rootDirectory, "assets", "MenuBarIconTemplate@2x.png"),
+    ],
     afterCopyExtraResources: [removeUnusedElectronMetadata],
   },
   rebuildConfig: {},

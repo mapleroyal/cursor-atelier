@@ -6,7 +6,7 @@ is the product interface and owns catalogue selection, appearance, and user
 feedback. Historical executable/app names remain `OreoCursor` and
 `Oreo Cursor.app` to keep the vendored engine boundary obvious.
 
-The current component loads 19 vendored Oreo themes plus 220 generated
+The current component loads 19 vendored Oreo themes plus 221 generated
 external themes from one locked schema-v2 manifest, then merges validated
 user-imported schema-v2 packs. Every usable resource contains the exact 47
 CoreGraphics/AppKit cursor identifiers.

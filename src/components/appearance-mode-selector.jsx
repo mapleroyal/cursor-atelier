@@ -82,7 +82,7 @@ export function AppearanceModeSelector({ className, value, onValueChange }) {
       <div
         aria-label="Appearance mode"
         className={cn(
-          "relative grid h-8 w-[6.5rem] shrink-0 grid-cols-3 items-center rounded-4xl bg-muted p-0.5 shadow-inner",
+          "relative grid h-9 w-28 min-w-28 shrink-0 grid-cols-3 items-center rounded-4xl bg-muted p-0.5 shadow-inner transition-colors duration-300",
           className,
         )}
         role="radiogroup"
@@ -91,7 +91,8 @@ export function AppearanceModeSelector({ className, value, onValueChange }) {
       >
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute top-0.5 left-0.5 h-7 w-[calc((100%-0.25rem)/3)] rounded-4xl border border-border/70 bg-background shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
+          data-slot="appearance-mode-indicator"
+          className="pointer-events-none absolute top-0.5 left-0.5 h-8 w-[calc((100%-0.25rem)/3)] rounded-4xl border border-border bg-background shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
           style={{
             transform: "translateX(calc(var(--appearance-index) * 100%))",
           }}
@@ -99,29 +100,32 @@ export function AppearanceModeSelector({ className, value, onValueChange }) {
 
         {APPEARANCE_OPTIONS.map((option) => (
           <Tooltip key={option.value}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-checked={value === option.value}
-                aria-label={option.label}
-                className={cn(
-                  "relative z-10 flex h-full w-full items-center justify-center rounded-full bg-transparent text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
-                  value === option.value && "text-foreground",
-                )}
-                data-appearance-value={option.value}
-                role="radio"
-                tabIndex={value === option.value ? 0 : -1}
-                onClick={() => onValueChange(option.value)}
-              >
-                <HugeiconsIcon
-                  icon={option.icon}
-                  aria-hidden="true"
-                  className="size-3.5"
-                  strokeWidth={2.2}
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-checked={value === option.value}
+                  aria-label={option.label}
+                  className={cn(
+                    "relative z-10 flex h-full w-full items-center justify-center rounded-full bg-transparent text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
+                    value === option.value &&
+                      "text-foreground hover:text-foreground",
+                  )}
+                  data-appearance-value={option.value}
+                  role="radio"
+                  tabIndex={value === option.value ? 0 : -1}
+                  onClick={() => onValueChange(option.value)}
                 />
-              </button>
+              }
+            >
+              <HugeiconsIcon
+                icon={option.icon}
+                aria-hidden="true"
+                className="size-4"
+                strokeWidth={2.5}
+              />
             </TooltipTrigger>
-            <TooltipContent sideOffset={6}>{option.label}</TooltipContent>
+            <TooltipContent>{option.label}</TooltipContent>
           </Tooltip>
         ))}
       </div>

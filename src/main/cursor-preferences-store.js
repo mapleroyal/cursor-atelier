@@ -38,11 +38,14 @@ export function createCursorPreferencesStore({
     },
   });
   const listeners = new Set();
-  let preferences = normalizeCursorPreferences(backingStore.get(STORE_KEY));
+  const storedPreferences = backingStore.get(STORE_KEY);
+  let preferences = normalizeCursorPreferences(storedPreferences);
 
   // Persist normalization once at startup so malformed or partial data cannot
   // remain authoritative after it has been read.
-  backingStore.set(STORE_KEY, preferences);
+  if (JSON.stringify(storedPreferences) !== JSON.stringify(preferences)) {
+    backingStore.set(STORE_KEY, preferences);
+  }
 
   const emit = () => {
     const snapshot = clonePreferences(preferences);

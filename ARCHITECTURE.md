@@ -8,7 +8,8 @@ Cursor Atelier is a focused cursor manager, not an online pack store or cursor
 editor. The main window is a viewport-bounded two-pane workspace:
 
 - a searchable, grouped variant rail; and
-- a detail pane with real role previews, compact provenance, and Apply/Restore.
+- a detail pane with real role previews, compact provenance, light/dark
+  assignment, and randomization-pool controls.
 
 The window has no giant outer card. Borders and muted fills establish only the
 rail, titlebar, selection, and preview-canvas boundaries. Controls use
@@ -108,8 +109,8 @@ running. A successful recovery leaves custom cursors off and ends that pass;
 no stale desired/effective decision is acted on afterward.
 
 Preview mode is a read-only failure mode. It can show catalogue metadata and
-available artwork, but it never changes fallback state, enables Apply/Restore,
-or reports an effective theme.
+available artwork, but it never changes fallback state, enables cursor
+assignment or Restore, or reports an effective theme.
 
 ## Per-theme cursor size
 
@@ -117,8 +118,8 @@ Cursor size is a native, per-theme preference from 50% through 200%; Cursor
 Atelier does not write macOS's private Accessibility cursor-size default. That
 system setting is global, while this feature must follow the selected theme.
 The renderer slider scales the main-arrow preview immediately and saves a draft
-value when the gesture ends. Apply/Reapply is the explicit boundary that changes
-the live cursor registration.
+value when the gesture ends. If that theme is live, the renderer immediately
+reapplies it at the committed size and verifies the resulting registration.
 
 The native engine first integrity-checks and decodes the immutable theme at its
 authored 100% geometry. It then scales `PointsWide`, `PointsHigh`, and both
@@ -132,8 +133,8 @@ only a 64 px source cannot remain equally sharp at the largest sizes.
 Configured and effective size are distinct, like selected and effective theme.
 The effective size is persisted only after scaled registrations verify. The
 login helper compares both identifier and effective size before deciding its
-loaded engine is current, so an Apply notification reloads changed geometry
-without allowing an uncommitted slider draft to race the helper.
+loaded engine is current, so a reapplication notification reloads changed
+geometry without allowing an uncommitted slider draft to race the helper.
 
 ## Installed-build and login-helper lifecycle
 
@@ -145,14 +146,25 @@ same: macOS can keep helper code resident after its containing app bundle has
 been replaced, so a static product version is not a valid process-freshness
 signal.
 
-Every packaged launch runs a narrow login-item reconciliation before exposing
-cursor controls. When Launch at Login is desired and the registered helper's
+Every packaged launch starts a narrow login-item reconciliation before later
+cursor mutations can run, but an interactive launch does not hold the window
+behind that work. When Launch at Login is desired and the registered helper's
 saved build differs, `SMAppService` unregisters it (which terminates the old
 resident process) and registers the current embedded helper, which starts
 immediately. When startup is no longer desired, stale helper and legacy main-
 app registrations are removed instead. Reconciliation does not select or size
 a cursor; the current helper then reads the already committed desired/effective
 state through the normal transaction and verification path.
+
+The menu-bar setting controls whether the Electron main app is registered to
+run at login. Menu-bar launches keep a hidden renderer warm, and closing a
+window while the menu-bar item is enabled hides rather than destroys that
+renderer. Opening Settings therefore only presents the existing window and
+sends a renderer navigation event. A presented window uses macOS's regular
+activation policy and appears in the Dock; closing it switches to accessory
+mode so the Dock no longer presents the app as running. When the menu-bar item
+is disabled, closing the last window quits Electron instead. There is no
+independent Dock preference or asynchronous Dock show/hide path.
 
 This ordering is part of cursor correctness, not only packaging hygiene. A
 resident helper from an older build could otherwise react to the new build's
@@ -163,20 +175,20 @@ before the renderer's follow-up status read.
 
 `native/cursor-packs/inventory-lock.json` locks the exact identifier set:
 
-- 220 external variants;
+- 221 external variants;
 - 19 built-in Oreo variants;
-- 239 unified manifest rows; and
+- 240 unified manifest rows; and
 - 47 native cursor identifiers per row.
 
 The schema-v2 manifest includes stable identifier/UUID, resource basename and
 SHA-256, family and human-facing variant labels, upstream label, author,
 source/license provenance, one default preview, and 47 `rolePreviews`. Shared
-role artwork is stored once, yielding 9,290 real PNG files for 11,233 role
+role artwork is stored once, yielding 9,328 real PNG files for 11,280 role
 references. Animated states are encoded as indefinitely looping APNGs instead
 of still frames. Their frame delay encodes the normalized native resource to
 the nearest millisecond; the converter preserves the complete source cycle
 duration when it downsamples a long animation. Oreo `.cursor` files remain vendored under
-`native/oreo/Resources/Themes`; the 220 external `.cursor` files and all
+`native/oreo/Resources/Themes`; the 221 external `.cursor` files and all
 preview metadata/assets are generated from pinned build inputs.
 
 Config-referenced artwork is resolved by exact relative basename and exact
@@ -278,7 +290,7 @@ Cursor Atelier.app/
       Contents/Library/LoginItems/Oreo Cursor Login Helper.app
       Contents/Resources/Themes/
         manifest.json
-        239 .cursor resources
+        240 .cursor resources
         previews/
 ```
 

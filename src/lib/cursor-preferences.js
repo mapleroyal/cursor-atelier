@@ -1,4 +1,4 @@
-export const CURSOR_PREFERENCES_VERSION = 1;
+export const CURSOR_PREFERENCES_VERSION = 5;
 
 export const RANDOM_SOURCES = Object.freeze(["all", "favorites", "family"]);
 export const RANDOM_SCHEDULE_MODES = Object.freeze([
@@ -8,7 +8,7 @@ export const RANDOM_SCHEDULE_MODES = Object.freeze([
   "daily",
   "times",
 ]);
-export const CURSOR_APPEARANCE_ROLES = Object.freeze(["light", "dark"]);
+export const CURSOR_APPEARANCES = Object.freeze(["light", "dark"]);
 
 const CLOCK_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const MAX_INTERVAL_HOURS = 24 * 30;
@@ -26,14 +26,17 @@ export function createDefaultCursorPreferences() {
       families: [],
     },
     appearance: {
-      enabled: false,
+      automaticSwitching: false,
       lightCursorId: null,
       darkCursorId: null,
-      roles: {},
     },
     randomization: {
       source: "all",
       family: null,
+      pools: {
+        light: [],
+        dark: [],
+      },
       schedule: {
         mode: "off",
         intervalHours: 1,
@@ -123,30 +126,6 @@ function normalizeLastRunAt(value) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
-function normalizeAppearanceRoles(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-
-  const roles = {};
-  for (const [cursorId, cursorRoles] of Object.entries(value)) {
-    const id = nullableIdentifier(cursorId);
-    if (!id) {
-      continue;
-    }
-    const normalized = uniqueStrings(cursorRoles).filter((role) =>
-      CURSOR_APPEARANCE_ROLES.includes(role),
-    );
-    if (normalized.length) {
-      roles[id] = normalized;
-    }
-    if (Object.keys(roles).length >= MAX_CURSOR_IDS) {
-      break;
-    }
-  }
-  return roles;
-}
-
 export function normalizeCursorPreferences(value) {
   const defaults = createDefaultCursorPreferences();
   const candidate =
@@ -162,6 +141,12 @@ export function normalizeCursorPreferences(value) {
   const randomization =
     candidate.randomization && typeof candidate.randomization === "object"
       ? candidate.randomization
+      : {};
+  const pools =
+    randomization.pools &&
+    typeof randomization.pools === "object" &&
+    !Array.isArray(randomization.pools)
+      ? randomization.pools
       : {};
   const schedule =
     randomization.schedule && typeof randomization.schedule === "object"
@@ -195,14 +180,23 @@ export function normalizeCursorPreferences(value) {
       }),
     },
     appearance: {
-      enabled: appearance.enabled === true,
+      automaticSwitching: appearance.automaticSwitching === true,
       lightCursorId: nullableIdentifier(appearance.lightCursorId),
       darkCursorId: nullableIdentifier(appearance.darkCursorId),
-      roles: normalizeAppearanceRoles(appearance.roles),
     },
     randomization: {
       source,
       family: nullableFamily(randomization.family),
+      pools: {
+        light: uniqueStrings(pools.light, {
+          maximumEntries: MAX_CURSOR_IDS,
+          maximumLength: MAX_IDENTIFIER_LENGTH,
+        }),
+        dark: uniqueStrings(pools.dark, {
+          maximumEntries: MAX_CURSOR_IDS,
+          maximumLength: MAX_IDENTIFIER_LENGTH,
+        }),
+      },
       schedule: {
         mode,
         intervalHours: normalizeIntervalHours(schedule.intervalHours),
@@ -233,6 +227,10 @@ export function mergeCursorPreferences(current, patch) {
     randomization: {
       ...base.randomization,
       ...(update.randomization ?? {}),
+      pools: {
+        ...base.randomization.pools,
+        ...(update.randomization?.pools ?? {}),
+      },
       schedule: {
         ...base.randomization.schedule,
         ...(update.randomization?.schedule ?? {}),
@@ -268,11 +266,6 @@ export function createCursorDeletionPreferencesPatch(
   );
   const keepIdentifier = (identifier) =>
     !identifier || !deleted.has(identifier.toLowerCase());
-  const roles = Object.fromEntries(
-    Object.entries(preferences.appearance.roles).filter(([identifier]) =>
-      keepIdentifier(identifier),
-    ),
-  );
   const randomFamily = families.has(preferences.randomization.family)
     ? preferences.randomization.family
     : null;
@@ -291,7 +284,6 @@ export function createCursorDeletionPreferencesPatch(
       darkCursorId: keepIdentifier(preferences.appearance.darkCursorId)
         ? preferences.appearance.darkCursorId
         : null,
-      roles,
     },
     randomization: {
       source:
@@ -299,6 +291,10 @@ export function createCursorDeletionPreferencesPatch(
           ? "all"
           : preferences.randomization.source,
       family: randomFamily,
+      pools: {
+        light: preferences.randomization.pools.light.filter(keepIdentifier),
+        dark: preferences.randomization.pools.dark.filter(keepIdentifier),
+      },
     },
   };
 }
@@ -355,15 +351,15 @@ export function resolveRandomCursorPool(
     );
   }
 
-  if (
-    normalized.appearance.enabled &&
-    CURSOR_APPEARANCE_ROLES.includes(systemAppearance)
-  ) {
-    pool = pool.filter((cursor) =>
-      normalized.appearance.roles[getCursorPreferenceId(cursor)]?.includes(
-        systemAppearance,
-      ),
+  if (CURSOR_APPEARANCES.includes(systemAppearance)) {
+    const appearancePool = new Set(
+      normalized.randomization.pools[systemAppearance],
     );
+    if (appearancePool.size) {
+      pool = pool.filter((cursor) =>
+        appearancePool.has(getCursorPreferenceId(cursor)),
+      );
+    }
   }
 
   return pool;

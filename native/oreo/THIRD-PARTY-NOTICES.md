@@ -1,7 +1,7 @@
 # Third-party notices
 
 This notice accompanies Cursor Atelier's nested native runtime. The current
-personal bundle contains 19 Oreo resources and 220 generated external
+personal bundle contains 19 Oreo resources and 221 generated external
 resources. Exact per-variant author, source, upstream label, license URL, UUID,
 and SHA-256 values are recorded in the schema-v2 manifest.
 
@@ -40,7 +40,7 @@ shasum -a 256 -c ../../ArtworkSource/THEME-SHA256SUMS.txt
 
 ## Generated external cursor packs
 
-`native/cursor-packs/build_all.py` generates 220 resources from pinned
+`native/cursor-packs/build_all.py` generates 221 resources from pinned
 upstream inputs. These are format conversions produced for Cursor Atelier;
 they do not include the upstream Linux installation scripts in the runtime
 bundle.
@@ -49,7 +49,7 @@ bundle.
   MOYASH/Moyash GNOME-Look artwork, whose embedded ReadMe files specify CC
   BY-NC-ND 4.0.
 - Volantes (2): GPL-2.0-only.
-- Vimix (2), Qogir (6), Bibata Extra (8), Google (4), Future (1), Nordzy
+- Vimix (2), Qogir (6), Bibata Extra (8), Google (4), Future (2), Nordzy
   (133), Colloid (2), and Bibata (12): GPL-3.0-only.
 - Simp1e (25): GPL-3.0-or-later.
 - Capitaine (2): LGPL-3.0-or-later.

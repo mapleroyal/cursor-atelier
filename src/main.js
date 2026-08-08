@@ -22,18 +22,17 @@ import { createCursorDeletionPreferencesPatch } from "./lib/cursor-preferences";
 import themeSeedColors from "./lib/theme-seed-colors";
 import { createCursorAutomation } from "./main/cursor-automation";
 import { createCursorBridge, registerCursorIpc } from "./main/cursor-bridge";
-import {
-  createCursorImportStaging,
-  installImportedArtifacts,
-  removeCursorImportStaging,
-} from "./main/cursor-import-install";
-import { importCursorSource } from "./main/cursor-importer";
 import { createCursorPreferencesStore } from "./main/cursor-preferences-store";
 import { createRendererNavigation } from "./main/renderer-navigation";
+import {
+  createWindowLifecycle,
+  shouldRegisterMainAppLoginItem,
+} from "./main/window-lifecycle";
 
 const PREVIEW_SCHEME = "cursor-preview";
 const trustedWebContents = new Set();
 const windows = new Set();
+const requestedWindowPresentation = new WeakSet();
 let importQueue = Promise.resolve();
 let applicationStarted = false;
 let backgroundLaunch = false;
@@ -44,6 +43,7 @@ let trayRefreshGeneration = 0;
 let runtime = null;
 let lastMainLoginDesired = null;
 let backgroundRegistrationAvailable = false;
+let windowLifecycle = null;
 const rendererNavigation = createRendererNavigation({
   canSend: (webContents) =>
     trustedWebContents.has(webContents.id) &&
@@ -95,6 +95,13 @@ function syncWindowBackgrounds() {
   }
 }
 
+function hasVisibleWindows(excludedWindow = null) {
+  return [...windows].some(
+    (window) =>
+      window !== excludedWindow && !window.isDestroyed() && window.isVisible(),
+  );
+}
+
 function broadcastToRenderers(channel, payload) {
   for (const window of windows) {
     if (window.isDestroyed()) {
@@ -120,15 +127,10 @@ function sendNavigation(window, destination) {
 
 async function showOrCreateMainWindow({ navigate = null } = {}) {
   await app.whenReady();
-  backgroundLaunch = false;
-  if (process.platform === "darwin") {
-    app.setActivationPolicy("regular");
-    try {
-      await app.dock.show();
-    } catch (error) {
-      console.error("Could not show the Cursor Atelier Dock icon.", error);
-    }
+  if (windowLifecycle && !windowLifecycle.prepareToShowWindow()) {
+    return null;
   }
+  backgroundLaunch = false;
 
   let mainWindow = [...windows].find((window) => !window.isDestroyed());
   if (!mainWindow) {
@@ -137,6 +139,7 @@ async function showOrCreateMainWindow({ navigate = null } = {}) {
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
   }
+  requestedWindowPresentation.add(mainWindow);
   mainWindow.show();
   mainWindow.focus();
   if (navigate) {
@@ -151,7 +154,9 @@ function requestMainWindow(options = {}) {
     pendingNavigation = options.navigate ?? pendingNavigation;
     return;
   }
-  void showOrCreateMainWindow(options);
+  void showOrCreateMainWindow(options).catch((error) => {
+    console.error("Cursor Atelier could not show its window.", error);
+  });
 }
 
 function isAllowedExternalUrl(value) {
@@ -219,7 +224,7 @@ function secureWebContents(webContents) {
   webContents.on("will-attach-webview", (event) => event.preventDefault());
 }
 
-function createWindow() {
+function createWindow({ showWhenReady = true } = {}) {
   const mainWindow = new BrowserWindow({
     width: 1080,
     height: 760,
@@ -239,6 +244,9 @@ function createWindow() {
   });
 
   windows.add(mainWindow);
+  if (showWhenReady) {
+    requestedWindowPresentation.add(mainWindow);
+  }
   const windowWebContents = mainWindow.webContents;
   const webContentsId = windowWebContents.id;
   trustedWebContents.add(webContentsId);
@@ -251,7 +259,10 @@ function createWindow() {
     }
     showingFailure = true;
     void mainWindow.loadURL(failurePage(description)).finally(() => {
-      if (!mainWindow.isDestroyed()) {
+      if (
+        !mainWindow.isDestroyed() &&
+        requestedWindowPresentation.has(mainWindow)
+      ) {
         mainWindow.show();
       }
     });
@@ -279,8 +290,19 @@ function createWindow() {
       }
     },
   );
-  mainWindow.on("unresponsive", () => mainWindow.show());
-  mainWindow.once("ready-to-show", () => mainWindow.show());
+  mainWindow.on("unresponsive", () => {
+    if (requestedWindowPresentation.has(mainWindow)) {
+      mainWindow.show();
+    }
+  });
+  mainWindow.once("ready-to-show", () => {
+    if (requestedWindowPresentation.has(mainWindow)) {
+      mainWindow.show();
+    }
+  });
+  mainWindow.on("close", (event) => {
+    windowLifecycle?.handleWindowClose(event, mainWindow);
+  });
   mainWindow.on("closed", () => {
     rendererNavigation.dispose(webContentsId);
     trustedWebContents.delete(webContentsId);
@@ -297,12 +319,47 @@ function createWindow() {
   return mainWindow;
 }
 
-function needsBackgroundRuntime(preferences) {
-  return Boolean(
-    preferences?.menuBar?.visible ||
-    preferences?.appearance?.enabled ||
-    preferences?.randomization?.schedule?.mode !== "off",
-  );
+function installApplicationMenu() {
+  const settingsItem = {
+    id: "settings",
+    label: "Settings…",
+    accelerator: "CommandOrControl+,",
+    click: () => requestMainWindow({ navigate: "settings" }),
+  };
+  const template =
+    process.platform === "darwin"
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              settingsItem,
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          },
+          { role: "fileMenu" },
+          { role: "editMenu" },
+          { role: "viewMenu" },
+          { role: "windowMenu" },
+        ]
+      : [
+          {
+            role: "fileMenu",
+            submenu: [settingsItem, { type: "separator" }, { role: "quit" }],
+          },
+          { role: "editMenu" },
+          { role: "viewMenu" },
+          { role: "windowMenu" },
+        ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function syncMainLoginItem(preferences) {
@@ -310,7 +367,7 @@ function syncMainLoginItem(preferences) {
     return;
   }
 
-  const desired = needsBackgroundRuntime(preferences);
+  const desired = shouldRegisterMainAppLoginItem(preferences);
   if (desired === lastMainLoginDesired) {
     return;
   }
@@ -319,6 +376,26 @@ function syncMainLoginItem(preferences) {
       openAtLogin: desired,
       type: "mainAppService",
     });
+    const status = app.getLoginItemSettings({
+      type: "mainAppService",
+    }).status;
+    if (desired && status === "requires-approval") {
+      console.warn(
+        "Cursor Atelier’s background launch requires approval in macOS Login Items.",
+      );
+    } else if (desired && status !== "enabled") {
+      console.error(
+        `Cursor Atelier’s background launch registration has status: ${status}.`,
+      );
+    } else if (
+      !desired &&
+      status !== "not-registered" &&
+      status !== "not-found"
+    ) {
+      console.error(
+        `Cursor Atelier’s background launch removal has status: ${status}.`,
+      );
+    }
     lastMainLoginDesired = desired;
   } catch (error) {
     console.error("Could not update Cursor Atelier’s login item.", error);
@@ -326,7 +403,19 @@ function syncMainLoginItem(preferences) {
 }
 
 function createMenuBarIcon() {
-  const image = nativeImage.createFromNamedImage("cursorarrow");
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "MenuBarIconTemplate.png")
+    : path.join(app.getAppPath(), "assets", "MenuBarIconTemplate.png");
+  const source = nativeImage.createFromPath(iconPath);
+  if (source.isEmpty()) {
+    console.error(`Could not load the menu bar icon at ${iconPath}.`);
+    return null;
+  }
+  const image = source.resize({ width: 18, height: 18, quality: "best" });
+  if (image.isEmpty()) {
+    console.error(`Could not resize the menu bar icon at ${iconPath}.`);
+    return null;
+  }
   image.setTemplateImage(true);
   return image;
 }
@@ -421,7 +510,11 @@ function syncTray(preferences) {
   }
 
   if (!tray) {
-    tray = new Tray(createMenuBarIcon());
+    const icon = createMenuBarIcon();
+    if (!icon) {
+      return;
+    }
+    tray = new Tray(icon);
     tray.setToolTip("Cursor Atelier");
     setTrayMenu();
   }
@@ -456,6 +549,16 @@ async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
     return { canceled: true };
   }
 
+  const [installModule, importerModule] = await Promise.all([
+    import("./main/cursor-import-install.js"),
+    import("./main/cursor-importer.js"),
+  ]);
+  const {
+    createCursorImportStaging,
+    installImportedArtifacts,
+    removeCursorImportStaging,
+  } = installModule;
+  const { importCursorSource } = importerModule;
   const stagingDirectory = await createCursorImportStaging(importedPacksRoot);
   try {
     const converted = await importCursorSource({
@@ -511,6 +614,7 @@ async function startApplication() {
   const preferencesStore = createCursorPreferencesStore({
     directory: app.getPath("userData"),
   });
+  const initialPreferences = preferencesStore.get();
   const bridge = createCursorBridge({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
@@ -527,6 +631,7 @@ async function startApplication() {
     bridge.nativePath &&
     process.env.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION !== "1",
   );
+  let loginItemReconciliation = Promise.resolve();
   if (backgroundRegistrationAvailable) {
     try {
       backgroundLaunch = Boolean(
@@ -535,20 +640,49 @@ async function startApplication() {
     } catch (error) {
       console.error("Could not inspect Cursor Atelier’s login item.", error);
     }
-    try {
-      await bridge.reconcileLoginItems();
-    } catch (error) {
+  }
+  windowLifecycle = createWindowLifecycle({
+    isMacOS: process.platform === "darwin",
+    setActivationPolicy: (policy) => app.setActivationPolicy(policy),
+    quit: () => app.quit(),
+    getMenuBarVisible: () => preferencesStore.get().menuBar.visible === true,
+    getShouldStayRunning: () =>
+      shouldRegisterMainAppLoginItem(preferencesStore.get()),
+    hasVisibleWindows,
+    hideWindow: (window) => {
+      requestedWindowPresentation.delete(window);
+      window.hide();
+    },
+    onError: (error, { policy }) => {
+      console.error(
+        `Could not set Cursor Atelier’s macOS activation policy to ${policy}.`,
+        error,
+      );
+    },
+  });
+  // Reconcile the Electron login item before handling a stale background
+  // launch so an app with no resident feature does not relaunch headlessly at
+  // the next login. The native cursor helper has its own lifecycle.
+  syncMainLoginItem(initialPreferences);
+  if (backgroundLaunch) {
+    windowLifecycle.enterBackground();
+    if (!shouldRegisterMainAppLoginItem(initialPreferences)) {
+      windowLifecycle.handleBackgroundPreferenceChanged(false);
+      return;
+    }
+  }
+  if (backgroundRegistrationAvailable) {
+    // Start update reconciliation immediately so later cursor mutations queue
+    // behind it, but do not keep an interactive launch from showing its shell
+    // while ServiceManagement replaces or re-registers an older helper.
+    loginItemReconciliation = bridge.reconcileLoginItems().catch((error) => {
       // The UI still needs to open so Restore and Login Items guidance remain
       // available. Status will surface any unresolved helper registration.
       console.error(
         "Could not reconcile Cursor Atelier’s installed login helper.",
         error,
       );
-    }
-  }
-  if (backgroundLaunch && process.platform === "darwin") {
-    app.setActivationPolicy("accessory");
-    app.dock.hide();
+    });
   }
 
   await protocol.handle(PREVIEW_SCHEME, async (request) => {
@@ -714,6 +848,13 @@ async function startApplication() {
   });
   runtime = { automation, bridge, preferencesStore };
 
+  ipcMain.handle(
+    "cursor:set-appearance-cursor",
+    (event, appearance, identifier) => {
+      requireTrustedSender(event);
+      return automation.setAppearanceCursor(appearance, identifier);
+    },
+  );
   ipcMain.handle("preferences:get", (event) => {
     requireTrustedSender(event);
     return preferencesStore.get();
@@ -737,14 +878,37 @@ async function startApplication() {
     }
   });
 
+  let menuBarVisible = initialPreferences.menuBar.visible === true;
+  let shouldStayRunning = shouldRegisterMainAppLoginItem(initialPreferences);
   const unsubscribePreferences = preferencesStore.subscribe((preferences) => {
+    const nextMenuBarVisible = preferences.menuBar.visible === true;
+    const menuBarVisibilityChanged = nextMenuBarVisible !== menuBarVisible;
+    const nextShouldStayRunning = shouldRegisterMainAppLoginItem(preferences);
+    const backgroundPreferenceChanged =
+      nextShouldStayRunning !== shouldStayRunning;
+    menuBarVisible = nextMenuBarVisible;
+    shouldStayRunning = nextShouldStayRunning;
     broadcastToRenderers("preferences:changed", preferences);
     syncMainLoginItem(preferences);
     syncTray(preferences);
+    if (backgroundPreferenceChanged) {
+      windowLifecycle?.handleBackgroundPreferenceChanged(nextShouldStayRunning);
+    }
+    if (
+      menuBarVisibilityChanged &&
+      !nextMenuBarVisible &&
+      nextShouldStayRunning &&
+      !hasVisibleWindows()
+    ) {
+      for (const window of windows) {
+        if (!window.isDestroyed() && !window.isVisible()) {
+          window.destroy();
+        }
+      }
+    }
   });
-  const initialPreferences = preferencesStore.get();
-  syncMainLoginItem(initialPreferences);
   syncTray(initialPreferences);
+  installApplicationMenu();
 
   const handleNativeThemeUpdated = () => {
     syncWindowBackgrounds();
@@ -767,11 +931,10 @@ async function startApplication() {
     }
   }
 
-  void automation.start().catch((error) => {
-    console.error("Could not start cursor automation.", error);
-  });
-
+  let stopping = false;
   app.once("before-quit", () => {
+    stopping = true;
+    windowLifecycle?.beginQuit();
     automation.stop();
     unsubscribePreferences();
     nativeTheme.off("updated", handleNativeThemeUpdated);
@@ -796,6 +959,17 @@ async function startApplication() {
   pendingNavigation = null;
   if (shouldOpenWindow) {
     await showOrCreateMainWindow({ navigate: navigation });
+  } else if (initialPreferences.menuBar.visible) {
+    // A login/background launch otherwise has no renderer until the first
+    // menu-bar click. Warm one invisibly so Open and Settings are immediate;
+    // closing a visible menu-bar window retains the same warm renderer.
+    createWindow({ showWhenReady: false });
+  }
+  await loginItemReconciliation;
+  if (!stopping) {
+    void automation.start().catch((error) => {
+      console.error("Could not start cursor automation.", error);
+    });
   }
 }
 
@@ -815,7 +989,9 @@ if (app.requestSingleInstanceLock()) {
 }
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (windowLifecycle) {
+    windowLifecycle.handleAllWindowsClosed();
+  } else if (process.platform !== "darwin") {
     app.quit();
   }
 });

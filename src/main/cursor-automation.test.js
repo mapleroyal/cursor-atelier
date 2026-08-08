@@ -53,14 +53,13 @@ function bridge({ themes, status, applyTheme } = {}) {
 }
 
 describe("cursor automation", () => {
-  it("uses the strict configured pool, applies, and records the run", async () => {
+  it("uses the current appearance pool, applies, and remembers the result", async () => {
     const preferencesStore = createMemoryPreferences({
       favorites: { cursorIds: ["OreoWhite", "OreoBlack"] },
-      appearance: {
-        enabled: true,
-        roles: { OreoWhite: ["light"], OreoBlack: ["dark"] },
+      randomization: {
+        source: "favorites",
+        pools: { light: ["OreoWhite"], dark: ["OreoBlack"] },
       },
-      randomization: { source: "favorites" },
     });
     const nativeBridge = bridge({
       themes: [theme("OreoWhite"), theme("OreoBlack"), theme("Moga", "Moga")],
@@ -83,6 +82,11 @@ describe("cursor automation", () => {
     expect(preferencesStore.get().randomization.lastRunAt).toBe(
       "2026-08-06T20:15:00.000Z",
     );
+    expect(preferencesStore.get().appearance).toEqual({
+      automaticSwitching: false,
+      lightCursorId: null,
+      darkCursorId: "OreoBlack",
+    });
     expect(changed).toHaveBeenCalledWith(
       expect.objectContaining({ reason: "menu" }),
     );
@@ -192,11 +196,87 @@ describe("cursor automation", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
+  it("does not switch appearances until automatic switching is enabled", async () => {
+    const nativeTheme = { shouldUseDarkColors: false };
+    const preferencesStore = createMemoryPreferences({
+      appearance: {
+        lightCursorId: "OreoWhite",
+        darkCursorId: "OreoBlack",
+      },
+    });
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite"), theme("OreoBlack")],
+      status: {
+        effectiveNativeThemeId: "OreoWhite",
+        effectiveApplied: true,
+        currentSentinelsMatchTheme: true,
+      },
+    });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      nativeTheme,
+    });
+
+    await automation.start({ runLaunch: false });
+    nativeTheme.shouldUseDarkColors = true;
+    await automation.appearanceChanged();
+
+    expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+
+    preferencesStore.update({
+      appearance: { automaticSwitching: true },
+    });
+    await automation.reschedule();
+
+    expect(nativeBridge.applyTheme).toHaveBeenCalledOnce();
+    expect(nativeBridge.applyTheme).toHaveBeenCalledWith("OreoBlack");
+    automation.stop();
+  });
+
+  it("cancels an appearance apply when automatic switching is disabled while resolving it", async () => {
+    let resolveThemes;
+    const themesPromise = new Promise((resolve) => {
+      resolveThemes = resolve;
+    });
+    const preferencesStore = createMemoryPreferences({
+      appearance: {
+        automaticSwitching: true,
+        lightCursorId: "OreoWhite",
+      },
+    });
+    const nativeBridge = bridge({
+      status: {
+        effectiveNativeThemeId: "OreoBlack",
+        effectiveApplied: true,
+        currentSentinelsMatchTheme: true,
+      },
+    });
+    nativeBridge.listThemes.mockImplementation(() => themesPromise);
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      nativeTheme: { shouldUseDarkColors: false },
+    });
+
+    const startup = automation.start({ runLaunch: false });
+    await vi.waitFor(() => expect(nativeBridge.listThemes).toHaveBeenCalled());
+    preferencesStore.update({
+      appearance: { automaticSwitching: false },
+    });
+    resolveThemes([theme("OreoWhite"), theme("OreoBlack")]);
+    await startup;
+    await automation.reschedule();
+
+    expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+    automation.stop();
+  });
+
   it("applies the fixed cursor when the OS appearance changes", async () => {
     const nativeTheme = { shouldUseDarkColors: false };
     const preferencesStore = createMemoryPreferences({
       appearance: {
-        enabled: true,
+        automaticSwitching: true,
         lightCursorId: "OreoWhite",
         darkCursorId: "OreoBlack",
       },
@@ -226,10 +306,10 @@ describe("cursor automation", () => {
     automation.stop();
   });
 
-  it("does not reapply a fixed cursor when only randomization roles change", async () => {
+  it("does not reapply a fixed cursor when only randomization pools change", async () => {
     const preferencesStore = createMemoryPreferences({
       appearance: {
-        enabled: true,
+        automaticSwitching: true,
         lightCursorId: "OreoWhite",
         darkCursorId: "OreoBlack",
       },
@@ -250,11 +330,148 @@ describe("cursor automation", () => {
 
     await automation.start({ runLaunch: false });
     preferencesStore.update({
-      appearance: { roles: { OreoBlack: ["dark"] } },
+      randomization: { pools: { dark: ["OreoBlack"] } },
     });
     await automation.reschedule();
 
     expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+    automation.stop();
+  });
+
+  it("applies an assigned cursor immediately only for the current appearance", async () => {
+    const preferencesStore = createMemoryPreferences({});
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite"), theme("OreoBlack")],
+      status: {
+        effectiveNativeThemeId: "OreoBlack",
+        effectiveApplied: true,
+        currentSentinelsMatchTheme: true,
+      },
+    });
+    const changed = vi.fn();
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      nativeTheme: { shouldUseDarkColors: false },
+      onCursorChanged: changed,
+    });
+
+    const lightResult = await automation.setAppearanceCursor(
+      "light",
+      "OreoWhite",
+    );
+    const darkResult = await automation.setAppearanceCursor(
+      "dark",
+      "OreoBlack",
+    );
+
+    expect(nativeBridge.applyTheme).toHaveBeenCalledTimes(1);
+    expect(nativeBridge.applyTheme).toHaveBeenCalledWith("OreoWhite");
+    expect(lightResult.status).toMatchObject({
+      effectiveNativeThemeId: "OreoWhite",
+    });
+    expect(darkResult.status).toBeNull();
+    expect(preferencesStore.get().appearance).toEqual({
+      automaticSwitching: false,
+      lightCursorId: "OreoWhite",
+      darkCursorId: "OreoBlack",
+    });
+    expect(changed).toHaveBeenCalledOnce();
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "assign:light" }),
+    );
+  });
+
+  it("does not remember a current-mode assignment that fails to apply", async () => {
+    const preferencesStore = createMemoryPreferences({});
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite")],
+      applyTheme: async () => ({
+        effectiveNativeThemeId: "OreoWhite",
+        effectiveApplied: false,
+        currentSentinelsMatchTheme: false,
+      }),
+    });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      nativeTheme: { shouldUseDarkColors: false },
+    });
+
+    await expect(
+      automation.setAppearanceCursor("light", "OreoWhite"),
+    ).rejects.toMatchObject({ code: "CURSOR_APPLY_UNVERIFIED" });
+
+    expect(preferencesStore.get().appearance.lightCursorId).toBeNull();
+  });
+
+  it("clears an appearance assignment without changing the live cursor", async () => {
+    const preferencesStore = createMemoryPreferences({
+      appearance: {
+        lightCursorId: "OreoWhite",
+        darkCursorId: "OreoBlack",
+      },
+    });
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite"), theme("OreoBlack")],
+    });
+    const changed = vi.fn();
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      nativeTheme: { shouldUseDarkColors: false },
+      onCursorChanged: changed,
+    });
+
+    const result = await automation.setAppearanceCursor("light", null);
+
+    expect(result).toMatchObject({ cursor: null, status: null });
+    expect(result.preferences.appearance).toEqual({
+      automaticSwitching: false,
+      lightCursorId: null,
+      darkCursorId: "OreoBlack",
+    });
+    expect(nativeBridge.listThemes).not.toHaveBeenCalled();
+    expect(nativeBridge.status).not.toHaveBeenCalled();
+    expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("reconciles the fixed cursor after wake when the OS appearance changed", async () => {
+    const nativeTheme = { shouldUseDarkColors: false };
+    const liveStatus = {
+      effectiveNativeThemeId: "OreoWhite",
+      effectiveApplied: true,
+      currentSentinelsMatchTheme: true,
+    };
+    const preferencesStore = createMemoryPreferences({
+      appearance: {
+        automaticSwitching: true,
+        lightCursorId: "OreoWhite",
+        darkCursorId: "OreoBlack",
+      },
+    });
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite"), theme("OreoBlack")],
+      status: liveStatus,
+    });
+    const changed = vi.fn();
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      nativeTheme,
+      onCursorChanged: changed,
+    });
+
+    await automation.start({ runLaunch: false });
+    nativeTheme.shouldUseDarkColors = true;
+    await automation.wake();
+
+    expect(nativeBridge.applyTheme).toHaveBeenCalledOnce();
+    expect(nativeBridge.applyTheme).toHaveBeenCalledWith("OreoBlack");
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "wake" }),
+    );
     automation.stop();
   });
 
@@ -316,7 +533,19 @@ describe("cursor automation", () => {
         schedule: { mode: "launch" },
       },
     });
-    const nativeBridge = bridge({ themes: [theme("OreoWhite")] });
+    const liveStatus = {};
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite")],
+      status: liveStatus,
+      applyTheme: async (identifier) => {
+        Object.assign(liveStatus, {
+          effectiveNativeThemeId: identifier,
+          effectiveApplied: true,
+          currentSentinelsMatchTheme: true,
+        });
+        return { ...liveStatus };
+      },
+    });
     const automation = createCursorAutomation({
       bridge: nativeBridge,
       preferencesStore,

@@ -137,7 +137,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"White",
                 OreoThemeResourceSpecKey: @"OreoWhite",
                 OreoThemeSHA256SpecKey:
-                    @"c66abaf6ec2c67bb4e8a1bbe6a9ceaf9ce84a1aacc1488af83e072eb9f693daa",
+                    @"180b1e731716408f3d7ef1b19f7d0f5b37006c88b75084d4430c1a73e4c68743",
                 OreoThemeUUIDSpecKey:
                     @"48D50EFD-389C-522F-8A4A-CD76DE8F4974",
                 OreoThemePlistNameSpecKey: @"Oreo White",
@@ -148,7 +148,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Gray",
                 OreoThemeResourceSpecKey: @"OreoGrey",
                 OreoThemeSHA256SpecKey:
-                    @"c8ab5f5ea3d6ab777f9b98192888187a0a93dc1745e2bd38ede6b6435cc2d4bd",
+                    @"d0c5ba48c7363d3230d224952459a9e924e548ccbe60ad9564ca7835c33d07f9",
                 OreoThemeUUIDSpecKey:
                     @"11F977BD-EC71-5AA9-B6B9-DB6115775065",
                 OreoThemePlistNameSpecKey: @"Oreo Grey",
@@ -159,7 +159,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Black",
                 OreoThemeResourceSpecKey: @"OreoBlack",
                 OreoThemeSHA256SpecKey:
-                    @"3ded2dac745019a32f5f4766bfaab32827f74cd088079ebd10a85371009b0c2f",
+                    @"50d1159c930914256f01b1a9a36e77f3eb0420eaf5ced4238cff966e7466dc22",
                 OreoThemeUUIDSpecKey:
                     @"0D069493-0412-56D4-8DAF-6300E1FEAFBF",
                 OreoThemePlistNameSpecKey: @"Oreo Black",
@@ -170,7 +170,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Blue",
                 OreoThemeResourceSpecKey: @"OreoBlue",
                 OreoThemeSHA256SpecKey:
-                    @"66fe6ae377226fe1e4b433098dd24d064ae6b1ee2c8570926605886ef5c4d017",
+                    @"6bdc1c499854afc215e813218aef6ea011e21d51b0c6e509a84c637937b48dee",
                 OreoThemeUUIDSpecKey:
                     @"D74950B4-F227-5ABB-9C4B-AAEA08EDD436",
                 OreoThemePlistNameSpecKey: @"Oreo Blue",
@@ -181,7 +181,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Pink",
                 OreoThemeResourceSpecKey: @"OreoPink",
                 OreoThemeSHA256SpecKey:
-                    @"c07ff6049b6fabb45eb0df8ceac25d5ded3a6c4df6ecb97a7513f459bad942f9",
+                    @"bc30fc11637d8710e17b2d339cbb044ddc39a2363fd67350449a91462576267c",
                 OreoThemeUUIDSpecKey:
                     @"4E03A69E-C449-5FD6-BA9C-C50FD98D5542",
                 OreoThemePlistNameSpecKey: @"Oreo Pink",
@@ -192,7 +192,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Purple",
                 OreoThemeResourceSpecKey: @"OreoPurple",
                 OreoThemeSHA256SpecKey:
-                    @"67d745a3a939d3218c732ba4963acd97a42fe3af3e6e66b1cecff7a5c74d92d1",
+                    @"256080f6e08b786ae855aa7de1294248f99fe47b50b35ae1f2a7dfd1ff43d6fd",
                 OreoThemeUUIDSpecKey:
                     @"24B632B3-A0F9-59B6-9012-7B4325C21983",
                 OreoThemePlistNameSpecKey: @"Oreo Purple",
@@ -203,7 +203,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Red",
                 OreoThemeResourceSpecKey: @"OreoRed",
                 OreoThemeSHA256SpecKey:
-                    @"eb5ff3c579f09e6e3c4c2dbb86ea55abc81c0b473b060cc4d636308ee0583a90",
+                    @"80f43c65d37b1cb7d32c9e1ab7b58cdcfabd8a65aa4f803d289f75475c5d3fac",
                 OreoThemeUUIDSpecKey:
                     @"09B5B421-2E0D-5517-81CF-32A8D611170A",
                 OreoThemePlistNameSpecKey: @"Oreo Red",
@@ -214,7 +214,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Teal",
                 OreoThemeResourceSpecKey: @"OreoTeal",
                 OreoThemeSHA256SpecKey:
-                    @"e2f4497d317b05cf66b351763618526f5ac66a1b9864afb32d87f6afa13578b8",
+                    @"cceb9e562a693366e5cbcb19ec75f6cd3a58f37853ea05420107df5fe279653e",
                 OreoThemeUUIDSpecKey:
                     @"CBB17224-D639-5733-B55D-4A6DEA8690DF",
                 OreoThemePlistNameSpecKey: @"Oreo Teal",
@@ -225,7 +225,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Light",
                 OreoThemeResourceSpecKey: @"OreoSparkLite",
                 OreoThemeSHA256SpecKey:
-                    @"fd0d215af48aed10c59b14e5752db1b8586f13bc33e419270e722eb53f7778af",
+                    @"a311a3e8c37b1bed7946d5528ff132e4e3649f51a01523d5a2683e04aff43d44",
                 OreoThemeUUIDSpecKey:
                     @"3B29AAB2-7D92-53A4-8C91-F995AFF57A90",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Lite",
@@ -236,7 +236,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Dark",
                 OreoThemeResourceSpecKey: @"OreoSparkDark",
                 OreoThemeSHA256SpecKey:
-                    @"1e262a624c88fe45168065e80ee8abe97deb03ce4ddb63f57607bea635d94dc0",
+                    @"991b039f66196bed3497be96d20ad4d700c79b6ca3cf3b48dac9bc859f752153",
                 OreoThemeUUIDSpecKey:
                     @"CE6E0F75-15F5-5A21-8401-2A60920B3F11",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Dark",
@@ -247,7 +247,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Blue",
                 OreoThemeResourceSpecKey: @"OreoSparkBlue",
                 OreoThemeSHA256SpecKey:
-                    @"abf7828e143f6c6634fc49335bcf562ad68bf54a76ca7fb3a5dd2517ac7cf25c",
+                    @"6ad0ec4d078d6f5dd24b6e3918317f4131ea54a2ca0806953a1e308a39bf0b34",
                 OreoThemeUUIDSpecKey:
                     @"8FB95895-6488-5A4D-B549-6C24EBEEF926",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Blue",
@@ -258,7 +258,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Green",
                 OreoThemeResourceSpecKey: @"OreoSparkGreen",
                 OreoThemeSHA256SpecKey:
-                    @"6e22b4e5f6b957031d9a4741556dfa00bf07fca5879da4686ab73c0c0682fe50",
+                    @"4f20797b0947567da6128dd7389d54c09e46c368bae3a026e5b47608c3a17245",
                 OreoThemeUUIDSpecKey:
                     @"6CD682D2-89F2-5C56-9F06-884112985481",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Green",
@@ -269,7 +269,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Light Pink",
                 OreoThemeResourceSpecKey: @"OreoSparkLightPink",
                 OreoThemeSHA256SpecKey:
-                    @"73af744aceaa4cb5058787e1a2e77852276d1da882ad872df1cf126efc87d933",
+                    @"9d81d3382193a027d86da333abfa9a0c10823b1430c7059360ba7105ebe39e65",
                 OreoThemeUUIDSpecKey:
                     @"FE78ED82-0917-56ED-A1DC-85C61FF0AA2A",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Light Pink",
@@ -280,7 +280,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Lime",
                 OreoThemeResourceSpecKey: @"OreoSparkLime",
                 OreoThemeSHA256SpecKey:
-                    @"b661944904602872d30ab738395b6af5e3485463428119171e7846823381db5a",
+                    @"3337f046ff2c6ee26dba54778fc2685cce526798c6b48f88b5ceafddcdffc2ac",
                 OreoThemeUUIDSpecKey:
                     @"CEDDD804-2530-54D1-8B6B-FB7854EA7B8A",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Lime",
@@ -291,7 +291,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Orange",
                 OreoThemeResourceSpecKey: @"OreoSparkOrange",
                 OreoThemeSHA256SpecKey:
-                    @"2ee35f7d74b75788b0bde4338e3dc051e74b94d7e5ec86cfc26512088e2aafaf",
+                    @"bbb72d7efa61615a96a38f7e766229dfb5d6409a4079c0fd9bff42e6a3c0410d",
                 OreoThemeUUIDSpecKey:
                     @"8C3D6FA7-7782-52C8-9EA2-349AF7139CD7",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Orange",
@@ -302,7 +302,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Pink",
                 OreoThemeResourceSpecKey: @"OreoSparkPink",
                 OreoThemeSHA256SpecKey:
-                    @"53960b96287ec9eeb337aef942344a8217492f145a074a1d8761ace9ef48c146",
+                    @"af3a1c31d7b757107c4e10c014562bbf12ca4c93fd5e7e00a8ac1eea7ee4e625",
                 OreoThemeUUIDSpecKey:
                     @"B3F427F6-0287-5C71-9295-022BC8ED7934",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Pink",
@@ -313,7 +313,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Purple",
                 OreoThemeResourceSpecKey: @"OreoSparkPurple",
                 OreoThemeSHA256SpecKey:
-                    @"a02d63e67816cc4dc05faa4197fd43a7096a850a5086322b35f4008acaf91fb9",
+                    @"e93a24c7b913c3e3bf31c41bb7034a5565c3d9fda23b72cddcb28c817d631195",
                 OreoThemeUUIDSpecKey:
                     @"5B53BF1D-6CD8-5382-B4FD-F2D505B2C504",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Purple",
@@ -324,7 +324,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Red",
                 OreoThemeResourceSpecKey: @"OreoSparkRed",
                 OreoThemeSHA256SpecKey:
-                    @"ac0ea0464b72c0641183c1eee13460efa534e4858393c8b296fa47caf69307c3",
+                    @"cad4e5e4f0f688bd05c8945424b8983e32f94e0a89930be2d6f9e0fe25ccafd5",
                 OreoThemeUUIDSpecKey:
                     @"B73170A5-C405-5D65-9D2A-71C90F38CCFE",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Red",
@@ -335,7 +335,7 @@ OreoThemeSpecifications(void) {
                 OreoThemeDisplayNameSpecKey: @"Spark Violet",
                 OreoThemeResourceSpecKey: @"OreoSparkViolet",
                 OreoThemeSHA256SpecKey:
-                    @"42aa417b35815ba2514696b807693b1c9df120f40f313fc50a22c850771e0261",
+                    @"01ae809af1399594638962fa839788952faff493dcf14f43f1b4e16c94fd23fe",
                 OreoThemeUUIDSpecKey:
                     @"933C2ACF-9AB9-5209-BFA9-A1CC77E64BC6",
                 OreoThemePlistNameSpecKey: @"Oreo Spark Violet",

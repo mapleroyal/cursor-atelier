@@ -179,8 +179,7 @@ function createEntry({
 const OREO_SOURCE_URL = "https://github.com/mapleroyal/oreo-cursor-macos";
 const OREO_UPSTREAM_URL = "https://github.com/varlesh/oreo-cursors";
 const OREO_LICENSE = "GPL-2.0";
-const OREO_AUTHOR =
-  "Alexey Varfolomeev (varlesh), Sourav Goswami; macOS conversion by mapleroyal";
+const OREO_AUTHOR = "Alexey Varfolomeev (varlesh), Sourav Goswami";
 
 const OREO_VARIANTS = [
   ["oreo-white", "White", "OreoWhite", "#e4e4e7", "oreo"],
@@ -464,6 +463,24 @@ const EXTERNAL_CATALOG = [
     bundled: false,
     cursorCountEstimated: true,
     tags: ["future", "github", "xcursor", "catalogued"],
+  }),
+  createEntry({
+    id: "future-cyan",
+    family: "Future",
+    name: "Cyan",
+    variant: "Cyan",
+    sourceUrl:
+      "https://github.com/yeyushengfan258/Future-cursors/tree/master/src/svg-cyan",
+    upstreamUrl: "https://github.com/yeyushengfan258/Future-cursors",
+    license: "GPL-3.0-only",
+    licenseUrl:
+      "https://github.com/yeyushengfan258/Future-cursors/blob/master/LICENSE",
+    author: "Yeyu Shengfan (yeyushengfan258)",
+    accentColor: "#23afc8",
+    nativeThemeId: "FutureCyan",
+    bundled: false,
+    cursorCountEstimated: true,
+    tags: ["future", "cyan", "github", "xcursor", "catalogued"],
   }),
   createEntry({
     id: "nordzy",

@@ -82,9 +82,28 @@ export function matchesCursorPack(pack, identifier) {
   const expected = String(identifier).toLowerCase();
   return [pack.id, pack.nativeThemeId, ...(pack.nativeThemeIds ?? [])].some(
     (candidate) =>
-      typeof candidate === "string" &&
-      candidate.toLowerCase() === expected,
+      typeof candidate === "string" && candidate.toLowerCase() === expected,
   );
+}
+
+export function resolveCursorPoolPacks(packs, identifiers) {
+  if (!Array.isArray(packs) || !Array.isArray(identifiers)) {
+    return [];
+  }
+
+  const seenPackIds = new Set();
+  const resolved = [];
+  for (const identifier of identifiers) {
+    const pack = packs.find((candidate) =>
+      matchesCursorPack(candidate, identifier),
+    );
+    if (!pack || seenPackIds.has(pack.id)) {
+      continue;
+    }
+    seenPackIds.add(pack.id);
+    resolved.push(pack);
+  }
+  return resolved;
 }
 
 export function getPackRailNavigationIndex(key, currentIndex, itemCount) {

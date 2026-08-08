@@ -1,21 +1,65 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#24262b"/>
-      <stop offset="1" stop-color="#101115"/>
+    <linearGradient id="surface" x1="172" y1="116" x2="844" y2="910" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fcfbf9"/>
+      <stop offset="1" stop-color="#eceef3"/>
     </linearGradient>
-    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
-      <stop stop-color="#ffffff" stop-opacity=".16"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity=".04"/>
+    <linearGradient id="rays" x1="1" y1="15" x2="16" y2="1" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ed3f9d"/>
+      <stop offset=".5" stop-color="#ff6964"/>
+      <stop offset="1" stop-color="#ff9a3d"/>
     </linearGradient>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
-      <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#000000" flood-opacity=".38"/>
+    <linearGradient id="pointer" x1="6" y1="6" x2="13" y2="15" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1b3554"/>
+      <stop offset="1" stop-color="#10243d"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="512" y1="52" x2="512" y2="972" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity=".84"/>
+      <stop offset="1" stop-color="#b8bdc8" stop-opacity=".3"/>
+    </linearGradient>
+    <filter id="surface-shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#132238" flood-opacity=".16"/>
+    </filter>
+    <filter id="mark-shadow" x="-20%" y="-20%" width="145%" height="150%">
+      <feDropShadow dx="0" dy=".3" stdDeviation=".35" flood-color="#14253b" flood-opacity=".24"/>
     </filter>
   </defs>
-  <path d="M512 44C181 44 44 181 44 512s137 468 468 468 468-137 468-468S843 44 512 44Z" fill="url(#surface)"/>
-  <path d="M512 55C189 55 55 189 55 512s134 457 457 457 457-134 457-457S835 55 512 55Z" fill="none" stroke="url(#edge)" stroke-width="22"/>
-  <g filter="url(#shadow)">
-    <path d="M304 220c-19-10-41 7-36 28l123 535c5 23 35 29 49 10l109-153 151 164c11 12 30 13 42 2l71-65c12-11 13-30 2-42L622 532l168-86c21-11 18-41-4-48L304 220Z" fill="#f7f7f8"/>
-    <path d="m585 568 174 190" fill="none" stroke="#a5b4fc" stroke-linecap="round" stroke-width="46"/>
+
+  <path
+    d="M512 52C187 52 52 187 52 512s135 460 460 460 460-135 460-460S837 52 512 52Z"
+    fill="url(#surface)"
+    filter="url(#surface-shadow)"
+  />
+  <path
+    d="M512 63C195 63 63 195 63 512s132 449 449 449 449-132 449-449S829 63 512 63Z"
+    fill="none"
+    stroke="url(#edge)"
+    stroke-width="22"
+  />
+
+  <g transform="translate(98 88) scale(46)" filter="url(#mark-shadow)">
+    <g fill="none" stroke="url(#rays)" stroke-linecap="round" stroke-width="1.65">
+      <path d="M9 1.75v2.2"/>
+      <path d="m3.35 3.05 1.55 1.55"/>
+      <path d="M1.75 7.2h2.2"/>
+      <path d="m3.35 11.35 1.55-1.55"/>
+      <path d="m14.65 3.05-1.55 1.55"/>
+      <path d="M16.25 7.2h-2.2"/>
+    </g>
+    <path
+      d="M6.25 6.05c-.36-.27-.86.07-.76.51l2.15 9.61c.1.45.7.53.91.12l1.95-3.69 3.92-.48c.46-.06.6-.65.22-.91L6.25 6.05Z"
+      fill="url(#pointer)"
+      stroke="#0c1d32"
+      stroke-linejoin="round"
+      stroke-width=".32"
+    />
+    <path
+      d="m6.5 6.65 1.91 8.5"
+      fill="none"
+      stroke="#ffffff"
+      stroke-linecap="round"
+      stroke-opacity=".14"
+      stroke-width=".25"
+    />
   </g>
 </svg>

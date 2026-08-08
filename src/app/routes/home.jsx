@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
+  Add01Icon,
   ArrowUpRight01Icon,
   ArrowRight01Icon,
+  ArrowReloadHorizontalIcon,
   Cancel01Icon,
   CheckmarkCircle02Icon,
   CommandIcon,
@@ -11,7 +21,6 @@ import {
   Delete01Icon,
   Delete02Icon,
   FavouriteIcon,
-  FileImportIcon,
   FolderEditIcon,
   FolderFavouriteIcon,
   InformationCircleIcon,
@@ -19,10 +28,9 @@ import {
   Search01Icon,
   Settings02Icon,
   Sun02Icon,
+  Tick02Icon,
 } from "@hugeicons/core-free-icons";
 
-import { AppearanceModeSelector } from "@/components/appearance-mode-selector";
-import { SettingsScreen } from "@/components/settings-screen";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,7 +49,6 @@ import {
 } from "@/components/ui/collapsible";
 import {
   ContextMenu,
-  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
@@ -60,6 +67,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -105,12 +117,18 @@ import {
   matchesCursorPack,
   normalizeCursorSizePercentage,
   openLoginItemsSettings,
+  resolveCursorPoolPacks,
   resolvePackQuerySource,
   restoreCursors,
   setCursorThemeSize,
 } from "@/lib/cursor-ui";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
+
+const loadSettingsScreen = () => import("@/components/settings-screen");
+const SettingsScreen = lazy(() =>
+  loadSettingsScreen().then((module) => ({ default: module.SettingsScreen })),
+);
 
 const DEFAULT_ROLES = ["default", "text", "pointer", "wait", "progress"];
 const CONTEXT_MENU_DISMISS_MS = 100;
@@ -380,6 +398,14 @@ async function randomizeNativeCursor() {
   return randomize();
 }
 
+async function setNativeAppearanceCursor(appearance, identifier) {
+  const setAppearanceCursor = window.electronAPI?.setAppearanceCursor;
+  if (typeof setAppearanceCursor !== "function") {
+    throw new Error("Light and dark cursor settings are unavailable.");
+  }
+  return setAppearanceCursor(appearance, identifier);
+}
+
 function getErrorMessage(error) {
   if (error instanceof Error && error.message) {
     return error.message;
@@ -393,12 +419,13 @@ function getErrorMessage(error) {
   return "The cursor engine could not complete that operation.";
 }
 
-function AppearancePicker() {
-  const themeMode = useAppStore((state) => state.themeMode);
-  const setThemeMode = useAppStore((state) => state.setThemeMode);
-
-  return (
-    <AppearanceModeSelector value={themeMode} onValueChange={setThemeMode} />
+function getAssignedAppearanceModes(preferences, preferenceId) {
+  if (!preferenceId) {
+    return [];
+  }
+  const appearance = preferences?.appearance ?? {};
+  return ["light", "dark"].filter(
+    (mode) => appearance[`${mode}CursorId`] === preferenceId,
   );
 }
 
@@ -441,7 +468,7 @@ function PackContextActions({
   onCreateFamily,
   onDelete,
   onToggleFavorite,
-  onToggleAppearanceRole,
+  onAssignAppearanceCursor,
   children,
 }) {
   const preferenceId = getCursorPreferenceId(pack);
@@ -462,24 +489,34 @@ function PackContextActions({
           {favorite ? "Remove from Favorites" : "Add to Favorites"}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuCheckboxItem
-          checked={roles.includes("light")}
-          onCheckedChange={(checked) =>
-            onToggleAppearanceRole(preferenceId, "light", checked === true)
-          }
+        <ContextMenuItem
+          onSelect={() => onAssignAppearanceCursor(preferenceId, "light")}
         >
           <HugeiconsIcon icon={Sun02Icon} strokeWidth={2} />
-          Light mode
-        </ContextMenuCheckboxItem>
-        <ContextMenuCheckboxItem
-          checked={roles.includes("dark")}
-          onCheckedChange={(checked) =>
-            onToggleAppearanceRole(preferenceId, "dark", checked === true)
-          }
+          Use in light mode
+          {roles.includes("light") ? (
+            <HugeiconsIcon
+              icon={Tick02Icon}
+              strokeWidth={2}
+              className="ml-auto"
+              aria-hidden="true"
+            />
+          ) : null}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={() => onAssignAppearanceCursor(preferenceId, "dark")}
         >
           <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />
-          Dark mode
-        </ContextMenuCheckboxItem>
+          Use in dark mode
+          {roles.includes("dark") ? (
+            <HugeiconsIcon
+              icon={Tick02Icon}
+              strokeWidth={2}
+              className="ml-auto"
+              aria-hidden="true"
+            />
+          ) : null}
+        </ContextMenuItem>
         {canManageImport ? (
           <>
             <ContextMenuSeparator />
@@ -541,7 +578,8 @@ function FamilyContextActions({
   children,
 }) {
   const canDelete =
-    familyPacks.length > 0 && familyPacks.every((pack) => pack.imported === true);
+    familyPacks.length > 0 &&
+    familyPacks.every((pack) => pack.imported === true);
 
   return (
     <ContextMenu>
@@ -583,7 +621,7 @@ function PackRailShortcut({
   libraryActions,
   onSelect,
   onToggleFavorite,
-  onToggleAppearanceRole,
+  onAssignAppearanceCursor,
 }) {
   return (
     <PackContextActions
@@ -592,7 +630,7 @@ function PackRailShortcut({
       appearanceRoles={appearanceRoles}
       {...libraryActions}
       onToggleFavorite={onToggleFavorite}
-      onToggleAppearanceRole={onToggleAppearanceRole}
+      onAssignAppearanceCursor={onAssignAppearanceCursor}
     >
       <button
         type="button"
@@ -633,7 +671,7 @@ function PackRail({
   onClearSearch,
   onToggleCursorFavorite,
   onToggleFamilyFavorite,
-  onToggleAppearanceRole,
+  onAssignAppearanceCursor,
   libraryActions = {},
   loadError,
   onClose,
@@ -642,6 +680,9 @@ function PackRail({
   const optionRefs = useRef(new Map());
   const familyRefs = useRef(new Map());
   const [expandedFamilies, setExpandedFamilies] = useState(() => new Set());
+  const [expandedPools, setExpandedPools] = useState(
+    () => new Set(["light", "dark"]),
+  );
   const searchActive = Boolean(search.trim());
   const groups = useMemo(() => {
     const grouped = new Map();
@@ -686,10 +727,39 @@ function PackRail({
   const currentPack = verifiedActive
     ? allPacks.find((pack) => matchesCursorPack(pack, effectiveId))
     : null;
+  const assignedCurrentPacks = ["light", "dark"]
+    .map((appearance) => {
+      const identifier = preferences.appearance[`${appearance}CursorId`];
+      const pack = identifier
+        ? allPacks.find((candidate) => matchesCursorPack(candidate, identifier))
+        : null;
+      return pack ? { appearance, pack } : null;
+    })
+    .filter(Boolean);
+  const hasDistinctAppearanceCursors =
+    assignedCurrentPacks.length === 2 &&
+    assignedCurrentPacks[0].pack.id !== assignedCurrentPacks[1].pack.id;
+  const currentEntries = hasDistinctAppearanceCursors
+    ? assignedCurrentPacks.map(({ appearance, pack }) => ({
+        appearance,
+        pack,
+        label: `${appearance === "light" ? "Light" : "Dark"} · ${pack.family}`,
+      }))
+    : [currentPack ?? assignedCurrentPacks[0]?.pack]
+        .filter(Boolean)
+        .map((pack) => ({ pack, label: pack.family }));
   const favoritePacks = allPacks.filter((pack) =>
     favoriteCursorIds.has(getCursorPreferenceId(pack)),
   );
   const hasFavorites = favoritePacks.length > 0 || favoriteFamilies.size > 0;
+  const randomizationPools = ["light", "dark"].map((appearance) => {
+    const identifiers = preferences.randomization.pools[appearance];
+    return {
+      appearance,
+      includesAll: identifiers.length === 0,
+      packs: resolveCursorPoolPacks(allPacks, identifiers),
+    };
+  });
 
   const setFamilyExpanded = useCallback((family, expanded) => {
     setExpandedFamilies((current) => {
@@ -723,6 +793,18 @@ function PackRail({
     },
     [onClose, onSelect],
   );
+
+  const setPoolExpanded = useCallback((appearance, expanded) => {
+    setExpandedPools((current) => {
+      const next = new Set(current);
+      if (expanded) {
+        next.add(appearance);
+      } else {
+        next.delete(appearance);
+      }
+      return next;
+    });
+  }, []);
 
   const handleOptionKeyDown = useCallback(
     (event, packId) => {
@@ -834,34 +916,40 @@ function PackRail({
         data-testid="pack-rail-scroll"
         className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pb-3 sm:px-3"
       >
-        {!loadError && (currentPack || hasFavorites) ? (
+        {!loadError ? (
           <nav aria-label="Cursor shortcuts" className="pb-2">
-            {currentPack ? (
+            {currentEntries.length ? (
               <div>
                 <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground">
                   Current
                 </h3>
-                <PackRailShortcut
-                  pack={currentPack}
-                  label={currentPack.family}
-                  active
-                  favorite={favoriteCursorIds.has(
-                    getCursorPreferenceId(currentPack),
-                  )}
-                  appearanceRoles={
-                    preferences.appearance.roles[
-                      getCursorPreferenceId(currentPack)
-                    ]
-                  }
-                  libraryActions={packLibraryActions}
-                  onSelect={selectShortcut}
-                  onToggleFavorite={onToggleCursorFavorite}
-                  onToggleAppearanceRole={onToggleAppearanceRole}
-                />
+                <div className="space-y-0.5">
+                  {currentEntries.map(({ appearance, label, pack }) => (
+                    <PackRailShortcut
+                      key={appearance ?? pack.id}
+                      pack={pack}
+                      label={label}
+                      active={
+                        verifiedActive && matchesCursorPack(pack, effectiveId)
+                      }
+                      favorite={favoriteCursorIds.has(
+                        getCursorPreferenceId(pack),
+                      )}
+                      appearanceRoles={getAssignedAppearanceModes(
+                        preferences,
+                        getCursorPreferenceId(pack),
+                      )}
+                      libraryActions={packLibraryActions}
+                      onSelect={selectShortcut}
+                      onToggleFavorite={onToggleCursorFavorite}
+                      onAssignAppearanceCursor={onAssignAppearanceCursor}
+                    />
+                  ))}
+                </div>
               </div>
             ) : null}
 
-            {currentPack && hasFavorites ? (
+            {currentEntries.length && hasFavorites ? (
               <Separator className="mx-2 my-2 w-auto" />
             ) : null}
 
@@ -919,20 +1007,131 @@ function PackRail({
                         verifiedActive && matchesCursorPack(pack, effectiveId)
                       }
                       favorite
-                      appearanceRoles={
-                        preferences.appearance.roles[
-                          getCursorPreferenceId(pack)
-                        ]
-                      }
+                      appearanceRoles={getAssignedAppearanceModes(
+                        preferences,
+                        getCursorPreferenceId(pack),
+                      )}
                       libraryActions={packLibraryActions}
                       onSelect={selectShortcut}
                       onToggleFavorite={onToggleCursorFavorite}
-                      onToggleAppearanceRole={onToggleAppearanceRole}
+                      onAssignAppearanceCursor={onAssignAppearanceCursor}
                     />
                   ))}
                 </div>
               </div>
             ) : null}
+
+            {currentEntries.length || hasFavorites ? (
+              <Separator className="mx-2 my-2 w-auto" />
+            ) : null}
+
+            <section aria-labelledby="randomization-pools-heading">
+              <h3
+                id="randomization-pools-heading"
+                className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground"
+              >
+                Randomization Pools
+              </h3>
+              <div className="space-y-0.5">
+                {randomizationPools.map(
+                  ({ appearance, includesAll, packs: poolPacks }) => {
+                    const label = appearance === "light" ? "Light" : "Dark";
+                    const expanded = expandedPools.has(appearance);
+                    const poolHeader = (
+                      <>
+                        <HugeiconsIcon
+                          icon={ArrowRight01Icon}
+                          strokeWidth={2}
+                          className={cn(
+                            "size-3.5 shrink-0 transition-transform",
+                            !poolPacks.length && "invisible",
+                            poolPacks.length && expanded && "rotate-90",
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {label} mode
+                        </span>
+                        <span className="type-numeric text-[0.65rem] font-normal text-muted-foreground/75">
+                          {includesAll ? "All from source" : poolPacks.length}
+                        </span>
+                      </>
+                    );
+
+                    return (
+                      <Collapsible
+                        key={appearance}
+                        open={expanded}
+                        onOpenChange={(open) =>
+                          setPoolExpanded(appearance, open)
+                        }
+                        asChild
+                      >
+                        <section
+                          aria-label={`${label} mode randomization pool`}
+                          className="min-w-0"
+                        >
+                          {poolPacks.length ? (
+                            <CollapsibleTrigger asChild>
+                              <button
+                                type="button"
+                                className="group flex w-full min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                              >
+                                {poolHeader}
+                              </button>
+                            </CollapsibleTrigger>
+                          ) : (
+                            <div className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-label-sm tracking-[0.02em] text-muted-foreground">
+                              {poolHeader}
+                            </div>
+                          )}
+                          {poolPacks.length ? (
+                            <CollapsibleContent animated>
+                              <div
+                                role="list"
+                                aria-label={`${label} mode cursor pool`}
+                                className="ml-3.5 min-w-0 space-y-0.5 border-l border-sidebar-border py-0.5 pl-2"
+                              >
+                                {poolPacks.map((pack) => (
+                                  <div
+                                    key={pack.id}
+                                    role="listitem"
+                                    data-pool-cursor-id={getCursorPreferenceId(
+                                      pack,
+                                    )}
+                                  >
+                                    <PackRailShortcut
+                                      pack={pack}
+                                      active={
+                                        verifiedActive &&
+                                        matchesCursorPack(pack, effectiveId)
+                                      }
+                                      favorite={favoriteCursorIds.has(
+                                        getCursorPreferenceId(pack),
+                                      )}
+                                      appearanceRoles={getAssignedAppearanceModes(
+                                        preferences,
+                                        getCursorPreferenceId(pack),
+                                      )}
+                                      libraryActions={packLibraryActions}
+                                      onSelect={selectShortcut}
+                                      onToggleFavorite={onToggleCursorFavorite}
+                                      onAssignAppearanceCursor={
+                                        onAssignAppearanceCursor
+                                      }
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </CollapsibleContent>
+                          ) : null}
+                        </section>
+                      </Collapsible>
+                    );
+                  },
+                )}
+              </div>
+            </section>
             <Separator className="mx-2 mt-2 w-auto" />
           </nav>
         ) : null}
@@ -1034,12 +1233,15 @@ function PackRail({
                               key={pack.id}
                               pack={pack}
                               favorite={favoriteCursorIds.has(preferenceId)}
-                              appearanceRoles={
-                                preferences.appearance.roles[preferenceId]
-                              }
+                              appearanceRoles={getAssignedAppearanceModes(
+                                preferences,
+                                preferenceId,
+                              )}
                               {...packLibraryActions}
                               onToggleFavorite={onToggleCursorFavorite}
-                              onToggleAppearanceRole={onToggleAppearanceRole}
+                              onAssignAppearanceCursor={
+                                onAssignAppearanceCursor
+                              }
                             >
                               <button
                                 type="button"
@@ -1139,23 +1341,22 @@ function PackDetails({
   active,
   favorite,
   appearanceRoles = [],
+  randomizationRoles = [],
+  randomizationPoolSizes = {},
   selectedBySystem,
   operation,
-  onApply,
   onSizeCommit,
   onToggleFavorite,
-  onToggleAppearanceRole,
-  onRestore,
+  onAssignAppearanceCursor,
+  onToggleRandomizationRole,
   onOpenLoginSettings,
   feedback,
   engineAvailable,
-  canRestore,
   loginApprovalRequired,
   statusError,
   statusErrorMessage,
   onRetryStatus,
   statusRetrying,
-  effectiveSizePercentage,
 }) {
   const busy = operation !== "idle";
   const canApply = engineAvailable && pack.canApply === true;
@@ -1163,8 +1364,6 @@ function PackDetails({
   useEffect(() => {
     setPreviewSize(pack.sizePercentage);
   }, [pack.id, pack.sizePercentage]);
-  const sizeNeedsApply =
-    active && pack.sizePercentage !== effectiveSizePercentage;
   const previewRoles = pack.roles.filter((role) => role.src);
   const count = previewRoles.length || pack.roleCount || pack.cursorCount;
   const previewPixels = (32 * previewSize) / 100;
@@ -1189,148 +1388,162 @@ function PackDetails({
           <div className="flex min-w-0 items-center gap-3">
             <PackPreview pack={pack} active={active} size="lg" />
             <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-headline-md">{pack.variant}</h1>
-                {active ? (
-                  <span className="flex shrink-0 items-center gap-1 text-label-md text-primary">
-                    <HugeiconsIcon
-                      icon={CheckmarkCircle02Icon}
-                      strokeWidth={2.2}
-                      className="size-3.5"
-                      aria-hidden="true"
-                    />
-                    In use
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-0.5 truncate text-body-sm text-muted-foreground">
-                {pack.family}
-                {pack.author ? ` · ${pack.author}` : ""}
-                {!active && selectedBySystem ? " · Selected" : ""}
-              </p>
+              <h1 className="truncate text-headline-md">{pack.variant}</h1>
+              {pack.sourceUrl ? (
+                <a
+                  href={pack.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-0.5 inline-flex items-center gap-1 truncate text-body-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Source
+                  <HugeiconsIcon
+                    icon={ArrowUpRight01Icon}
+                    strokeWidth={2}
+                    className="size-3"
+                    aria-hidden="true"
+                  />
+                </a>
+              ) : null}
             </div>
           </div>
 
           <TooltipProvider>
             <div className="flex shrink-0 items-center gap-1.5">
-              {pack.sourceUrl ? (
-                <Button variant="ghost" size="sm" asChild>
-                  <a href={pack.sourceUrl} target="_blank" rel="noreferrer">
-                    Source
-                    <HugeiconsIcon
-                      icon={ArrowUpRight01Icon}
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                  </a>
-                </Button>
-              ) : null}
-              {engineAvailable ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={onRestore}
-                    disabled={busy || !canRestore}
-                  >
-                    {operation === "restoring" ? "Restoring…" : "Restore"}
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={onApply}
-                    disabled={busy || (active && !sizeNeedsApply) || !canApply}
-                    size="sm"
-                    className="min-w-20"
-                    title={canApply ? undefined : "This pack is unavailable"}
-                  >
-                    {operation === "applying"
-                      ? "Applying…"
-                      : active
-                        ? sizeNeedsApply
-                          ? "Reapply"
-                          : "Applied"
-                        : !canApply
-                          ? "Unavailable"
-                          : "Apply"}
-                  </Button>
-                </>
-              ) : null}
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={
-                      favorite ? "Remove from Favorites" : "Add to Favorites"
-                    }
-                    className={cn(
-                      "text-muted-foreground",
-                      favorite && "text-rose-500 hover:text-rose-500",
-                    )}
-                    onClick={onToggleFavorite}
-                  >
-                    <HugeiconsIcon
-                      icon={FavouriteIcon}
-                      strokeWidth={2}
-                      className={cn("size-4", favorite && "fill-current")}
-                      aria-hidden="true"
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={
+                        favorite ? "Remove from Favorites" : "Add to Favorites"
+                      }
+                      className={cn(
+                        "text-muted-foreground",
+                        favorite && "text-rose-500 hover:text-rose-500",
+                      )}
+                      onClick={onToggleFavorite}
                     />
-                  </Button>
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={FavouriteIcon}
+                    strokeWidth={2}
+                    className={cn("size-4", favorite && "fill-current")}
+                    aria-hidden="true"
+                  />
                 </TooltipTrigger>
                 <TooltipContent>
                   {favorite ? "Remove from Favorites" : "Add to Favorites"}
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-pressed={appearanceRoles.includes("light")}
-                    aria-label="Light mode cursor"
-                    className={cn(
-                      "text-muted-foreground",
-                      appearanceRoles.includes("light") && "text-primary",
-                    )}
-                    onClick={() => onToggleAppearanceRole("light")}
-                  >
-                    <HugeiconsIcon
-                      icon={Sun02Icon}
-                      strokeWidth={2}
-                      className="size-4"
-                      aria-hidden="true"
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-pressed={appearanceRoles.includes("light")}
+                      aria-label={
+                        appearanceRoles.includes("light")
+                          ? "Clear the default light mode cursor"
+                          : `Set ${pack.variant} as the default light mode cursor`
+                      }
+                      disabled={busy || !canApply}
+                      className={cn(
+                        "text-muted-foreground",
+                        appearanceRoles.includes("light") &&
+                          "text-amber-500 hover:text-amber-500 dark:text-amber-400 dark:hover:text-amber-400",
+                      )}
+                      onClick={() => onAssignAppearanceCursor("light")}
                     />
-                  </Button>
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={Sun02Icon}
+                    strokeWidth={2}
+                    className="size-4"
+                    aria-hidden="true"
+                  />
                 </TooltipTrigger>
-                <TooltipContent>Light mode cursor</TooltipContent>
+                <TooltipContent>
+                  Set as the Default light mode cursor
+                </TooltipContent>
               </Tooltip>
               <Tooltip>
-                <TooltipTrigger asChild>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-pressed={appearanceRoles.includes("dark")}
+                      aria-label={
+                        appearanceRoles.includes("dark")
+                          ? "Clear the default dark mode cursor"
+                          : `Set ${pack.variant} as the default dark mode cursor`
+                      }
+                      disabled={busy || !canApply}
+                      className={cn(
+                        "text-muted-foreground",
+                        appearanceRoles.includes("dark") &&
+                          "text-indigo-500 hover:text-indigo-500 dark:text-indigo-300 dark:hover:text-indigo-300",
+                      )}
+                      onClick={() => onAssignAppearanceCursor("dark")}
+                    />
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={Moon02Icon}
+                    strokeWidth={2}
+                    className="size-4"
+                    aria-hidden="true"
+                  />
+                </TooltipTrigger>
+                <TooltipContent>
+                  Set as the Default dark mode cursor
+                </TooltipContent>
+              </Tooltip>
+              <Popover>
+                <PopoverTrigger asChild>
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon-sm"
-                    aria-pressed={appearanceRoles.includes("dark")}
-                    aria-label="Dark mode cursor"
-                    className={cn(
-                      "text-muted-foreground",
-                      appearanceRoles.includes("dark") && "text-primary",
-                    )}
-                    onClick={() => onToggleAppearanceRole("dark")}
+                    size="sm"
+                    disabled={busy || !canApply}
                   >
-                    <HugeiconsIcon
-                      icon={Moon02Icon}
-                      strokeWidth={2}
-                      className="size-4"
-                      aria-hidden="true"
-                    />
+                    Randomization…
                   </Button>
-                </TooltipTrigger>
-                <TooltipContent>Dark mode cursor</TooltipContent>
-              </Tooltip>
+                </PopoverTrigger>
+                <PopoverContent align="end" aria-label="Randomization pools">
+                  {["light", "dark"].map((role) => {
+                    const selected = randomizationRoles.includes(role);
+                    const poolSize = randomizationPoolSizes[role] ?? 0;
+                    const label =
+                      poolSize === 0
+                        ? `Create ${role} mode pool with this cursor`
+                        : selected && poolSize === 1
+                          ? `Use source for ${role} mode`
+                          : selected
+                            ? `Remove from ${role} mode pool`
+                            : `Add to ${role} mode pool`;
+                    return (
+                      <button
+                        key={role}
+                        type="button"
+                        aria-pressed={selected}
+                        className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent aria-pressed:bg-accent aria-pressed:font-medium"
+                        onClick={() => onToggleRandomizationRole(role)}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </PopoverContent>
+              </Popover>
             </div>
           </TooltipProvider>
         </div>
@@ -1433,7 +1646,35 @@ function PackDetails({
             </div>
             <div className="min-w-0">
               <div className="mb-3 flex items-baseline justify-between gap-4">
-                <span className="text-title-md">Size</span>
+                <span className="flex items-center gap-1.5 text-title-md">
+                  Size
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="About cursor sizing"
+                            className="-my-1 text-muted-foreground"
+                          />
+                        }
+                      >
+                        <HugeiconsIcon
+                          icon={InformationCircleIcon}
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-72">
+                        For the applied size to match this preview, set System
+                        Settings › Accessibility › Display › Pointer › Pointer
+                        Size slider to its leftmost (lowest) position.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </span>
                 <span className="type-numeric text-body-sm text-muted-foreground">
                   {previewSize}%
                 </span>
@@ -1466,7 +1707,7 @@ function PackDetails({
           </div>
 
           {previewRoles.length ? (
-            <div className="grid grid-cols-[repeat(auto-fill,112px)] gap-x-4 gap-y-5 sm:grid-cols-[repeat(auto-fill,124px)]">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(112px,1fr))] gap-x-4 gap-y-5 sm:grid-cols-[repeat(auto-fit,minmax(124px,1fr))]">
               {previewRoles.map((role, index) => (
                 <CursorRolePreview key={`${role.id}-${index}`} role={role} />
               ))}
@@ -1539,6 +1780,8 @@ function CatalogueFailure({ onRetry, retrying }) {
 export function HomeRoute() {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
+  const themeMode = useAppStore((state) => state.themeMode);
+  const setThemeMode = useAppStore((state) => state.setThemeMode);
   const initialCatalogue = useMemo(getCatalogue, []);
   const [view, setView] = useState("catalog");
   const [selectedId, setSelectedId] = useState(
@@ -1558,6 +1801,23 @@ export function HomeRoute() {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    let idleId;
+    const timeoutId = window.setTimeout(() => {
+      if (typeof window.requestIdleCallback === "function") {
+        idleId = window.requestIdleCallback(() => void loadSettingsScreen());
+      } else {
+        void loadSettingsScreen();
+      }
+    }, 1_500);
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (idleId !== undefined) {
+        window.cancelIdleCallback?.(idleId);
+      }
+    };
+  }, []);
 
   const preferencesQuery = useQuery({
     queryKey: ["cursor-preferences"],
@@ -1613,9 +1873,6 @@ export function HomeRoute() {
 
   const effectiveId = getStatusVariant(statusQuery.data);
   const selectedStatusId = getSelectedStatusVariant(statusQuery.data);
-  const effectiveSizePercentage = normalizeCursorSizePercentage(
-    statusQuery.data?.themeSizePercentage,
-  );
   const previewMode = Boolean(statusQuery.data?.previewMode);
   const statusUnavailable = isStatusQueryUnavailable(statusQuery);
   const statusErrorMessage =
@@ -1636,6 +1893,7 @@ export function HomeRoute() {
   );
   const verifiedActive = isStatusVerifiedActive(statusQuery.data);
   const canRestore = engineAvailable && isRestoreAvailable(statusQuery.data);
+  const restoreDisabled = operation !== "idle" || !canRestore;
   const loginApprovalRequired = Boolean(
     engineAvailable && statusQuery.data?.loginApprovalRequired,
   );
@@ -1834,7 +2092,56 @@ export function HomeRoute() {
     [handlePreferenceChange, queryClient],
   );
 
-  const handleToggleAppearanceRole = useCallback(
+  const handleAssignAppearanceCursor = useCallback(
+    async (preferenceId, appearance) => {
+      if (!preferenceId || (appearance !== "light" && appearance !== "dark")) {
+        return;
+      }
+      setFeedback(null);
+      setOperation(`assigning-${appearance}`);
+      try {
+        const current = normalizeCursorPreferences(
+          queryClient.getQueryData(["cursor-preferences"]),
+        );
+        const appearanceKey = `${appearance}CursorId`;
+        const nextPreferenceId =
+          current.appearance[appearanceKey] === preferenceId
+            ? null
+            : preferenceId;
+        const result = await setNativeAppearanceCursor(
+          appearance,
+          nextPreferenceId,
+        );
+        if (result?.preferences) {
+          queryClient.setQueryData(
+            ["cursor-preferences"],
+            normalizeCursorPreferences(result.preferences),
+          );
+        } else {
+          await queryClient.invalidateQueries({
+            queryKey: ["cursor-preferences"],
+          });
+        }
+        if (result?.status) {
+          queryClient.setQueryData(["cursor-status"], result.status);
+        }
+      } catch (error) {
+        await queryClient.invalidateQueries({
+          queryKey: ["cursor-preferences"],
+        });
+        setFeedback({
+          scope: "catalog",
+          type: "error",
+          message: getErrorMessage(error),
+        });
+      } finally {
+        setOperation("idle");
+      }
+    },
+    [queryClient],
+  );
+
+  const handleToggleRandomizationRole = useCallback(
     (preferenceId, role, enabled) => {
       if (!preferenceId || (role !== "light" && role !== "dark")) {
         return;
@@ -1842,19 +2149,17 @@ export function HomeRoute() {
       const current = normalizeCursorPreferences(
         queryClient.getQueryData(["cursor-preferences"]),
       );
-      const roles = { ...current.appearance.roles };
-      const cursorRoles = new Set(roles[preferenceId] ?? []);
+      const cursorIds = new Set(current.randomization.pools[role]);
       if (enabled) {
-        cursorRoles.add(role);
+        cursorIds.add(preferenceId);
       } else {
-        cursorRoles.delete(role);
+        cursorIds.delete(preferenceId);
       }
-      if (cursorRoles.size) {
-        roles[preferenceId] = [...cursorRoles];
-      } else {
-        delete roles[preferenceId];
-      }
-      void handlePreferenceChange({ appearance: { roles } });
+      void handlePreferenceChange({
+        randomization: {
+          pools: { [role]: [...cursorIds] },
+        },
+      });
     },
     [handlePreferenceChange, queryClient],
   );
@@ -1919,6 +2224,9 @@ export function HomeRoute() {
       setFeedback(null);
       setOperation("sizing");
       try {
+        const shouldReapply = Boolean(
+          verifiedActive && matchesCursorPack(selectedPack, effectiveId),
+        );
         const result = await setCursorThemeSize(
           selectedPack.nativeThemeId ?? selectedPack.id,
           sizePercentage,
@@ -1936,6 +2244,15 @@ export function HomeRoute() {
               )
             : themes,
         );
+        if (shouldReapply) {
+          await applyCursorTheme(selectedPack.nativeThemeId ?? selectedPack.id);
+          const nextStatus = await refreshStatus();
+          if (!isPackVerifiedActive(nextStatus, selectedPack)) {
+            throw new Error(
+              `${selectedPack.variant} could not be verified at the new size.`,
+            );
+          }
+        }
         return result;
       } catch (error) {
         setFeedback({
@@ -1948,43 +2265,15 @@ export function HomeRoute() {
         setOperation("idle");
       }
     },
-    [engineAvailable, queryClient, selectedPack],
+    [
+      effectiveId,
+      engineAvailable,
+      queryClient,
+      refreshStatus,
+      selectedPack,
+      verifiedActive,
+    ],
   );
-
-  const handleApply = useCallback(async () => {
-    if (!engineAvailable || !selectedPack || selectedPack.canApply !== true) {
-      return;
-    }
-    setFeedback(null);
-    setOperation("applying");
-    try {
-      await applyCursorTheme(selectedPack.nativeThemeId ?? selectedPack.id);
-      const nextStatus = await refreshStatus();
-      if (!isPackVerifiedActive(nextStatus, selectedPack)) {
-        throw new Error(
-          `${selectedPack.variant} could not be verified as active.`,
-        );
-      }
-      setFeedback({
-        scope: "catalog",
-        type: "success",
-        message: `${selectedPack.variant} is active.`,
-      });
-    } catch (error) {
-      try {
-        await refreshStatus();
-      } catch {
-        // Preserve the operation error; the query retains its previous state.
-      }
-      setFeedback({
-        scope: "catalog",
-        type: "error",
-        message: getErrorMessage(error),
-      });
-    } finally {
-      setOperation("idle");
-    }
-  }, [engineAvailable, refreshStatus, selectedPack]);
 
   const handleRestore = useCallback(async () => {
     setFeedback(null);
@@ -1995,6 +2284,10 @@ export function HomeRoute() {
       if (!isStatusVerifiedRestored(nextStatus)) {
         throw new Error("The macOS cursor restore could not be verified.");
       }
+      const nextPreferences = await updateNativePreferences({
+        appearance: { lightCursorId: null, darkCursorId: null },
+      });
+      queryClient.setQueryData(["cursor-preferences"], nextPreferences);
       setFeedback({
         scope: "catalog",
         type: "success",
@@ -2014,7 +2307,7 @@ export function HomeRoute() {
     } finally {
       setOperation("idle");
     }
-  }, [refreshStatus]);
+  }, [queryClient, refreshStatus]);
 
   const handleImport = useCallback(async () => {
     setFeedback(null);
@@ -2077,7 +2370,10 @@ export function HomeRoute() {
     async (pack, family) => {
       const identifier = pack?.nativeThemeId ?? pack?.id;
       if (!identifier || pack?.imported !== true) {
-        return { ok: false, message: "Only imported cursors can be organized." };
+        return {
+          ok: false,
+          message: "Only imported cursors can be organized.",
+        };
       }
       setFeedback(null);
       setOperation("organizing");
@@ -2150,9 +2446,7 @@ export function HomeRoute() {
       kind: "family",
       label: family,
       family,
-      identifiers: familyPacks.map(
-        (pack) => pack.nativeThemeId ?? pack.id,
-      ),
+      identifiers: familyPacks.map((pack) => pack.nativeThemeId ?? pack.id),
       count: familyPacks.length,
     });
   }, []);
@@ -2195,8 +2489,8 @@ export function HomeRoute() {
       await refreshLibraryQueries();
       const cleanupPending = Boolean(
         result?.cleanupPending ||
-          result?.preferenceCleanupPending ||
-          result?.sizePreferenceCleanupPending,
+        result?.preferenceCleanupPending ||
+        result?.sizePreferenceCleanupPending,
       );
       setFeedback({
         scope: "catalog",
@@ -2244,7 +2538,12 @@ export function HomeRoute() {
     preferences.favorites.cursorIds.includes(selectedPreferenceId),
   );
   const selectedAppearanceRoles = selectedPreferenceId
-    ? (preferences.appearance.roles[selectedPreferenceId] ?? [])
+    ? getAssignedAppearanceModes(preferences, selectedPreferenceId)
+    : [];
+  const selectedRandomizationRoles = selectedPreferenceId
+    ? ["light", "dark"].filter((role) =>
+        preferences.randomization.pools[role].includes(selectedPreferenceId),
+      )
     : [];
   const libraryActions = useMemo(
     () => ({
@@ -2267,27 +2566,81 @@ export function HomeRoute() {
 
   return (
     <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background">
-      <header className="titlebar-drag relative flex h-14 shrink-0 items-center justify-end border-b border-border/60 pr-3 pl-[78px] sm:pr-4">
-        <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 truncate text-title-md">
-          Cursor Atelier
-        </h1>
-
+      <header className="titlebar-drag flex h-12 shrink-0 items-center justify-end border-b border-border/60 pr-3 pl-[78px] sm:pr-4">
         <div className="titlebar-no-drag flex shrink-0 items-center gap-2">
           {view === "catalog" ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleImport}
-              disabled={operation !== "idle"}
-            >
-              <HugeiconsIcon
-                icon={FileImportIcon}
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-              {operation === "importing" ? "Importing…" : "Import"}
-            </Button>
+            <TooltipProvider>
+              <div className="flex items-center gap-0.5">
+                <div className="relative isolate">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="pr-8"
+                    onClick={handleImport}
+                    disabled={operation !== "idle"}
+                  >
+                    <HugeiconsIcon
+                      icon={Add01Icon}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                    {operation === "importing" ? "Importing…" : "Import"}
+                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label="About cursor imports"
+                          className="absolute top-1/2 right-1 z-10 grid size-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        />
+                      }
+                    >
+                      <HugeiconsIcon
+                        icon={InformationCircleIcon}
+                        strokeWidth={2}
+                        className="size-3.5"
+                        aria-hidden="true"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-80">
+                      If an import looks soft, try the author&apos;s github repo
+                      for the original SVG source instead of theme aggregators
+                      like pling.com, gnome-look.org, or opendesktop.org.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-disabled={restoreDisabled}
+                        className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                        onClick={() => {
+                          if (!restoreDisabled) {
+                            void handleRestore();
+                          }
+                        }}
+                      />
+                    }
+                  >
+                    <HugeiconsIcon
+                      icon={ArrowReloadHorizontalIcon}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                    {operation === "restoring" ? "Restoring…" : "Restore"}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Restore the cursor macOS was using before Cursor Atelier
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
           ) : null}
           {view === "catalog" && isMobile ? (
             <Sheet open={railOpen} onOpenChange={setRailOpen}>
@@ -2325,7 +2678,7 @@ export function HomeRoute() {
                   onClearSearch={() => setSearch("")}
                   onToggleCursorFavorite={handleToggleCursorFavorite}
                   onToggleFamilyFavorite={handleToggleFamilyFavorite}
-                  onToggleAppearanceRole={handleToggleAppearanceRole}
+                  onAssignAppearanceCursor={handleAssignAppearanceCursor}
                   libraryActions={libraryActions}
                   loadError={catalogueLoadError}
                   onClose={() => setRailOpen(false)}
@@ -2353,20 +2706,23 @@ export function HomeRoute() {
               aria-hidden="true"
             />
           </Button>
-          <AppearancePicker />
         </div>
       </header>
 
       {view === "settings" ? (
-        <SettingsScreen
-          packs={packs}
-          preferences={preferences}
-          onChange={handlePreferenceChange}
-          onRandomize={() => void handleRandomize()}
-          randomizing={operation === "randomizing"}
-          feedback={feedback}
-          onClose={() => setView("catalog")}
-        />
+        <Suspense fallback={<div className="min-h-0 flex-1 bg-background" />}>
+          <SettingsScreen
+            packs={packs}
+            preferences={preferences}
+            appearanceMode={themeMode}
+            onAppearanceModeChange={setThemeMode}
+            onChange={handlePreferenceChange}
+            onRandomize={() => void handleRandomize()}
+            randomizing={operation === "randomizing"}
+            feedback={feedback}
+            onClose={() => setView("catalog")}
+          />
+        </Suspense>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
           <aside className="hidden min-h-0 min-w-0 w-[276px] shrink-0 overflow-hidden border-r border-border/60 bg-sidebar/45 md:flex lg:w-[296px]">
@@ -2384,7 +2740,7 @@ export function HomeRoute() {
               onClearSearch={() => setSearch("")}
               onToggleCursorFavorite={handleToggleCursorFavorite}
               onToggleFamilyFavorite={handleToggleFamilyFavorite}
-              onToggleAppearanceRole={handleToggleAppearanceRole}
+              onAssignAppearanceCursor={handleAssignAppearanceCursor}
               libraryActions={libraryActions}
               loadError={catalogueLoadError}
             />
@@ -2396,29 +2752,33 @@ export function HomeRoute() {
               active={active}
               favorite={selectedFavorite}
               appearanceRoles={selectedAppearanceRoles}
+              randomizationRoles={selectedRandomizationRoles}
+              randomizationPoolSizes={{
+                light: preferences.randomization.pools.light.length,
+                dark: preferences.randomization.pools.dark.length,
+              }}
               selectedBySystem={selectedBySystem}
               operation={operation}
-              onApply={handleApply}
               onSizeCommit={handleSizeCommit}
-              effectiveSizePercentage={effectiveSizePercentage}
               onToggleFavorite={() =>
                 handleToggleCursorFavorite(
                   selectedPreferenceId,
                   !selectedFavorite,
                 )
               }
-              onToggleAppearanceRole={(role) =>
-                handleToggleAppearanceRole(
+              onAssignAppearanceCursor={(role) =>
+                void handleAssignAppearanceCursor(selectedPreferenceId, role)
+              }
+              onToggleRandomizationRole={(role) =>
+                handleToggleRandomizationRole(
                   selectedPreferenceId,
                   role,
-                  !selectedAppearanceRoles.includes(role),
+                  !selectedRandomizationRoles.includes(role),
                 )
               }
-              onRestore={handleRestore}
               onOpenLoginSettings={handleOpenLoginSettings}
               feedback={feedback}
               engineAvailable={engineAvailable}
-              canRestore={canRestore}
               loginApprovalRequired={loginApprovalRequired}
               statusError={statusUnavailable}
               statusErrorMessage={statusErrorMessage}

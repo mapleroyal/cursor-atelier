@@ -82,7 +82,7 @@ const test = base.extend({
     await expect(page).toHaveTitle("Cursor Atelier");
     await expect(
       page.getByRole("heading", { name: "Cursor Atelier", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Import", exact: true }),
     ).toBeVisible();
@@ -96,7 +96,7 @@ test.describe("Cursor Atelier packaged app", () => {
     "The production cursor manager is a macOS app; run this suite on macOS.",
   );
 
-  test("renders the split-pane shell and switches appearance modes", async ({
+  test("renders the split-pane shell and switches appearance modes in Settings", async ({
     cursorPage: page,
   }) => {
     await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
@@ -114,6 +114,10 @@ test.describe("Cursor Atelier packaged app", () => {
       shellBounds.railClientWidth,
     );
 
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Appearance", exact: true }),
+    ).toHaveCount(0);
     for (const label of ["Light", "System", "Dark"]) {
       await expect(page.getByRole("radio", { name: label })).toBeVisible();
     }
@@ -126,6 +130,7 @@ test.describe("Cursor Atelier packaged app", () => {
     // Restore the default so this test remains friendly to local runs even if
     // the app's persisted user-data directory behavior changes in the future.
     await page.getByRole("radio", { name: "System" }).click();
+    await page.getByRole("button", { name: "Back", exact: true }).click();
   });
 
   test("filters the catalogue by family and variant", async ({
@@ -144,6 +149,54 @@ test.describe("Cursor Atelier packaged app", () => {
     ).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Neon" })).toBeVisible();
     await expect(page.getByText("Moga", { exact: true }).last()).toBeVisible();
+  });
+
+  test("dismisses tooltips as soon as the pointer leaves their trigger", async ({
+    cursorPage: page,
+  }) => {
+    const trigger = page.getByRole("button", { name: "About cursor imports" });
+    const triggerBounds = await trigger.boundingBox();
+    expect(triggerBounds).not.toBeNull();
+
+    // This top-bar tooltip collision-flips below its trigger. Approach from
+    // that side and stop just inside the trigger, where a hit-testable popup
+    // would steal hover and immediately close itself.
+    const triggerCenterX = triggerBounds.x + triggerBounds.width / 2;
+    await page.mouse.move(triggerCenterX, triggerBounds.y + 100);
+    await page.mouse.move(
+      triggerCenterX,
+      triggerBounds.y + triggerBounds.height - 1,
+      { steps: 12 },
+    );
+    const tooltip = page.getByRole("tooltip");
+    await expect(tooltip).toHaveText(
+      "If an import looks soft, try the author's github repo for the original SVG source instead of theme aggregators like pling.com, gnome-look.org, or opendesktop.org.",
+    );
+    await expect(tooltip).toHaveAttribute("data-side", "bottom");
+    await page.waitForTimeout(150);
+    await expect(tooltip).toBeVisible();
+    await expect
+      .poll(() => trigger.evaluate((element) => element.matches(":hover")))
+      .toBe(true);
+
+    const bounds = await tooltip.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2,
+    );
+    await expect(tooltip).toBeHidden();
+
+    // The unavailable action remains focusable as aria-disabled so keyboard
+    // users can discover the explanation without activating it.
+    const restoreButton = page.getByRole("button", {
+      name: "Restore",
+      exact: true,
+    });
+    await restoreButton.focus();
+    await expect(page.getByRole("tooltip")).toHaveText(
+      "Restore the cursor macOS was using before Cursor Atelier",
+    );
   });
 
   test("uses one tab stop and arrow-key navigation for the pack list", async ({
@@ -177,6 +230,68 @@ test.describe("Cursor Atelier packaged app", () => {
         (entries) => entries.filter((entry) => entry.tabIndex === 0).length,
       ),
     ).toBe(1);
+  });
+
+  test("shows separate ordered light and dark randomization pools", async ({
+    cursorPage: page,
+  }) => {
+    for (const appearance of ["Light", "Dark"]) {
+      await expect(
+        page.getByRole("region", {
+          name: `${appearance} mode randomization pool`,
+        }),
+      ).toContainText("All from source");
+    }
+
+    await page.evaluate(() =>
+      window.electronAPI.updateCursorPreferences({
+        randomization: {
+          pools: {
+            light: ["OreoBlack", "OreoBlue"],
+            dark: ["OreoBlue", "OreoBlack"],
+          },
+        },
+      }),
+    );
+
+    const lightPool = page.getByRole("region", {
+      name: "Light mode randomization pool",
+    });
+    const darkPool = page.getByRole("region", {
+      name: "Dark mode randomization pool",
+    });
+    await expect(lightPool).toBeVisible();
+    await expect(darkPool).toBeVisible();
+
+    const poolIds = async (name) =>
+      page
+        .getByRole("list", { name })
+        .getByRole("listitem")
+        .evaluateAll((items) => items.map((item) => item.dataset.poolCursorId));
+    await expect
+      .poll(() => poolIds("Light mode cursor pool"))
+      .toEqual(["OreoBlack", "OreoBlue"]);
+    await expect
+      .poll(() => poolIds("Dark mode cursor pool"))
+      .toEqual(["OreoBlue", "OreoBlack"]);
+
+    const firstLightCursor = page
+      .getByRole("list", { name: "Light mode cursor pool" })
+      .getByRole("button")
+      .first();
+    await firstLightCursor.focus();
+    await firstLightCursor.press("Enter");
+    await expect(page.getByRole("heading", { name: "Black" })).toBeVisible();
+
+    const darkTrigger = darkPool.getByRole("button", {
+      name: /Dark mode 2/,
+    });
+    await darkTrigger.focus();
+    await darkTrigger.press("Enter");
+    await expect(darkTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(
+      page.getByRole("list", { name: "Dark mode cursor pool" }),
+    ).toBeHidden();
   });
 
   test("uses the pack drawer at the supported minimum window width", async ({
@@ -282,9 +397,23 @@ test.describe("Cursor Atelier packaged app", () => {
     await expect(
       page.getByRole("button", { name: "Apply", exact: true }),
     ).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Source" })).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Set Blue as the default light mode cursor",
+      }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", {
+        name: "Set Blue as the default dark mode cursor",
+      }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Randomization…", exact: true }),
+    ).toBeDisabled();
     await expect(
       page.getByRole("button", { name: "Restore", exact: true }),
-    ).toHaveCount(0);
+    ).toHaveAttribute("aria-disabled", "true");
 
     const status = await page.evaluate(() =>
       window.electronAPI.getCursorStatus(),
@@ -297,6 +426,7 @@ test.describe("Cursor Atelier packaged app", () => {
   });
 
   test("persists a cursor favorite and exposes the focused settings screen", async ({
+    cursorApp,
     cursorPage: page,
   }) => {
     const search = page.getByRole("textbox", { name: "Search cursor packs" });
@@ -322,17 +452,101 @@ test.describe("Cursor Atelier packaged app", () => {
     await page.reload();
     await expect(page.getByText("Favorites", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const settingsAccelerator = await cursorApp.evaluate(({ Menu }) => {
+      const item = Menu.getApplicationMenu()?.getMenuItemById("settings");
+      item?.click();
+      return item?.accelerator ?? null;
+    });
+    expect(settingsAccelerator).toBe("CommandOrControl+,");
     await expect(
       page.getByRole("heading", { name: "Settings", exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "General", exact: true }).click();
+    const appearanceSwitch = page.getByRole("switch", {
+      name: "Switch Cursors with System Appearance",
+    });
+    await expect(appearanceSwitch).toBeVisible();
+    await expect(appearanceSwitch).not.toBeChecked();
+    await appearanceSwitch.click();
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const preferences = await window.electronAPI.getCursorPreferences();
+          return preferences.appearance.automaticSwitching;
+        }),
+      )
+      .toBe(true);
+    const menuBarSwitch = page.getByRole("switch", {
+      name: "Show in Menu Bar",
+    });
+    await expect(menuBarSwitch).toBeVisible();
+    await expect(menuBarSwitch).toBeChecked();
+    await menuBarSwitch.click();
+    await expect(menuBarSwitch).not.toBeChecked();
+    await expect(appearanceSwitch).toBeChecked();
     await expect(
-      page.getByRole("switch", { name: "Menu Bar Item" }),
+      page.getByRole("switch", { name: "Show in Dock" }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Randomization", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Randomize Now", exact: true }),
     ).toBeVisible();
-    await page.locator("#random-schedule").selectOption("interval");
+    await expect(page.locator("#random-source")).toHaveText(
+      "Light & Dark Pools",
+    );
+    await page.locator("#random-schedule").click();
+    await page
+      .getByRole("option", { name: "Every x hours", exact: true })
+      .click();
     await expect(page.locator("#random-interval")).toHaveValue("1");
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
+  });
+
+  test("stays resident without a menu bar item when appearance switching is enabled", async ({
+    cursorApp,
+    cursorPage: page,
+  }) => {
+    await page.evaluate(() =>
+      window.electronAPI.updateCursorPreferences({
+        appearance: { automaticSwitching: true },
+        menuBar: { visible: false },
+      }),
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const preferences = await window.electronAPI.getCursorPreferences();
+          return {
+            automaticSwitching: preferences.appearance.automaticSwitching,
+            menuBarVisible: preferences.menuBar.visible,
+          };
+        }),
+      )
+      .toEqual({ automaticSwitching: true, menuBarVisible: false });
+
+    await cursorApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].close();
+    });
+    await expect.poll(() => cursorApp.windows().length).toBe(0);
+    await expect
+      .poll(() =>
+        cursorApp.evaluate(
+          ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+        ),
+      )
+      .toBe(0);
+
+    const reopenedWindow = cursorApp.waitForEvent("window");
+    await cursorApp.evaluate(({ app }) => app.emit("activate"));
+    const reopenedPage = await reopenedWindow;
+    await reopenedPage.waitForLoadState("domcontentloaded");
+    await expect(reopenedPage).toHaveTitle("Cursor Atelier");
+    await expect(
+      reopenedPage.getByText("Cursor packs", { exact: true }),
+    ).toBeVisible();
   });
 
   test("keeps every requested external family visible but non-mutating", async ({

@@ -12,7 +12,7 @@ import {
 describe("cursor catalogue", () => {
   it("contains all bundled Oreo variants and requested families", () => {
     expect(CURSOR_CATALOG_COUNTS.bundled).toBe(19);
-    expect(CURSOR_CATALOG_COUNTS.total).toBe(37);
+    expect(CURSOR_CATALOG_COUNTS.total).toBe(38);
 
     for (const id of [
       "remus",
@@ -30,6 +30,7 @@ describe("cursor catalogue", () => {
       "simp1e",
       "capitaine",
       "future",
+      "future-cyan",
       "nordzy",
       "colloid",
       "bibata",
@@ -42,6 +43,16 @@ describe("cursor catalogue", () => {
         (entry) => typeof entry.nativeThemeId === "string",
       ),
     ).toBe(true);
+  });
+
+  it("points Future Cyan at the author's high-quality SVG source", () => {
+    const futureCyan = getCursorCatalogEntry("future-cyan");
+
+    expect(futureCyan.nativeThemeId).toBe("FutureCyan");
+    expect(futureCyan.variant).toBe("Cyan");
+    expect(futureCyan.sourceUrl).toBe(
+      "https://github.com/yeyushengfan258/Future-cursors/tree/master/src/svg-cyan",
+    );
   });
 
   it("keeps catalogue-only packs unavailable without fabricating previews", () => {

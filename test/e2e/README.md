@@ -21,7 +21,8 @@ The UI suite launches `app.asar` directly with native bridge and manifest
 overrides removed. That gives Electron a temporary resources directory rather
 than the packaged native component, so the suite exercises layout, search,
 appearance persistence, preload fallback, and catalogue behavior in truthful
-preview mode. Apply/Restore are absent and it cannot change the host cursor.
+preview mode. Cursor-assignment and Restore controls remain disabled, and it
+cannot change the host cursor.
 
 The packaged-native smoke spawns the exact
 `Contents/MacOS/Cursor Atelier` Forge executable as a normal child process;
@@ -30,7 +31,7 @@ hooks. The test reserves an ephemeral `127.0.0.1` port, starts the app with a
 separate temporary user-data directory and loopback-only remote debugging, then
 attaches through CDP. Bridge/manifest overrides are removed.
 
-The CDP session performs only read-only status, verifies the complete 239-theme
+The CDP session performs only read-only status, verifies the complete 240-theme
 bundled inventory plus any valid user-imported themes, checks 47-role metadata,
 parses an animated preview's APNG frame and timing controls, and exercises the
 custom image protocol. It does not invoke Import, Apply, Restore, Login Items

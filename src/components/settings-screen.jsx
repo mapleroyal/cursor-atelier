@@ -2,22 +2,38 @@ import { useEffect, useMemo, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
+  ArrowDown01Icon,
   ArrowLeft01Icon,
   Cancel01Icon,
-  Moon02Icon,
+  InformationCircleIcon,
+  Settings02Icon,
   ShuffleIcon,
-  Sun02Icon,
 } from "@hugeicons/core-free-icons";
 
+import { AppearanceModeSelector } from "@/components/appearance-mode-selector";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-import { Separator } from "@/components/ui/separator";
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { getCursorPreferenceId } from "@/lib/cursor-preferences";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const SCHEDULE_OPTIONS = [
@@ -27,13 +43,6 @@ const SCHEDULE_OPTIONS = [
   ["daily", "Daily"],
   ["times", "Specific times"],
 ];
-
-function getPackLabel(pack) {
-  const id = getCursorPreferenceId(pack) ?? "Cursor";
-  const variant = String(pack?.variant ?? pack?.name ?? id);
-  const family = pack?.family ? String(pack.family) : "";
-  return family && family !== variant ? `${family} — ${variant}` : variant;
-}
 
 function getNextTime(times) {
   const occupied = new Set(times);
@@ -48,55 +57,30 @@ function getNextTime(times) {
   return null;
 }
 
-function SettingsRow({ label, htmlFor, children, className }) {
+function SettingsSection({ icon, title, children }) {
   return (
-    <div
-      className={cn(
-        "grid min-w-0 gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,18rem)] sm:items-center sm:gap-6",
-        className,
-      )}
-    >
-      <label
-        htmlFor={htmlFor}
-        className="min-w-0 text-body-md font-medium text-foreground"
-      >
-        {label}
-      </label>
-      <div className="flex min-w-0 items-center justify-start sm:justify-end">
+    <Collapsible className="rounded-3xl border border-border/70">
+      <CollapsibleTrigger className="group flex w-full items-center justify-between rounded-3xl px-4 py-3 text-left font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30">
+        <span className="inline-flex items-center gap-2">
+          <HugeiconsIcon
+            icon={icon}
+            strokeWidth={2}
+            className="size-4 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <span>{title}</span>
+        </span>
+        <HugeiconsIcon
+          icon={ArrowDown01Icon}
+          strokeWidth={2}
+          className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+          aria-hidden="true"
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent animated className="grid gap-4 px-4 pb-4">
         {children}
-      </div>
-    </div>
-  );
-}
-
-function CursorSelect({ id, value, packs, disabled, onValueChange }) {
-  const valueAvailable = packs.some(
-    (pack) => getCursorPreferenceId(pack) === value,
-  );
-
-  return (
-    <NativeSelect
-      id={id}
-      value={value ?? ""}
-      disabled={disabled || packs.length === 0}
-      className="w-full"
-      onChange={(event) => onValueChange(event.currentTarget.value || null)}
-    >
-      <NativeSelectOption value="">None</NativeSelectOption>
-      {value && !valueAvailable ? (
-        <NativeSelectOption value={value}>
-          Unavailable cursor
-        </NativeSelectOption>
-      ) : null}
-      {packs.map((pack) => {
-        const preferenceId = getCursorPreferenceId(pack);
-        return (
-          <NativeSelectOption key={preferenceId} value={preferenceId}>
-            {getPackLabel(pack)}
-          </NativeSelectOption>
-        );
-      })}
-    </NativeSelect>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -119,7 +103,7 @@ function IntervalHoursInput({ value, onValueChange }) {
   };
 
   return (
-    <div className="flex w-full items-center gap-2">
+    <div className="flex w-full items-center gap-2 sm:w-52">
       <Input
         id="random-interval"
         type="number"
@@ -152,28 +136,34 @@ function ScheduleFields({ schedule, onChange }) {
 
   if (schedule.mode === "interval") {
     return (
-      <SettingsRow label="Interval" htmlFor="random-interval">
+      <Field orientation="responsive">
+        <FieldContent>
+          <FieldLabel htmlFor="random-interval">Interval</FieldLabel>
+        </FieldContent>
         <IntervalHoursInput
           value={schedule.intervalHours}
           onValueChange={(intervalHours) => onChange({ intervalHours })}
         />
-      </SettingsRow>
+      </Field>
     );
   }
 
   if (schedule.mode === "daily") {
     return (
-      <SettingsRow label="Time" htmlFor="random-daily-time">
+      <Field orientation="responsive">
+        <FieldContent>
+          <FieldLabel htmlFor="random-daily-time">Time</FieldLabel>
+        </FieldContent>
         <Input
           id="random-daily-time"
           type="time"
           value={schedule.dailyTime}
-          className="type-numeric"
+          className="type-numeric sm:w-52"
           onChange={(event) =>
             onChange({ dailyTime: event.currentTarget.value })
           }
         />
-      </SettingsRow>
+      </Field>
     );
   }
 
@@ -182,9 +172,11 @@ function ScheduleFields({ schedule, onChange }) {
   }
 
   return (
-    <div className="grid min-w-0 gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,18rem)] sm:gap-6">
-      <span className="text-body-md font-medium text-foreground">Times</span>
-      <div className="min-w-0 space-y-2">
+    <Field orientation="responsive">
+      <FieldContent>
+        <FieldLabel>Times</FieldLabel>
+      </FieldContent>
+      <div className="w-full min-w-0 space-y-2 sm:w-52">
         {times.map((time, index) => (
           <div key={index} className="flex min-w-0 items-center gap-1.5">
             <Input
@@ -229,45 +221,34 @@ function ScheduleFields({ schedule, onChange }) {
           Add Time
         </Button>
       </div>
-    </div>
+    </Field>
   );
 }
 
 export function SettingsScreen({
   packs,
   preferences,
+  appearanceMode,
+  onAppearanceModeChange,
   onChange,
   onRandomize,
   randomizing,
   feedback,
   onClose,
 }) {
-  const selectablePacks = useMemo(() => {
-    const unique = new Map();
-    for (const pack of Array.isArray(packs) ? packs : []) {
-      const preferenceId = getCursorPreferenceId(pack);
-      if (
-        preferenceId &&
-        pack?.canApply === true &&
-        !unique.has(preferenceId)
-      ) {
-        unique.set(preferenceId, pack);
-      }
-    }
-    return [...unique.values()].sort((left, right) =>
-      getPackLabel(left).localeCompare(getPackLabel(right)),
-    );
-  }, [packs]);
-
   const families = useMemo(
     () =>
       [
-        ...new Set(selectablePacks.map((pack) => pack.family).filter(Boolean)),
+        ...new Set(
+          (Array.isArray(packs) ? packs : [])
+            .filter((pack) => pack?.canApply === true)
+            .map((pack) => pack.family)
+            .filter(Boolean),
+        ),
       ].sort((left, right) => String(left).localeCompare(String(right))),
-    [selectablePacks],
+    [packs],
   );
 
-  const appearance = preferences?.appearance ?? {};
   const randomization = preferences?.randomization ?? {};
   const schedule = randomization.schedule ?? {};
   const randomizationFeedback =
@@ -287,13 +268,13 @@ export function SettingsScreen({
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
     >
       <header className="shrink-0 border-b border-border/60 px-4 sm:px-6 lg:px-8">
-        <div className="relative mx-auto flex h-14 max-w-3xl items-center">
+        <div className="relative mx-auto flex h-14 max-w-3xl items-center gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             aria-label="Back"
-            className="-ml-2"
+            className="-ml-2 shrink-0"
             onClick={onClose}
           >
             <HugeiconsIcon
@@ -308,233 +289,209 @@ export function SettingsScreen({
           >
             Settings
           </h1>
+          <AppearanceModeSelector
+            className="ml-auto"
+            value={appearanceMode}
+            onValueChange={onAppearanceModeChange}
+          />
         </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto w-full max-w-3xl">
+        <div className="mx-auto grid w-full max-w-3xl gap-4 py-6">
           {preferenceError ? (
-            <p role="alert" className="pt-4 text-body-sm text-destructive">
+            <p role="alert" className="text-body-sm text-destructive">
               {preferenceError.message}
             </p>
           ) : null}
-          <section className="py-6" aria-labelledby="settings-general">
-            <h2 id="settings-general" className="text-title-md">
-              General
-            </h2>
-            <div className="mt-3">
-              <SettingsRow label="Menu Bar Item" htmlFor="menu-bar-visible">
-                <Switch
-                  id="menu-bar-visible"
-                  checked={preferences?.menuBar?.visible !== false}
-                  onCheckedChange={(visible) =>
-                    onChange({ menuBar: { visible } })
-                  }
-                />
-              </SettingsRow>
-            </div>
-          </section>
 
-          <Separator />
-
-          <section className="py-6" aria-labelledby="settings-appearance">
-            <h2 id="settings-appearance" className="text-title-md">
-              Appearance
-            </h2>
-            <div className="mt-3">
-              <SettingsRow
-                label="Appearance-aware Cursors"
-                htmlFor="appearance-aware"
-              >
-                <Switch
-                  id="appearance-aware"
-                  checked={appearance.enabled === true}
-                  onCheckedChange={(enabled) =>
-                    onChange({ appearance: { enabled } })
-                  }
-                />
-              </SettingsRow>
-              <SettingsRow
-                label={
-                  <span className="flex items-center gap-2">
-                    <HugeiconsIcon
-                      icon={Sun02Icon}
-                      strokeWidth={2}
-                      className="size-4 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    Light
-                  </span>
+          <SettingsSection icon={Settings02Icon} title="General">
+            <Field orientation="horizontal">
+              <FieldContent>
+                <div className="flex items-center gap-1.5">
+                  <FieldLabel htmlFor="appearance-automatic-switching">
+                    Switch Cursors with System Appearance
+                  </FieldLabel>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="About automatic cursor switching"
+                            className="-my-1 text-muted-foreground"
+                          />
+                        }
+                      >
+                        <HugeiconsIcon
+                          icon={InformationCircleIcon}
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-72">
+                        Runs after its window closes, even without the menu bar
+                        item. macOS Login Items controls launch at sign-in.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </FieldContent>
+              <Switch
+                id="appearance-automatic-switching"
+                checked={preferences?.appearance?.automaticSwitching === true}
+                onCheckedChange={(automaticSwitching) =>
+                  onChange({ appearance: { automaticSwitching } })
                 }
-                htmlFor="light-cursor"
-              >
-                <CursorSelect
-                  id="light-cursor"
-                  value={appearance.lightCursorId}
-                  packs={selectablePacks}
-                  disabled={!appearance.enabled}
-                  onValueChange={(lightCursorId) =>
-                    onChange({ appearance: { lightCursorId } })
-                  }
-                />
-              </SettingsRow>
-              <SettingsRow
-                label={
-                  <span className="flex items-center gap-2">
-                    <HugeiconsIcon
-                      icon={Moon02Icon}
-                      strokeWidth={2}
-                      className="size-4 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    Dark
-                  </span>
+              />
+            </Field>
+
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="menu-bar-visible">
+                  Show in Menu Bar
+                </FieldLabel>
+              </FieldContent>
+              <Switch
+                id="menu-bar-visible"
+                checked={preferences?.menuBar?.visible !== false}
+                onCheckedChange={(visible) =>
+                  onChange({ menuBar: { visible } })
                 }
-                htmlFor="dark-cursor"
-              >
-                <CursorSelect
-                  id="dark-cursor"
-                  value={appearance.darkCursorId}
-                  packs={selectablePacks}
-                  disabled={!appearance.enabled}
-                  onValueChange={(darkCursorId) =>
-                    onChange({ appearance: { darkCursorId } })
-                  }
-                />
-              </SettingsRow>
-            </div>
-          </section>
+              />
+            </Field>
+          </SettingsSection>
 
-          <Separator />
-
-          <section className="py-6" aria-labelledby="settings-randomization">
-            <h2 id="settings-randomization" className="text-title-md">
-              Randomization
-            </h2>
-            <div className="mt-3">
-              <SettingsRow label="Source" htmlFor="random-source">
-                <NativeSelect
-                  id="random-source"
-                  value={randomization.source ?? "all"}
-                  className="w-full"
-                  onChange={(event) => {
-                    const source = event.currentTarget.value;
-                    onChange({
-                      randomization: {
-                        source,
-                        ...(source === "family" && !randomization.family
-                          ? { family: families[0] ?? null }
-                          : {}),
-                      },
-                    });
-                  }}
-                >
-                  <NativeSelectOption value="all">All</NativeSelectOption>
-                  <NativeSelectOption value="favorites">
-                    Favorites
-                  </NativeSelectOption>
-                  <NativeSelectOption value="family">Family</NativeSelectOption>
-                </NativeSelect>
-              </SettingsRow>
-
-              {randomization.source === "family" ? (
-                <SettingsRow label="Family" htmlFor="random-family">
-                  <NativeSelect
-                    id="random-family"
-                    value={randomization.family ?? ""}
-                    disabled={families.length === 0}
-                    className="w-full"
-                    onChange={(event) =>
-                      onChange({
-                        randomization: {
-                          family: event.currentTarget.value || null,
-                        },
-                      })
-                    }
-                  >
-                    {families.length === 0 ? (
-                      <NativeSelectOption value="">None</NativeSelectOption>
-                    ) : null}
-                    {families.map((family) => (
-                      <NativeSelectOption key={family} value={family}>
-                        {family}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                </SettingsRow>
-              ) : null}
-
-              <div className="grid min-w-0 gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,18rem)] sm:items-center sm:gap-6">
-                <div
+          <SettingsSection icon={ShuffleIcon} title="Randomization">
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
+              {feedbackMessage ? (
+                <p
                   role={
                     randomizationFeedback?.type === "error" ? "alert" : "status"
                   }
                   className={cn(
-                    "min-h-4 text-body-sm text-muted-foreground",
+                    "mr-auto min-w-0 text-body-sm text-muted-foreground",
                     randomizationFeedback?.type === "error" &&
                       "text-destructive",
                   )}
                 >
-                  {feedbackMessage ?? null}
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={
-                    randomizing ||
-                    (randomization.source === "family" && !randomization.family)
-                  }
-                  className="w-full"
-                  onClick={onRandomize}
-                >
-                  <HugeiconsIcon
-                    icon={ShuffleIcon}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                  {randomizing ? "Randomizing…" : "New Random Cursor"}
-                </Button>
-              </div>
+                  {feedbackMessage}
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={
+                  randomizing ||
+                  (randomization.source === "family" && !randomization.family)
+                }
+                onClick={onRandomize}
+              >
+                {randomizing ? "Randomizing…" : "Randomize Now"}
+              </Button>
             </div>
-          </section>
 
-          <Separator />
+            <Field orientation="responsive">
+              <FieldContent>
+                <FieldLabel htmlFor="random-source">Source</FieldLabel>
+              </FieldContent>
+              <Select
+                value={randomization.source ?? "all"}
+                onValueChange={(source) => {
+                  onChange({
+                    randomization: {
+                      source,
+                      ...(source === "family" && !randomization.family
+                        ? { family: families[0] ?? null }
+                        : {}),
+                    },
+                  });
+                }}
+              >
+                <SelectTrigger id="random-source" className="w-full sm:w-52">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="all">Light &amp; Dark Pools</SelectItem>
+                    <SelectItem value="favorites">Favorites</SelectItem>
+                    <SelectItem value="family">Family</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
 
-          <section className="py-6" aria-labelledby="settings-schedule">
-            <h2 id="settings-schedule" className="text-title-md">
-              Schedule
-            </h2>
-            <div className="mt-3">
-              <SettingsRow label="Run" htmlFor="random-schedule">
-                <NativeSelect
-                  id="random-schedule"
-                  value={schedule.mode ?? "off"}
-                  className="w-full"
-                  onChange={(event) =>
+            {randomization.source === "family" ? (
+              <Field orientation="responsive">
+                <FieldContent>
+                  <FieldLabel htmlFor="random-family">Family</FieldLabel>
+                </FieldContent>
+                <Select
+                  value={randomization.family || undefined}
+                  disabled={families.length === 0}
+                  onValueChange={(family) =>
                     onChange({
                       randomization: {
-                        schedule: { mode: event.currentTarget.value },
+                        family: family || null,
                       },
                     })
                   }
                 >
-                  {SCHEDULE_OPTIONS.map(([value, label]) => (
-                    <NativeSelectOption key={value} value={value}>
-                      {label}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </SettingsRow>
-              <ScheduleFields
-                schedule={schedule}
-                onChange={(schedulePatch) =>
+                  <SelectTrigger id="random-family" className="w-full sm:w-52">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {families.map((family) => (
+                        <SelectItem key={family} value={family}>
+                          {family}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            ) : null}
+
+            <Field orientation="responsive">
+              <FieldContent>
+                <FieldLabel htmlFor="random-schedule">Schedule</FieldLabel>
+              </FieldContent>
+              <Select
+                value={schedule.mode ?? "off"}
+                onValueChange={(mode) =>
                   onChange({
-                    randomization: { schedule: schedulePatch },
+                    randomization: {
+                      schedule: { mode },
+                    },
                   })
                 }
-              />
-            </div>
-          </section>
+              >
+                <SelectTrigger id="random-schedule" className="w-full sm:w-52">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {SCHEDULE_OPTIONS.map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+            <ScheduleFields
+              schedule={schedule}
+              onChange={(schedulePatch) =>
+                onChange({
+                  randomization: { schedule: schedulePatch },
+                })
+              }
+            />
+          </SettingsSection>
         </div>
       </div>
     </section>

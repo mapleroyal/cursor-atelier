@@ -58,6 +58,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     electron.ipcRenderer.invoke("cursor:delete-imported-family", family),
   applyCursorTheme: (identifier) =>
     electron.ipcRenderer.invoke("cursor:apply-theme", identifier),
+  setAppearanceCursor: (appearance, identifier) =>
+    electron.ipcRenderer.invoke(
+      "cursor:set-appearance-cursor",
+      appearance,
+      identifier,
+    ),
   setCursorThemeSize: (identifier, sizePercentage) =>
     electron.ipcRenderer.invoke(
       "cursor:set-theme-size",

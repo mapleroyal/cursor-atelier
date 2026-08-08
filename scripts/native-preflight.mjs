@@ -214,9 +214,9 @@ if (Number(manifest.schemaVersion) < 2 || !Array.isArray(manifest.themes)) {
 }
 if (
   inventoryLock.schemaVersion !== 1 ||
-  inventoryLock.externalThemeCount !== 220 ||
+  inventoryLock.externalThemeCount !== 221 ||
   inventoryLock.builtInThemeCount !== 19 ||
-  inventoryLock.unifiedThemeCount !== 239 ||
+  inventoryLock.unifiedThemeCount !== 240 ||
   inventoryLock.roleCount !== 47 ||
   !Array.isArray(inventoryLock.builtInIdentifiers)
 ) {

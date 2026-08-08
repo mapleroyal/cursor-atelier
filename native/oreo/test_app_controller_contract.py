@@ -151,6 +151,21 @@ class AppControllerContractTests(unittest.TestCase):
         )
         self.assertIn('@"--reconcile-login-items"', command)
         self.assertIn("OreoReconcileLoginItems(&actionError)", command)
+        reconcile_start = command.index(
+            'if ([command isEqual:@"--reconcile-login-items"]) {'
+        )
+        reconcile_end = command.index(
+            "// Establishes the graphical-session connection", reconcile_start
+        )
+        engine_start = command.index("OreoCursorEngine *engine =")
+        self.assertLess(reconcile_start, engine_start)
+        self.assertNotIn(
+            "OreoCursorEngine", command[reconcile_start:reconcile_end]
+        )
+        self.assertIn(
+            "OreoLoginItemDiagnostics(command, actionError)",
+            command[reconcile_start:reconcile_end],
+        )
 
     def test_native_processes_share_the_native_preferences_domain(self) -> None:
         domain = "com.cursoratelier.CursorAtelier.NativeCursor"

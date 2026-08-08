@@ -1,7 +1,7 @@
 # Cursor Atelier
 
 Cursor Atelier is a quiet, local macOS cursor manager. Its Electron interface
-provides search, real cursor previews, and explicit Apply/Restore controls;
+provides search, real cursor previews, light/dark cursor assignments, and Restore;
 the signed Objective-C component owns the private CoreGraphics/AppKit work.
 
 This repository currently targets one personal installation. Distribution
@@ -10,10 +10,10 @@ release concerns, not blockers for the local build.
 
 ## What is included
 
-- 239 locked bundled variants: 19 Oreo themes and 220 conversions from the
+- 240 locked bundled variants: 19 Oreo themes and 221 conversions from the
   requested external families. The catalogue can also include locally imported
   user themes.
-- All 47 native cursor identifiers for every bundled variant, with 9,290
+- All 47 native cursor identifiers for every bundled variant, with 9,328
   generated PNG preview assets derived from the converted resources. Imports
   are normalized to the same 47-role contract.
 - Looping APNG previews for animated states, using source-cycle-preserving
@@ -92,15 +92,15 @@ is needed for this personal local build.
 
 Forge writes its output under `out`; neither command installs or opens the app.
 Move the resulting outer `Cursor Atelier.app` to a stable location such as
-`/Applications` before using Apply, because its nested `SMAppService` login
-item is registered from that location.
+`/Applications` before assigning a cursor, because its nested `SMAppService`
+login item is registered from that location.
 
 ### Replacing the proof of concept
 
 Do not run Cursor Atelier alongside the earlier
 `io.github.mapleroyal.OreoCursor` login helper. Use that app's own `--teardown`
-command before the first Cursor Atelier Apply. If the old command reports a
-pending same-boot recovery or a cursor-removal error, restart macOS before
+command before assigning a cursor in Cursor Atelier. If the old command reports
+a pending same-boot recovery or a cursor-removal error, restart macOS before
 running its teardown once more. Cursor Atelier intentionally does not read or
 migrate the proof of concept's preferences, snapshots, or login item.
 
@@ -108,9 +108,9 @@ migrate the proof of concept's preferences, snapshots, or login item.
 
 The production bridge lives in the nested signed app outside `app.asar`. When
 that component is absent or invalid, the catalogue remains available as a
-read-only preview, Apply/Restore are unavailable, and the UI does not claim a
-system cursor is active. Cursor Atelier never downloads cursor artwork; local
-imports are initiated explicitly through the system file picker.
+read-only preview, cursor assignment and Restore are unavailable, and the UI
+does not claim a system cursor is active. Cursor Atelier never downloads cursor
+artwork; local imports are initiated explicitly through the system file picker.
 
 See [native/README.md](native/README.md) for the build and manifest contract.
 

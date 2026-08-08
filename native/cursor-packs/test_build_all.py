@@ -21,9 +21,10 @@ class BuildInventoryTests(unittest.TestCase):
         self.assertEqual(counts["Simp1e"], 25)
         self.assertEqual(counts["Nordzy"], 133)
         self.assertEqual(counts["Moga"], 16)
+        self.assertEqual(counts["Future"], 2)
         identifiers = [job.identifier for job in jobs]
         self.assertEqual(len(identifiers), len(set(identifiers)))
-        self.assertEqual(len(identifiers), 220)
+        self.assertEqual(len(identifiers), 221)
         self.assertEqual(
             build_all._identifier_digest(identifiers),
             build_all.EXPECTED_EXTERNAL_IDENTIFIER_SHA256,
@@ -33,7 +34,7 @@ class BuildInventoryTests(unittest.TestCase):
         self.assertEqual(len(build_all.EXPECTED_OREO_IDENTIFIERS), 19)
         unified = [job.identifier for job in build_all._jobs()]
         unified.extend(build_all.EXPECTED_OREO_IDENTIFIERS)
-        self.assertEqual(len(unified), 239)
+        self.assertEqual(len(unified), 240)
         self.assertEqual(
             build_all._identifier_digest(unified),
             build_all.EXPECTED_UNIFIED_IDENTIFIER_SHA256,

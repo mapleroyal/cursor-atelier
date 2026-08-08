@@ -361,26 +361,42 @@ static void OreoPrintJSON(id object) {
     fputc('\n', stdout);
 }
 
+static NSDictionary *OreoLoginItemDiagnostics(NSString *action,
+                                               NSError *actionError) {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:@{
+        @"action": action,
+        @"selectedThemeIdentifier":
+            ([defaults stringForKey:OreoCursorThemeDefaultsKey] ?: @""),
+        @"desiredEnabled":
+            @([defaults boolForKey:OreoCursorEnabledDefaultsKey]),
+        @"effectiveApplied":
+            @([defaults boolForKey:OreoCursorEffectiveDefaultsKey]),
+        @"loginItemStatus": OreoLoginItemStatusString(),
+        @"legacyMainLoginItemStatus":
+            OreoLegacyMainLoginItemStatusString(),
+        @"loginApprovalRequired":
+            @(OreoLoginItemService().status ==
+              SMAppServiceStatusRequiresApproval),
+        @"launchAtLoginDesired": @(OreoLoginItemDesired()),
+        @"loginItemRegistrationCurrent":
+            @(OreoLoginItemRegistrationCurrent()),
+    }];
+    if (actionError) {
+        result[@"actionError"] = actionError.localizedDescription;
+    }
+    return [result copy];
+}
+
 static NSDictionary *OreoCombinedDiagnostics(OreoCursorEngine *engine,
                                               NSString *action,
                                               NSError *actionError) {
     NSMutableDictionary *result = [[engine diagnostics] mutableCopy];
-    result[@"action"] = action;
+    [result addEntriesFromDictionary:
+        OreoLoginItemDiagnostics(action, actionError)];
     result[@"selectedThemeIdentifier"] =
         [OreoCursorEngine selectedThemeIdentifier];
-    result[@"loginItemStatus"] = OreoLoginItemStatusString();
-    result[@"legacyMainLoginItemStatus"] =
-        OreoLegacyMainLoginItemStatusString();
-    result[@"loginApprovalRequired"] =
-        @(OreoLoginItemService().status ==
-          SMAppServiceStatusRequiresApproval);
-    result[@"launchAtLoginDesired"] = @(OreoLoginItemDesired());
-    result[@"loginItemRegistrationCurrent"] =
-        @(OreoLoginItemRegistrationCurrent());
-    if (actionError) {
-        result[@"actionError"] = actionError.localizedDescription;
-    }
-    return result;
+    return [result copy];
 }
 
 static NSDictionary *OreoValidateThemeResources(void) {
@@ -703,8 +719,8 @@ int OreoRunCommandLineIfRequested(
             result[@"actionError"] = sizeError.localizedDescription;
         }
         OreoPrintJSON([result copy]);
-        // Saving a draft size intentionally does not notify the login helper;
-        // live registrations change only through an explicit Apply.
+        // This command only persists the configured size. The renderer
+        // explicitly reapplies a theme when its active size is committed.
         return success ? 0 : 2;
     }
 
@@ -756,6 +772,29 @@ int OreoRunCommandLineIfRequested(
         validation[@"valid"] = @(valid);
         OreoPrintJSON([validation copy]);
         return valid ? 0 : 2;
+    }
+
+    if ([command isEqual:@"--reconcile-login-items"]) {
+        // Login-item reconciliation depends only on ServiceManagement and the
+        // embedded helper identity. Avoid decoding the selected cursor and the
+        // complete imported-theme store during every packaged app launch.
+        [NSApplication sharedApplication];
+        NSError *actionError = nil;
+        BOOL success = OreoReconcileLoginItems(&actionError);
+        NSString *message = success
+            ? (OreoLoginItemDesired()
+                ? @"Cursor Atelier’s login helper is current."
+                : @"Cursor Atelier’s login helper is off.")
+            : (actionError.localizedDescription ?:
+                @"The Cursor Atelier login helper could not be reconciled.");
+        OreoCursorSaveStatus(message, !success, OreoCursorStatusSourceLogin);
+        OreoPostSettingsChangedNotification();
+        OreoPrintJSON(OreoLoginItemDiagnostics(command, actionError));
+        if (!success) {
+            return 4;
+        }
+        return OreoLoginItemService().status ==
+            SMAppServiceStatusRequiresApproval ? 5 : 0;
     }
 
     // Establishes the graphical-session connection used by the cursor APIs.
@@ -911,12 +950,6 @@ int OreoRunCommandLineIfRequested(
         if (!success) {
             OreoSetLoginItemDesired(priorLoginDesired);
         }
-    } else if ([command isEqual:@"--reconcile-login-items"]) {
-        // Replacing an app bundle does not replace helper code already in
-        // memory. Reconcile on every packaged launch so a new CFBundleVersion
-        // terminates the resident prior build before it can refresh cursors.
-        actionSource = OreoCursorStatusSourceLogin;
-        success = OreoReconcileLoginItems(&actionError);
     } else if ([command isEqual:@"--select-theme"]) {
         NSString *identifier = [NSString stringWithUTF8String:argv[2]];
         success = OreoSelectTheme(identifier, &engine, &actionError);
@@ -930,8 +963,7 @@ int OreoRunCommandLineIfRequested(
 
     BOOL approvalRequired =
         ([command isEqual:@"--setup"] ||
-         [command isEqual:@"--apply-theme"] ||
-         [command isEqual:@"--reconcile-login-items"]) &&
+         [command isEqual:@"--apply-theme"]) &&
         OreoLoginItemService().status ==
             SMAppServiceStatusRequiresApproval;
     OreoPrintJSON(OreoCombinedDiagnostics(engine, command, actionError));

@@ -11,20 +11,20 @@ the signed native executable through a small JSON command contract.
 ```text
 pinned upstream cache
   -> cursor-packs/build_all.py
-     -> ignored generated/ (220 external .cursor files + unified manifest/previews)
+     -> ignored generated/ (221 external .cursor files + unified manifest/previews)
         -> oreo/build.sh
-           -> signed Oreo Cursor.app (239 runtime resources + login helper)
+           -> signed Oreo Cursor.app (240 runtime resources + login helper)
               -> Forge package under Cursor Atelier.app/Contents/Resources/
 ```
 
 The 19 Oreo `.cursor` files are vendored in
-`native/oreo/Resources/Themes`. The converter adds 220 external resources and
-generates schema-v2 metadata/previews for all 239 variants. Every variant has
+`native/oreo/Resources/Themes`. The converter adds 221 external resources and
+generates schema-v2 metadata/previews for all 240 variants. Every variant has
 the same 47 explicit native identifiers. The current preview corpus contains
-9,290 unique PNGs; role aliases may reference the same PNG.
+9,328 unique PNGs; role aliases may reference the same PNG.
 
 The acquisition cache and `generated/` are ignored build artifacts. The app
-contains neither one: only the nested signed native runtime app, its 239
+contains neither one: only the nested signed native runtime app, its 240
 `.cursor` files, schema-v2 manifest, previews, and runtime notices are staged
 outside `app.asar`.
 
@@ -70,7 +70,7 @@ not required for the personal build.
 
 `native:preflight` verifies signatures, identities, versions, macOS 13.0,
 exact inventory digests, every resource SHA-256, 47 role previews per theme,
-native list parity, and a read-only native decode of all 239 resources. Forge
+native list parity, and a read-only native decode of all 240 resources. Forge
 runs the same preflight before package and make.
 
 ## Schema-v2 manifest
@@ -111,7 +111,7 @@ allowlist. A shortened row looks like:
 }
 ```
 
-The exact 220 external IDs, 19 Oreo IDs, and 47-role contract are locked in
+The exact 221 external IDs, 19 Oreo IDs, and 47-role contract are locked in
 `native/cursor-packs/inventory-lock.json`; digests prevent a count-preserving
 substitution. Resource basenames, paths, hashes, metadata geometry, fallback
 rates, animation, and preview files are all validated before promotion and

@@ -22,15 +22,15 @@ describe("cursor preference normalization", () => {
     const merged = mergeCursorPreferences(current, {
       favorites: { cursorIds: ["  OreoBlue  ", "OreoBlue", 12] },
       appearance: {
-        enabled: true,
         lightCursorId: " OreoWhite ",
-        roles: {
-          OreoBlue: ["dark", "dark", "invalid"],
-        },
       },
       randomization: {
         source: "family",
         family: " Oreo ",
+        pools: {
+          light: ["  OreoBlue  ", "OreoBlue", 12],
+          dark: [" OreoWhite "],
+        },
         schedule: {
           mode: "times",
           intervalHours: 1.26,
@@ -44,14 +44,17 @@ describe("cursor preference normalization", () => {
     expect(merged).toMatchObject({
       favorites: { cursorIds: ["OreoBlue"], families: [] },
       appearance: {
-        enabled: true,
+        automaticSwitching: false,
         lightCursorId: "OreoWhite",
         darkCursorId: null,
-        roles: { OreoBlue: ["dark"] },
       },
       randomization: {
         source: "family",
         family: "Oreo",
+        pools: {
+          light: ["OreoBlue"],
+          dark: ["OreoWhite"],
+        },
         schedule: {
           mode: "times",
           intervalHours: 1.25,
@@ -64,7 +67,7 @@ describe("cursor preference normalization", () => {
     });
   });
 
-  it("bounds stored identifiers, families, and appearance-role entries", () => {
+  it("bounds stored identifiers, families, and per-appearance pools", () => {
     const cursorIds = Array.from(
       { length: 520 },
       (_, index) => `Cursor${index}`,
@@ -72,9 +75,6 @@ describe("cursor preference normalization", () => {
     const families = Array.from(
       { length: 270 },
       (_, index) => `Family ${index}`,
-    );
-    const roles = Object.fromEntries(
-      Array.from({ length: 520 }, (_, index) => [`Cursor${index}`, ["light"]]),
     );
     const tooLong = "x".repeat(129);
 
@@ -86,20 +86,29 @@ describe("cursor preference normalization", () => {
       appearance: {
         lightCursorId: tooLong,
         darkCursorId: "DarkCursor",
-        roles: { [tooLong]: ["dark"], ...roles },
       },
-      randomization: { family: tooLong },
+      randomization: {
+        family: tooLong,
+        pools: {
+          light: [tooLong, ...cursorIds],
+          dark: [...cursorIds].reverse(),
+        },
+      },
     });
 
     expect(normalized.favorites.cursorIds).toHaveLength(512);
     expect(normalized.favorites.cursorIds.at(-1)).toBe("Cursor511");
     expect(normalized.favorites.families).toHaveLength(256);
     expect(normalized.favorites.families.at(-1)).toBe("Family 255");
-    expect(Object.keys(normalized.appearance.roles)).toHaveLength(512);
-    expect(normalized.appearance.roles).not.toHaveProperty(tooLong);
     expect(normalized.appearance.lightCursorId).toBeNull();
     expect(normalized.appearance.darkCursorId).toBe("DarkCursor");
+    expect(normalized.appearance.automaticSwitching).toBe(false);
     expect(normalized.randomization.family).toBeNull();
+    expect(normalized.randomization.pools.light).toHaveLength(512);
+    expect(normalized.randomization.pools.light.at(-1)).toBe("Cursor511");
+    expect(normalized.randomization.pools.light).not.toContain(tooLong);
+    expect(normalized.randomization.pools.dark).toHaveLength(512);
+    expect(normalized.randomization.pools.dark.at(0)).toBe("Cursor519");
   });
 
   it("falls back to defaults for an invalid preference document", () => {
@@ -115,6 +124,19 @@ describe("cursor preference normalization", () => {
       }),
     ).toEqual(createDefaultCursorPreferences());
   });
+
+  it("requires an explicit boolean to enable appearance switching", () => {
+    expect(
+      normalizeCursorPreferences({
+        appearance: { automaticSwitching: true },
+      }).appearance.automaticSwitching,
+    ).toBe(true);
+    expect(
+      normalizeCursorPreferences({
+        appearance: { automaticSwitching: "true" },
+      }).appearance.automaticSwitching,
+    ).toBe(false);
+  });
 });
 
 describe("cursor deletion preference cleanup", () => {
@@ -126,15 +148,17 @@ describe("cursor deletion preference cleanup", () => {
           families: ["Imported", "Oreo"],
         },
         appearance: {
-          enabled: true,
           lightCursorId: "ImportedBlue",
           darkCursorId: "OreoWhite",
-          roles: {
-            ImportedBlue: ["light"],
-            OreoWhite: ["dark"],
+        },
+        randomization: {
+          source: "family",
+          family: "Imported",
+          pools: {
+            light: ["ImportedBlue", "OreoWhite"],
+            dark: ["OreoWhite", "ImportedBlue"],
           },
         },
-        randomization: { source: "family", family: "Imported" },
       },
       ["importedblue"],
       ["Oreo"],
@@ -145,9 +169,15 @@ describe("cursor deletion preference cleanup", () => {
       appearance: {
         lightCursorId: null,
         darkCursorId: "OreoWhite",
-        roles: { OreoWhite: ["dark"] },
       },
-      randomization: { source: "all", family: null },
+      randomization: {
+        source: "all",
+        family: null,
+        pools: {
+          light: ["OreoWhite"],
+          dark: ["OreoWhite"],
+        },
+      },
     });
   });
 });
@@ -216,17 +246,15 @@ describe("random cursor selection", () => {
     ]);
   });
 
-  it("filters eligible cursors by the current system appearance", () => {
+  it("keeps separate eligible pools for light and dark appearances", () => {
     const preferences = {
-      appearance: {
-        enabled: true,
-        roles: {
-          OreoWhite: ["light"],
-          OreoBlack: ["dark"],
-          MogaCandy: ["light", "dark"],
+      randomization: {
+        source: "all",
+        pools: {
+          light: ["OreoWhite", "MogaCandy"],
+          dark: ["OreoBlack", "MogaCandy"],
         },
       },
-      randomization: { source: "all" },
     };
 
     expect(

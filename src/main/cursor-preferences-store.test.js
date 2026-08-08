@@ -50,16 +50,32 @@ describe("cursor preferences store", () => {
     );
 
     const updated = store.update({
-      appearance: { enabled: true, darkCursorId: "OreoBlack" },
-      randomization: { schedule: { mode: "daily", dailyTime: "18:30" } },
+      appearance: {
+        automaticSwitching: true,
+        darkCursorId: "OreoBlack",
+      },
+      randomization: {
+        pools: { dark: ["OreoBlack"] },
+        schedule: { mode: "daily", dailyTime: "18:30" },
+      },
     });
-    store.update({ appearance: { enabled: true } });
+    store.update({
+      appearance: {
+        automaticSwitching: true,
+        darkCursorId: "OreoBlack",
+      },
+    });
     unsubscribe();
     store.update({ menuBar: { visible: false } });
 
     expect(updated).toMatchObject({
-      appearance: { enabled: true, darkCursorId: "OreoBlack" },
+      appearance: {
+        automaticSwitching: true,
+        lightCursorId: null,
+        darkCursorId: "OreoBlack",
+      },
       randomization: {
+        pools: { light: [], dark: ["OreoBlack"] },
         schedule: { mode: "daily", dailyTime: "18:30" },
       },
     });

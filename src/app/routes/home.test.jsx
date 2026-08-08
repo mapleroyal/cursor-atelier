@@ -19,6 +19,7 @@ import {
   matchesCursorPack,
   normalizeCursorSizePercentage,
   openLoginItemsSettings,
+  resolveCursorPoolPacks,
   resolvePackQuerySource,
   restoreCursors,
   setCursorThemeSize,
@@ -206,6 +207,29 @@ describe("cursor status presentation", () => {
 });
 
 describe("cursor rail behavior", () => {
+  it("resolves randomization pools in preference order without duplicate or stale rows", () => {
+    const packs = [
+      {
+        id: "oreo-blue",
+        nativeThemeId: "OreoBlue",
+        nativeThemeIds: ["OreoBlueAlias"],
+      },
+      { id: "oreo-black", nativeThemeId: "OreoBlack" },
+      { id: "oreo-white", nativeThemeId: "OreoWhite" },
+    ];
+
+    expect(
+      resolveCursorPoolPacks(packs, [
+        "OreoBlack",
+        "missing",
+        "oreobluealias",
+        "OreoBlue",
+        "OreoWhite",
+      ]).map((pack) => pack.id),
+    ).toEqual(["oreo-black", "oreo-blue", "oreo-white"]);
+    expect(resolveCursorPoolPacks(packs, null)).toEqual([]);
+  });
+
   it("matches native cursor identifiers case-insensitively", () => {
     const pack = {
       id: "imported-aurora",

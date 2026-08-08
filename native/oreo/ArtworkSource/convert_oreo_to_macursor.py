@@ -267,7 +267,7 @@ def convert(oreo_root: Path, variant: str, output: Path) -> None:
     theme_name = f"Oreo {title}"
     namespace = uuid.UUID("193513ce-4c25-4e1a-9e28-878e5850bb6e")
     theme = {
-        "Creator": "Varlesh / Sourav Goswami; macOS conversion by mapleroyal",
+        "Creator": "Alexey Varfolomeev (varlesh), Sourav Goswami",
         "Cursors": {
             mac_identifier: (
                 built_sources[oreo_name]

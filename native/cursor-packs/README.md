@@ -5,9 +5,9 @@ Cursor Atelier's native `.cursor` resources. The large upstream trees live in
 an ignored acquisition cache; only revision and archive-digest locks are kept
 in the application repository.
 
-The locked corpus is 220 generated external variants plus 19 vendored Oreo
-variants. Its unified schema-v2 manifest has 239 rows, 47 native roles per
-row, and 9,290 unique PNG previews derived from the real resources. Both the
+The locked corpus is 221 generated external variants plus 19 vendored Oreo
+variants. Its unified schema-v2 manifest has 240 rows, 47 native roles per
+row, and 9,328 unique PNG previews derived from the real resources. Both the
 source cache and `generated/` are ignored build data and are never runtime
 download targets.
 
@@ -56,7 +56,7 @@ native engine. Missing source roles use the source's default arrow as a
 declared fallback; `com.apple.coregraphics.Empty` remains transparent. Strict
 profiles fail the build if default, Wait, or Progress falls back, if their busy
 cursors are static, or if preview metadata is incomplete. The complete corpus
-also enforces its per-family fallback counts, exact 220 external/19 Oreo ID
+also enforces its per-family fallback counts, exact 221 external/19 Oreo ID
 inventory, and 47-role contract from `inventory-lock.json`.
 
 ## Packaged-app imports
@@ -162,8 +162,8 @@ are kept separate from `UpstreamVariant`, which preserves the source label.
 Oreo resources stay in `native/oreo/Resources/Themes`; only their renderer
 preview assets and metadata are generated here.
 
-The 239 rows contain 11,233 role-preview references. Aliases intentionally
-share files, so the generated preview tree contains 9,290 unique PNGs rather
+The 240 rows contain 11,280 role-preview references. Aliases intentionally
+share files, so the generated preview tree contains 9,328 unique PNGs rather
 than duplicating identical artwork. Each preview uses the cursor's exact 96px
 representation, matching the renderer's 48 CSS-pixel canvas at 2x without an
 extra browser resampling pass. Static roles remain single-frame PNGs. Animated

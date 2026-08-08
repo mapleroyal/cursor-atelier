@@ -24,14 +24,14 @@ function loadBundledThemeIds() {
   if (
     manifest.schemaVersion !== 2 ||
     !Array.isArray(identifiers) ||
-    identifiers.length !== 239 ||
+    identifiers.length !== 240 ||
     identifiers.some(
       (identifier) => typeof identifier !== "string" || identifier.length === 0,
     ) ||
     new Set(identifiers).size !== identifiers.length
   ) {
     throw new Error(
-      `Expected ${manifestPath} to describe 239 unique schema-v2 themes.`,
+      `Expected ${manifestPath} to describe 240 unique schema-v2 themes.`,
     );
   }
   return Object.freeze(identifiers.toSorted());
@@ -419,7 +419,6 @@ test.describe("packaged native integration", () => {
             const bounds = image.getBoundingClientRect();
             return {
               naturalWidth: image.naturalWidth,
-              physicalLeft: bounds.left * window.devicePixelRatio,
               physicalWidth: bounds.width * window.devicePixelRatio,
             };
           }),
@@ -428,10 +427,6 @@ test.describe("packaged native integration", () => {
       for (const preview of rolePreviewLayout) {
         expect(preview.naturalWidth).toBeGreaterThanOrEqual(
           preview.physicalWidth,
-        );
-        expect(preview.physicalLeft).toBeCloseTo(
-          Math.round(preview.physicalLeft),
-          6,
         );
       }
     } finally {

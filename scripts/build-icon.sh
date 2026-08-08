@@ -5,11 +5,16 @@ script_dir=${0:A:h}
 project_dir=${script_dir:h}
 source_svg="$project_dir/assets/AppIcon.svg"
 output_icns="$project_dir/assets/AppIcon.icns"
+menu_source_svg="$project_dir/assets/MenuBarIcon.svg"
+menu_output_png="$project_dir/assets/MenuBarIconTemplate.png"
+menu_output_2x_png="$project_dir/assets/MenuBarIconTemplate@2x.png"
 
-if [[ ! -f "$source_svg" ]]; then
-    print -u2 "Missing icon source: $source_svg"
-    exit 1
-fi
+for required_source in "$source_svg" "$menu_source_svg"; do
+    if [[ ! -f "$required_source" ]]; then
+        print -u2 "Missing icon source: $required_source"
+        exit 1
+    fi
+done
 if ! command -v rsvg-convert >/dev/null 2>&1; then
     print -u2 "Install librsvg (brew install librsvg) to rebuild AppIcon.icns."
     exit 1
@@ -40,4 +45,8 @@ for size in 16 32 128 256 512; do
         > "$iconset_dir/icon_${size}x${size}@2x.png"
 done
 /usr/bin/iconutil -c icns "$iconset_dir" -o "$output_icns"
+rsvg-convert -w 18 -h 18 "$menu_source_svg" > "$menu_output_png"
+rsvg-convert -w 36 -h 36 "$menu_source_svg" > "$menu_output_2x_png"
 print -r -- "$output_icns"
+print -r -- "$menu_output_png"
+print -r -- "$menu_output_2x_png"

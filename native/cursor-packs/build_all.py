@@ -368,6 +368,7 @@ def _jobs() -> list[Job]:
             _repo_job("Capitaine", "Capitaine", _repo("capitaine-cursors", "src", "svg", "light"), "Capitaine", f"{github}/keeferrourke/capitaine-cursors", "LGPL-3.0-or-later", f"{github}/keeferrourke/capitaine-cursors/blob/master/COPYING", "Keefer Rourke and contributors", strict_semantics=True),
             _repo_job("CapitaineDark", "Capitaine Dark", _repo("capitaine-cursors", "src", "svg", "dark"), "Capitaine", f"{github}/keeferrourke/capitaine-cursors", "LGPL-3.0-or-later", f"{github}/keeferrourke/capitaine-cursors/blob/master/COPYING", "Keefer Rourke and contributors", "Dark", strict_semantics=True),
             _repo_job("Future", "Future", _repo("Future-cursors", "src", "svg"), "Future", f"{github}/yeyushengfan258/Future-cursors", "GPL-3.0-only", f"{github}/yeyushengfan258/Future-cursors/blob/master/LICENSE", "Yeyu Shengfan (yeyushengfan258)"),
+            _repo_job("FutureCyan", "Future Cyan", _repo("Future-cursors", "src", "svg-cyan"), "Future", f"{github}/yeyushengfan258/Future-cursors/tree/master/src/svg-cyan", "GPL-3.0-only", f"{github}/yeyushengfan258/Future-cursors/blob/master/LICENSE", "Yeyu Shengfan (yeyushengfan258)", "Cyan"),
             _repo_job("Colloid", "Colloid", _repo("Colloid-icon-theme", "cursors", "src", "svg"), "Colloid", f"{github}/vinceliuice/Colloid-icon-theme/tree/main/cursors", "GPL-3.0-only", f"{github}/vinceliuice/Colloid-icon-theme/blob/main/LICENSE", "Vince Liuice (vinceliuice)"),
             _repo_job("ColloidDark", "Colloid Dark", _repo("Colloid-icon-theme", "cursors", "src", "svg-white"), "Colloid", f"{github}/vinceliuice/Colloid-icon-theme/tree/main/cursors", "GPL-3.0-only", f"{github}/vinceliuice/Colloid-icon-theme/blob/main/LICENSE", "Vince Liuice (vinceliuice)", "Dark"),
         ]
@@ -591,11 +592,15 @@ def _validate_corpus(
         if entry["Group"] == "Oreo"
     }
     if _identifier_digest(external_identifiers) != EXPECTED_EXTERNAL_IDENTIFIER_SHA256:
-        raise ValueError("external theme inventory differs from the pinned 220-ID lock")
+        raise ValueError(
+            f"external theme inventory differs from the pinned {expected_external}-ID lock"
+        )
     if oreo_identifiers != EXPECTED_OREO_IDENTIFIERS:
         raise ValueError("built-in Oreo inventory differs from the pinned 19-ID set")
     if _identifier_digest(identifiers) != EXPECTED_UNIFIED_IDENTIFIER_SHA256:
-        raise ValueError("unified theme inventory differs from the pinned 239-ID lock")
+        raise ValueError(
+            f"unified theme inventory differs from the pinned {expected_unified}-ID lock"
+        )
     oreo_root = ROOT.parent / "oreo/Resources/Themes"
     for entry in manifest:
         validate_preview_entry(entry, output)

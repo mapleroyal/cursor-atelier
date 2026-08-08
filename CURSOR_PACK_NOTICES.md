@@ -1,7 +1,7 @@
 # Cursor pack provenance
 
-The personal local bundle contains 239 cursor variants: 19 Oreo resources and
-220 conversions from the requested external sources. Repositories and
+The personal local bundle contains 240 cursor variants: 19 Oreo resources and
+221 conversions from the requested external sources. Repositories and
 GNOME-Look archives are pinned build inputs in an ignored acquisition cache;
 they are not copied into Electron and are never downloaded at runtime.
 
@@ -23,7 +23,7 @@ The variant count and license identifiers below match the schema-v2 manifest.
 | Google       |        4 | [ful1e5/Google_Cursor](https://github.com/ful1e5/Google_Cursor)                          | GPL-3.0-only      |
 | Simp1e       |       25 | [cursors/simp1e](https://gitlab.com/cursors/simp1e)                                      | GPL-3.0-or-later  |
 | Capitaine    |        2 | [keeferrourke/capitaine-cursors](https://github.com/keeferrourke/capitaine-cursors)      | LGPL-3.0-or-later |
-| Future       |        1 | [yeyushengfan258/Future-cursors](https://github.com/yeyushengfan258/Future-cursors)      | GPL-3.0-only      |
+| Future       |        2 | [yeyushengfan258/Future-cursors](https://github.com/yeyushengfan258/Future-cursors)      | GPL-3.0-only      |
 | Nordzy       |      133 | [guillaumeboehm/Nordzy-cursors](https://github.com/guillaumeboehm/Nordzy-cursors)        | GPL-3.0-only      |
 | Colloid      |        2 | [Colloid cursors](https://github.com/vinceliuice/Colloid-icon-theme/tree/main/cursors)   | GPL-3.0-only      |
 | Bibata       |       12 | [ful1e5/Bibata_Cursor](https://github.com/ful1e5/Bibata_Cursor)                          | GPL-3.0-only      |
