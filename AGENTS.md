@@ -5,12 +5,13 @@
 - Never build backwards/legacy compatibility. The app is in active pre-release development.
 
 # Design Aesthetic
+
 - Quiet and utilitarian
 - No-or-low helper copy
 - The UI/UX should be intuitive and self-explanatory
 - No card-slop (avoid overuse of giving several UI details a container-analogous background and/or outline)
 - See /Users/user1/Projects/markdown-reader-editor or /Applications/ChatGPT.app when design questions would benefit from a favored reference
- 
+
 # UI Components
 
 Use `@/components/ui/*` and Shadcn/Radix primitives. Compose from existing parts when possible. Build from scratch only when none of the above satisfy the requirement.
@@ -28,6 +29,16 @@ Use `@/components/ui/*` and Shadcn/Radix primitives. Compose from existing parts
 # Tests
 
 - If you're considering adding low-value or low-signal tests, don't. For example, no so-called "regression" tests unless things that were explicitly specified and definitely working correctly are now broken.
+
+# Delivery, Installation & Updates
+
+- Treat installation and update work as a state migration, not just a build or file copy. Inventory installed app bundles, resident helpers/agents, login items, caches, generated artifacts, persisted schemas, and prior-version paths that the release owns.
+- Keep the user-facing release version separate from a unique, monotonically increasing build identity. Stamp the main app and every bundled helper/service from the same exact build; never reuse a static release version as the identity macOS uses to decide whether resident code is current.
+- Never assume replacing an app bundle replaces code already running from it. On packaged launch, compare registered/running helper identity with the installed build and use the platform lifecycle API to terminate/unregister and re-register/relaunch obsolete services. Reconcile disabled and legacy registrations too.
+- Make updates transactional: stage and verify the new signed artifact, preserve a recoverable prior install, activate and verify the new build and its background processes, then move superseded artifacts to Trash. If activation or verification fails, restore the prior installation and registration state.
+- Preserve user-created data unless a migration explicitly owns it. Cleanup must target only validated, version-owned artifacts and must follow the repository's destructive-action safeguards.
+- Test an update from a previous installed build while its helper/background process is actually running. A clean-install test is insufficient; verify bundle/build identities, process replacement, registrations, migrations, user data, and absence of duplicate or obsolete processes afterward.
+- For Cursor Atelier code or delivery changes, wrap-up is not complete after packaging: build the newest signed app, install it at `/Applications/Cursor Atelier.app`, launch it, verify that the installed bundle and resident login helper are from that build, and safely clean up the superseded app. Do this automatically unless the user explicitly asks not to install.
 
 # Troubleshooting & Problem-Solving
 

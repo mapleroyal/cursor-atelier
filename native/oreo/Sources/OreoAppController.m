@@ -284,6 +284,17 @@ BOOL OreoUnregisterLegacyMainLoginItem(NSError **error) {
     return NO;
 }
 
+BOOL OreoReconcileLoginItems(NSError **error) {
+    BOOL desired = OreoLoginItemDesired();
+    BOOL helperCurrent = desired
+        ? OreoRegisterLoginItem(error)
+        : OreoUnregisterLoginItem(error);
+    if (!helperCurrent) {
+        return NO;
+    }
+    return OreoUnregisterLegacyMainLoginItem(error);
+}
+
 BOOL OreoMigrateLegacyLoginItemIfNeeded(NSError **error) {
     SMAppServiceStatus legacyStatus = SMAppService.mainAppService.status;
     if (legacyStatus != SMAppServiceStatusEnabled &&
@@ -636,7 +647,7 @@ int OreoRunCommandLineIfRequested(
         @"--list-themes", @"--validate-themes", @"--validate-theme",
         @"--select-theme", @"--set-theme-size", @"--forget-theme-size",
         @"--validate-system-fallbacks", @"--apply-theme",
-        @"--open-login-settings"
+        @"--open-login-settings", @"--reconcile-login-items"
     ]];
     BOOL commandNeedsIdentifier =
         [command isEqual:@"--select-theme"] ||
@@ -659,6 +670,7 @@ int OreoRunCommandLineIfRequested(
                 "--select-theme IDENTIFIER|--apply-theme IDENTIFIER|"
                 "--set-theme-size IDENTIFIER PERCENTAGE|"
                 "--forget-theme-size IDENTIFIER|"
+                "--reconcile-login-items|"
                 "--open-login-settings]\n");
         return 64;
     }
@@ -899,6 +911,12 @@ int OreoRunCommandLineIfRequested(
         if (!success) {
             OreoSetLoginItemDesired(priorLoginDesired);
         }
+    } else if ([command isEqual:@"--reconcile-login-items"]) {
+        // Replacing an app bundle does not replace helper code already in
+        // memory. Reconcile on every packaged launch so a new CFBundleVersion
+        // terminates the resident prior build before it can refresh cursors.
+        actionSource = OreoCursorStatusSourceLogin;
+        success = OreoReconcileLoginItems(&actionError);
     } else if ([command isEqual:@"--select-theme"]) {
         NSString *identifier = [NSString stringWithUTF8String:argv[2]];
         success = OreoSelectTheme(identifier, &engine, &actionError);
@@ -912,7 +930,8 @@ int OreoRunCommandLineIfRequested(
 
     BOOL approvalRequired =
         ([command isEqual:@"--setup"] ||
-         [command isEqual:@"--apply-theme"]) &&
+         [command isEqual:@"--apply-theme"] ||
+         [command isEqual:@"--reconcile-login-items"]) &&
         OreoLoginItemService().status ==
             SMAppServiceStatusRequiresApproval;
     OreoPrintJSON(OreoCombinedDiagnostics(engine, command, actionError));

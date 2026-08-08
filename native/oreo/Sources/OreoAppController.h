@@ -24,6 +24,9 @@ BOOL OreoLoginItemRegistrationCurrent(void);
 
 BOOL OreoRegisterLoginItem(NSError * _Nullable * _Nullable error);
 BOOL OreoUnregisterLoginItem(NSError * _Nullable * _Nullable error);
+/// Makes the registered helper match the current packaged build, or removes
+/// obsolete registrations when Launch at Login is no longer desired.
+BOOL OreoReconcileLoginItems(NSError * _Nullable * _Nullable error);
 BOOL OreoUnregisterLegacyMainLoginItem(
     NSError * _Nullable * _Nullable error);
 BOOL OreoMigrateLegacyLoginItemIfNeeded(

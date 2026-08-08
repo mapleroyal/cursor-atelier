@@ -535,6 +535,16 @@ async function startApplication() {
     } catch (error) {
       console.error("Could not inspect Cursor Atelier’s login item.", error);
     }
+    try {
+      await bridge.reconcileLoginItems();
+    } catch (error) {
+      // The UI still needs to open so Restore and Login Items guidance remain
+      // available. Status will surface any unresolved helper registration.
+      console.error(
+        "Could not reconcile Cursor Atelier’s installed login helper.",
+        error,
+      );
+    }
   }
   if (backgroundLaunch && process.platform === "darwin") {
     app.setActivationPolicy("accessory");

@@ -37,6 +37,17 @@ if [[ "$product_version" != <->.<->.<-> ]]; then
     print -u2 "package.json must contain a numeric semantic version."
     exit 1
 fi
+# CFBundleShortVersionString identifies the release; CFBundleVersion must
+# identify this exact build. A static build version lets macOS keep an older
+# resident login helper alive after the .app is replaced. CI may supply its
+# own monotonic numeric value, while local builds receive a UTC build stamp.
+build_version=${CURSOR_ATELIER_BUILD_VERSION:-$(/bin/date -u +%Y%m%d%H%M%S)}
+if [[ ! "$build_version" =~ '^[0-9]+([.][0-9]+){0,2}$' ||
+      "$build_version" == "$product_version" ]]; then
+    print -u2 \
+        "CURSOR_ATELIER_BUILD_VERSION must be a unique numeric build identifier."
+    exit 1
+fi
 if [[ "$sign_identity" == Developer\ ID\ Application:* ]]; then
     sign_flags+=(--timestamp)
 else
@@ -127,12 +138,12 @@ common_flags=(
 /usr/libexec/PlistBuddy -c \
     "Set :CFBundleShortVersionString $product_version" \
     "$contents_path/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $product_version" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_version" \
     "$contents_path/Info.plist"
 /usr/libexec/PlistBuddy -c \
     "Set :CFBundleShortVersionString $product_version" \
     "$helper_contents_path/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $product_version" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_version" \
     "$helper_contents_path/Info.plist"
 /usr/bin/ditto "$script_dir/Resources/Themes" \
     "$staged_themes_path"
@@ -204,4 +215,5 @@ fi
 /bin/rm -rf "$app_path"
 /bin/mv "$staging_path" "$app_path"
 trap - EXIT INT TERM
+print -r -- "Native build version: $build_version"
 print -r -- "$app_path"

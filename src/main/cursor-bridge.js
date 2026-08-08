@@ -74,6 +74,7 @@ function isSafeResourceName(value) {
 const COMMAND_TIMEOUTS = Object.freeze({
   "--status": 8_000,
   "--list-themes": 12_000,
+  "--reconcile-login-items": 30_000,
   "--open-login-settings": 8_000,
   "--validate-theme": 45_000,
   "--validate-themes": 90_000,
@@ -1754,6 +1755,9 @@ export function createCursorBridge({
       );
     });
 
+  const reconcileLoginItems = () =>
+    serializeMutation(() => runNative("--reconcile-login-items", [], [5]));
+
   const setThemeSize = (identifier, sizePercentage) =>
     serializeMutation(async () => {
       if (
@@ -1807,6 +1811,7 @@ export function createCursorBridge({
     status,
     listThemes,
     applyTheme,
+    reconcileLoginItems,
     setThemeSize,
     restore,
     openLoginSettings,

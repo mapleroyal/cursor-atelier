@@ -10,6 +10,7 @@ import unittest
 CONTROLLER = pathlib.Path(__file__).parent / "Sources" / "OreoAppController.m"
 ENGINE = CONTROLLER.parent / "OreoCursorEngine.m"
 HELPER = CONTROLLER.parent.parent / "HelperSources" / "OreoLoginHelperMain.m"
+BUILD_SCRIPT = CONTROLLER.parent.parent / "build.sh"
 
 
 class AppControllerContractTests(unittest.TestCase):
@@ -104,6 +105,52 @@ class AppControllerContractTests(unittest.TestCase):
         self.assertIn(
             f'@"{native_info["CFBundleIdentifier"]}"', helper_source
         )
+
+    def test_each_delivery_has_a_distinct_resident_helper_build(self) -> None:
+        build = BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("CURSOR_ATELIER_BUILD_VERSION", build)
+        self.assertIn("/bin/date -u +%Y%m%d%H%M%S", build)
+        self.assertIn(
+            '"Set :CFBundleVersion $build_version"',
+            build,
+        )
+        self.assertNotIn(
+            '"Set :CFBundleVersion $product_version"',
+            build,
+        )
+
+        controller = CONTROLLER.read_text(encoding="utf-8")
+        register = self._function(
+            controller,
+            "BOOL OreoRegisterLoginItem(NSError **error)",
+            "BOOL OreoUnregisterLoginItem(NSError **error)",
+        )
+        version_match = register.index(
+            "[registeredVersion isEqualToString:currentVersion]"
+        )
+        restart = register.index(
+            "OreoWaitForLoginItemUnregister(service, error)",
+            version_match,
+        )
+        self.assertLess(version_match, restart)
+
+        reconcile = self._function(
+            controller,
+            "BOOL OreoReconcileLoginItems(NSError **error)",
+            "BOOL OreoMigrateLegacyLoginItemIfNeeded(NSError **error)",
+        )
+        self.assertIn("OreoLoginItemDesired()", reconcile)
+        self.assertIn("OreoRegisterLoginItem(error)", reconcile)
+        self.assertIn("OreoUnregisterLoginItem(error)", reconcile)
+        self.assertIn("OreoUnregisterLegacyMainLoginItem(error)", reconcile)
+
+        command = self._function(
+            controller,
+            "int OreoRunCommandLineIfRequested(",
+            "BOOL approvalRequired =",
+        )
+        self.assertIn('@"--reconcile-login-items"', command)
+        self.assertIn("OreoReconcileLoginItems(&actionError)", command)
 
     def test_native_processes_share_the_native_preferences_domain(self) -> None:
         domain = "com.cursoratelier.CursorAtelier.NativeCursor"

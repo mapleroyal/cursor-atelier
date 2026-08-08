@@ -135,6 +135,30 @@ login helper compares both identifier and effective size before deciding its
 loaded engine is current, so an Apply notification reloads changed geometry
 without allowing an uncommitted slider draft to race the helper.
 
+## Installed-build and login-helper lifecycle
+
+`CFBundleShortVersionString` is the human-facing release version. Every native
+build also receives a distinct numeric `CFBundleVersion`, shared by the
+packaged Electron app, native cursor app, and embedded login helper. The build
+identity must change even when the pre-release product version remains the
+same: macOS can keep helper code resident after its containing app bundle has
+been replaced, so a static product version is not a valid process-freshness
+signal.
+
+Every packaged launch runs a narrow login-item reconciliation before exposing
+cursor controls. When Launch at Login is desired and the registered helper's
+saved build differs, `SMAppService` unregisters it (which terminates the old
+resident process) and registers the current embedded helper, which starts
+immediately. When startup is no longer desired, stale helper and legacy main-
+app registrations are removed instead. Reconciliation does not select or size
+a cursor; the current helper then reads the already committed desired/effective
+state through the normal transaction and verification path.
+
+This ordering is part of cursor correctness, not only packaging hygiene. A
+resident helper from an older build could otherwise react to the new build's
+settings notification and overwrite a freshly verified scaled registration
+before the renderer's follow-up status read.
+
 ## Cursor corpus
 
 `native/cursor-packs/inventory-lock.json` locks the exact identifier set:

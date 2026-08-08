@@ -59,6 +59,14 @@ OREO_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" npm run native:build
 npm start
 ```
 
+The native build keeps the `package.json` version as the visible release
+version and automatically stamps a distinct UTC numeric build identity into
+the Electron app, native app, and login helper. CI may provide a monotonic
+`CURSOR_ATELIER_BUILD_VERSION`; do not reuse an identity from an older build.
+On the first packaged launch after replacement, Cursor Atelier reconciles its
+registered login helper so code resident from the prior build is terminated
+and the current helper is registered before cursor controls are used.
+
 The source-acquisition command populates an ignored build cache. It verifies
 pinned Git revisions and archive digests and is not used at app runtime. Once
 the cache exists, verify it without fetching with:

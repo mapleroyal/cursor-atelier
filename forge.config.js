@@ -7,6 +7,7 @@ const {
   AutoUnpackNativesPlugin,
 } = require("@electron-forge/plugin-auto-unpack-natives");
 const { FuseV1Options, FuseVersion } = require("@electron/fuses");
+const productVersion = require("./package.json").version;
 
 const rootDirectory = __dirname;
 const outerAppName = "Cursor Atelier.app";
@@ -308,6 +309,9 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
     const outerIdentifier = plistValue(plistPath, "CFBundleIdentifier");
     const nativeIdentifier = plistValue(nativeInfo, "CFBundleIdentifier");
     const helperIdentifier = plistValue(helperInfo, "CFBundleIdentifier");
+    const outerBuildVersion = plistValue(plistPath, "CFBundleVersion");
+    const nativeBuildVersion = plistValue(nativeInfo, "CFBundleVersion");
+    const helperBuildVersion = plistValue(helperInfo, "CFBundleVersion");
     if (
       outerIdentifier !== outerBundleId ||
       nativeIdentifier !== nativeBundleId ||
@@ -316,6 +320,16 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
     ) {
       throw new Error(
         "The packaged application bundle identifiers are inconsistent.",
+      );
+    }
+    if (
+      !/^\d+(?:\.\d+){0,2}$/.test(nativeBuildVersion) ||
+      nativeBuildVersion === productVersion ||
+      outerBuildVersion !== nativeBuildVersion ||
+      helperBuildVersion !== nativeBuildVersion
+    ) {
+      throw new Error(
+        "The packaged application and resident helper build identities are inconsistent.",
       );
     }
     const iconName = plistValue(plistPath, "CFBundleIconFile");
@@ -430,6 +444,13 @@ function runNativePreflight() {
 module.exports = {
   packagerConfig: {
     name: "Cursor Atelier",
+    // Keep the outer bundle on the same exact-build identity as the signed
+    // native app and login helper. CFBundleShortVersionString remains the
+    // human-facing package version.
+    buildVersion: plistValue(
+      path.join(nativeAppPath, "Contents", "Info.plist"),
+      "CFBundleVersion",
+    ),
     // Sharp's native addon links a sibling libvips dylib. The generic native
     // unpack plugin below covers .node files; this rule keeps that dylib and
     // the rest of its @img runtime package beside the extracted addon.

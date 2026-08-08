@@ -139,12 +139,20 @@ for (const plist of [appInfo, helperInfo]) {
   if (plistValue(plist, "CFBundleShortVersionString") !== packageJson.version) {
     fail("The Electron, native app, and login-helper versions do not match.");
   }
-  if (plistValue(plist, "CFBundleVersion") !== packageJson.version) {
-    fail("The native app or login-helper build version is stale.");
-  }
   if (plistValue(plist, "LSMinimumSystemVersion") !== "13.0") {
     fail("The native minimum macOS version is inconsistent.");
   }
+}
+const nativeBuildVersion = plistValue(appInfo, "CFBundleVersion");
+const helperBuildVersion = plistValue(helperInfo, "CFBundleVersion");
+if (
+  !/^\d+(?:\.\d+){0,2}$/.test(nativeBuildVersion) ||
+  nativeBuildVersion === packageJson.version ||
+  helperBuildVersion !== nativeBuildVersion
+) {
+  fail(
+    "The native app and login helper require one matching, release-independent build identity.",
+  );
 }
 if (plistValue(appInfo, "CFBundleIdentifier") !== nativeAppBundleId) {
   fail("The native application bundle identifier is inconsistent.");
@@ -340,5 +348,5 @@ if (!fallbackValidation.valid) {
 }
 
 console.warn(
-  `Native preflight passed: ${listedThemes.length} manifest themes, signed bridge ${packageJson.version}.`,
+  `Native preflight passed: ${listedThemes.length} manifest themes, signed bridge ${packageJson.version} (${nativeBuildVersion}).`,
 );

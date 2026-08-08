@@ -1069,6 +1069,17 @@ describe("cursor bridge live native state", () => {
     expect(fixture.calls.slice(-2)).toEqual([["--teardown"], ["--status"]]);
   });
 
+  it("reconciles the installed login helper without applying a cursor", async () => {
+    const fixture = createNativeFixture();
+
+    await expect(fixture.bridge.reconcileLoginItems()).resolves.toMatchObject({
+      selectedThemeIdentifier: "OreoBlue",
+      desiredEnabled: 0,
+      effectiveApplied: 0,
+    });
+    expect(fixture.calls).toEqual([["--reconcile-login-items"]]);
+  });
+
   it("saves bounded per-theme size without reading or changing live state", async () => {
     const fixture = createNativeFixture();
 
