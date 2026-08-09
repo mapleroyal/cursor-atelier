@@ -6,6 +6,7 @@ import {
   filterCursorCatalog,
   getCursorCatalogEntry,
   mergeCursorCatalogWithNativeThemes,
+  normalizeRolePreviews,
   normalizeCursorTheme,
 } from "./cursor-catalog";
 
@@ -13,6 +14,9 @@ describe("cursor catalogue", () => {
   it("contains all bundled Oreo variants and requested families", () => {
     expect(CURSOR_CATALOG_COUNTS.bundled).toBe(19);
     expect(CURSOR_CATALOG_COUNTS.total).toBe(38);
+    expect(CURSOR_CATALOG.every((entry) => entry.schemaVersion === 1)).toBe(
+      true,
+    );
 
     for (const id of [
       "remus",
@@ -58,7 +62,7 @@ describe("cursor catalogue", () => {
   it("keeps catalogue-only packs unavailable without fabricating previews", () => {
     const mogaResults = filterCursorCatalog(CURSOR_CATALOG, "moga neon");
     expect(mogaResults.map((entry) => entry.id)).toEqual(["moga-neon"]);
-    expect(mogaResults[0].isAvailable).toBe(false);
+    expect(mogaResults[0].resourceAvailable).toBe(false);
     expect(mogaResults[0].preview).toBeNull();
     expect(mogaResults[0].rolePreviews).toEqual([]);
   });
@@ -85,11 +89,12 @@ describe("cursor catalogue", () => {
       normalized,
     ]).filter((entry) => entry.id === "moga-classic");
 
-    expect(moga.available).toBe(true);
-    expect(moga.isAvailable).toBe(true);
+    expect(moga.resourceAvailable).toBe(true);
     expect(moga.canApply).toBe(true);
     expect(moga.resourceFile).toBe("MogaClassic.cursor");
     expect(moga.license).toBe(getCursorCatalogEntry("moga-classic").license);
+    expect(moga).not.toHaveProperty("Identifier");
+    expect(moga).not.toHaveProperty("DisplayName");
   });
 
   it("normalizes exact role previews and animation metadata from manifest v2", () => {
@@ -124,6 +129,33 @@ describe("cursor catalogue", () => {
       frameCount: 24,
       frameDuration: 0.03,
     });
+  });
+
+  it("does not expose raw role-preview manifest fields", () => {
+    const [role] = normalizeRolePreviews([
+      {
+        role: "default",
+        asset: "cursor-preview://asset/default",
+        resolvedRole: "left_ptr",
+        UnknownNativeField: "private",
+        frameCount: 1,
+        frameDuration: 1,
+        hotspot: { x: 4, y: 3 },
+      },
+    ]);
+
+    expect(role).toEqual({
+      role: "default",
+      name: "default",
+      src: "cursor-preview://asset/default",
+      frameCount: 1,
+      frameDuration: 1,
+      hotspot: { x: 4, y: 3 },
+      fallback: false,
+    });
+    expect(role).not.toHaveProperty("asset");
+    expect(role).not.toHaveProperty("resolvedRole");
+    expect(role).not.toHaveProperty("UnknownNativeField");
   });
 
   it("keeps generated variants distinct while inheriting family attribution", () => {

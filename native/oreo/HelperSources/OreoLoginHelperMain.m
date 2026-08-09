@@ -60,8 +60,10 @@ static NSString * const OreoStatusChangedNotification =
 }
 
 - (BOOL)reloadEngine:(NSError **)error {
+    NSString *selected = [OreoCursorEngine
+        selectedThemeIdentifierForResourceBundle:self.hostBundle];
     OreoCursorEngine *candidate = [[OreoCursorEngine alloc]
-        initWithThemeIdentifier:[OreoCursorEngine selectedThemeIdentifier]
+        initWithThemeIdentifier:selected
                  resourceBundle:self.hostBundle
                           error:error];
     self.engine = candidate;
@@ -73,7 +75,8 @@ static NSString * const OreoStatusChangedNotification =
 - (BOOL)bringStateCurrent:(NSError **)error {
     NSUserDefaults *defaults = OreoCursorDefaults();
     [defaults synchronize];
-    NSString *selected = [OreoCursorEngine selectedThemeIdentifier];
+    NSString *selected = [OreoCursorEngine
+        selectedThemeIdentifierForResourceBundle:self.hostBundle];
     BOOL effective =
         [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
     NSInteger expectedSize = effective

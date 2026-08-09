@@ -43,6 +43,7 @@ const helperApp = path.resolve(helperInfo, "..", "..");
 const appInfo = path.join(contents, "Info.plist");
 const themesDirectory = path.join(contents, "Resources", "Themes");
 const manifestPath = path.join(themesDirectory, "manifest.json");
+const builtInCatalogPath = path.join(themesDirectory, "catalog.json");
 
 function fail(message) {
   throw new Error(
@@ -209,16 +210,24 @@ if (
 }
 
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const builtInCatalog = JSON.parse(fs.readFileSync(builtInCatalogPath, "utf8"));
 if (Number(manifest.schemaVersion) < 2 || !Array.isArray(manifest.themes)) {
   fail("The native bundle requires a schema-v2 generated manifest.");
+}
+if (
+  builtInCatalog.schemaVersion !== 1 ||
+  typeof builtInCatalog.family !== "string" ||
+  typeof builtInCatalog.defaultThemeId !== "string" ||
+  !Array.isArray(builtInCatalog.themes)
+) {
+  fail("The native bundle requires a schema-v1 built-in catalog.");
 }
 if (
   inventoryLock.schemaVersion !== 1 ||
   inventoryLock.externalThemeCount !== 221 ||
   inventoryLock.builtInThemeCount !== 19 ||
   inventoryLock.unifiedThemeCount !== 240 ||
-  inventoryLock.roleCount !== 47 ||
-  !Array.isArray(inventoryLock.builtInIdentifiers)
+  inventoryLock.roleCount !== 47
 ) {
   fail("The checked-in cursor inventory lock is inconsistent.");
 }
@@ -232,16 +241,21 @@ const manifestIdentifiers = manifest.themes.map(
   (theme) => theme.Identifier ?? theme.identifier,
 );
 const builtInIdentifiers = manifest.themes
-  .filter((theme) => (theme.Group ?? theme.group) === "Oreo")
+  .filter((theme) => (theme.Group ?? theme.group) === builtInCatalog.family)
   .map((theme) => theme.Identifier ?? theme.identifier);
 const externalIdentifiers = manifest.themes
-  .filter((theme) => (theme.Group ?? theme.group) !== "Oreo")
+  .filter((theme) => (theme.Group ?? theme.group) !== builtInCatalog.family)
   .map((theme) => theme.Identifier ?? theme.identifier);
+const catalogIdentifiers = builtInCatalog.themes.map(
+  (theme) => theme.nativeThemeId,
+);
 if (
   builtInIdentifiers.length !== inventoryLock.builtInThemeCount ||
   externalIdentifiers.length !== inventoryLock.externalThemeCount ||
+  catalogIdentifiers.length !== inventoryLock.builtInThemeCount ||
+  !catalogIdentifiers.includes(builtInCatalog.defaultThemeId) ||
   JSON.stringify([...builtInIdentifiers].sort()) !==
-    JSON.stringify([...inventoryLock.builtInIdentifiers].sort()) ||
+    JSON.stringify([...catalogIdentifiers].sort()) ||
   identifierDigest(externalIdentifiers) !==
     inventoryLock.externalIdentifierSHA256 ||
   identifierDigest(manifestIdentifiers) !==

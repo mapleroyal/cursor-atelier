@@ -52,7 +52,6 @@ GNOME_AUTHOR = "Moyash (moyash / moyashos)"
 INVENTORY_LOCK = json.loads((ROOT / "inventory-lock.json").read_text())
 EXPECTED_EXTERNAL_IDENTIFIER_SHA256 = INVENTORY_LOCK["externalIdentifierSHA256"]
 EXPECTED_UNIFIED_IDENTIFIER_SHA256 = INVENTORY_LOCK["unifiedIdentifierSHA256"]
-EXPECTED_OREO_IDENTIFIERS = frozenset(INVENTORY_LOCK["builtInIdentifiers"])
 EXPECTED_FALLBACK_COUNTS = {
     "Bibata": 0,
     "Bibata Extra": 2,
@@ -498,40 +497,50 @@ def _simp1e_scheme(path: Path) -> dict[str, str]:
 _SIMP1E_TEMPORARIES: list[Path] = []
 
 
-def _oreo_variant_label(identifier: str, theme_name: str) -> str:
-    curated = {
-        "OreoGrey": "Gray",
-        "OreoSparkLite": "Spark Light",
-    }
-    if identifier in curated:
-        return curated[identifier]
-    label = theme_name.removeprefix("Oreo ").strip()
-    return _humanize(label) or "Default"
-
-
 def _oreo_manifest_entries(output: Path) -> list[dict[str, Any]]:
     """Add preview metadata for built-ins without duplicating their resources."""
 
     theme_root = ROOT.parent / "oreo/Resources/Themes"
+    catalog = json.loads((theme_root / "catalog.json").read_text())
+    catalog_themes = catalog.get("themes")
+    if (
+        catalog.get("schemaVersion") != 1
+        or not isinstance(catalog_themes, list)
+        or catalog.get("defaultThemeId")
+        not in {theme.get("nativeThemeId") for theme in catalog_themes}
+    ):
+        raise ValueError("built-in Oreo catalog has an unsupported schema")
+    common_fields = {
+        "Author": str(catalog["author"]),
+        "Group": str(catalog["family"]),
+        "License": str(catalog["license"]),
+        "LicenseURL": str(catalog["licenseUrl"]),
+        "SourceURL": str(catalog["upstreamUrl"]),
+    }
     entries: list[dict[str, Any]] = []
-    for theme_path in sorted(theme_root.glob("*.cursor")):
+    for catalog_theme in catalog_themes:
+        theme_path = theme_root / str(catalog_theme["resourceFile"])
         theme = plistlib.loads(theme_path.read_bytes())
-        identifier = str(theme["Identifier"])
-        theme_name = str(theme.get("ThemeName", identifier))
-        variant_label = _oreo_variant_label(identifier, theme_name)
+        identifier = str(catalog_theme["nativeThemeId"])
+        theme_name = str(catalog_theme["plistName"])
+        variant_label = str(catalog_theme["name"])
+        digest = hashlib.sha256(theme_path.read_bytes()).hexdigest()
+        if (
+            theme.get("Identifier") != identifier
+            or theme.get("ThemeName") != theme_name
+            or theme.get("UUID") != catalog_theme["uuid"]
+            or digest != catalog_theme["sha256"]
+        ):
+            raise ValueError(f"{identifier}: cursor resource differs from catalog.json")
         entry: dict[str, Any] = {
-            "Author": str(theme.get("Creator", "Alexey Varfolomeev (varlesh)")),
-            "DisplayName": f"Oreo {variant_label}",
-            "Group": "Oreo",
+            **common_fields,
+            "DisplayName": f"{catalog['family']} {variant_label}",
             "Identifier": identifier,
-            "License": "GPL-2.0-only",
-            "LicenseURL": "https://github.com/varlesh/oreo-cursors/blob/master/LICENSE",
             "Resource": theme_path.name,
-            "SHA256": hashlib.sha256(theme_path.read_bytes()).hexdigest(),
-            "SourceURL": "https://github.com/varlesh/oreo-cursors",
+            "SHA256": digest,
             "ThemeName": theme_name,
             "UpstreamVariant": theme_name,
-            "UUID": str(theme["UUID"]),
+            "UUID": str(catalog_theme["uuid"]),
             "Variant": variant_label,
             "VariantLabel": variant_label,
         }
@@ -563,6 +572,10 @@ def _validate_corpus(
     output: Path,
     external_job_count: int,
 ) -> None:
+    oreo_catalog = json.loads(
+        (ROOT.parent / "oreo/Resources/Themes/catalog.json").read_text()
+    )
+    oreo_family = str(oreo_catalog["family"])
     cursor_files = sorted(output.glob("*.cursor"))
     expected_external = int(INVENTORY_LOCK["externalThemeCount"])
     expected_unified = int(INVENTORY_LOCK["unifiedThemeCount"])
@@ -584,19 +597,22 @@ def _validate_corpus(
     external_identifiers = [
         str(entry["Identifier"])
         for entry in manifest
-        if entry["Group"] != "Oreo"
+        if entry["Group"] != oreo_family
     ]
     oreo_identifiers = {
         str(entry["Identifier"])
         for entry in manifest
-        if entry["Group"] == "Oreo"
+        if entry["Group"] == oreo_family
     }
     if _identifier_digest(external_identifiers) != EXPECTED_EXTERNAL_IDENTIFIER_SHA256:
         raise ValueError(
             f"external theme inventory differs from the pinned {expected_external}-ID lock"
         )
-    if oreo_identifiers != EXPECTED_OREO_IDENTIFIERS:
-        raise ValueError("built-in Oreo inventory differs from the pinned 19-ID set")
+    expected_oreo_identifiers = {
+        str(theme["nativeThemeId"]) for theme in oreo_catalog["themes"]
+    }
+    if oreo_identifiers != expected_oreo_identifiers:
+        raise ValueError("built-in Oreo inventory differs from catalog.json")
     if _identifier_digest(identifiers) != EXPECTED_UNIFIED_IDENTIFIER_SHA256:
         raise ValueError(
             f"unified theme inventory differs from the pinned {expected_unified}-ID lock"
@@ -620,7 +636,7 @@ def _validate_corpus(
             raise ValueError(f"{entry['Identifier']}: inconsistent variant labels")
         if not entry.get("UpstreamVariant"):
             raise ValueError(f"{entry['Identifier']}: missing upstream variant metadata")
-        resource_root = oreo_root if entry["Group"] == "Oreo" else output
+        resource_root = oreo_root if entry["Group"] == oreo_family else output
         resource = resource_root / str(entry["Resource"])
         if not resource.is_file():
             raise FileNotFoundError(resource)
@@ -630,8 +646,6 @@ def _validate_corpus(
     by_identifier = {entry["Identifier"]: entry for entry in manifest}
     expected_metadata = {
         "MogaClassic": ("Moga", "Moga Classic Black", "Classic Black"),
-        "OreoWhite": ("Oreo", "Oreo White", "White"),
-        "OreoSparkLite": ("Oreo", "Oreo Spark Light", "Spark Light"),
         "BibataModernAmber": ("Bibata", "Bibata Modern Amber", "Modern Amber"),
         "BibataExtraModernDarkRed": (
             "Bibata Extra",

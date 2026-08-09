@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 1,
+  "defaultThemeId": "OreoWhite",
+  "family": "Oreo",
+  "author": "Alexey Varfolomeev (varlesh), Sourav Goswami",
+  "sourceUrl": "https://github.com/mapleroyal/oreo-cursor-macos",
+  "upstreamUrl": "https://github.com/varlesh/oreo-cursors",
+  "license": "GPL-2.0-only",
+  "licenseUrl": "https://github.com/varlesh/oreo-cursors/blob/master/LICENSE",
+  "themes": [
+    {
+      "id": "oreo-white",
+      "name": "White",
+      "nativeThemeId": "OreoWhite",
+      "resourceFile": "OreoWhite.cursor",
+      "sha256": "180b1e731716408f3d7ef1b19f7d0f5b37006c88b75084d4430c1a73e4c68743",
+      "uuid": "48D50EFD-389C-522F-8A4A-CD76DE8F4974",
+      "plistName": "Oreo White",
+      "accentColor": "#e4e4e7",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-gray",
+      "name": "Gray",
+      "nativeThemeId": "OreoGrey",
+      "resourceFile": "OreoGrey.cursor",
+      "sha256": "d0c5ba48c7363d3230d224952459a9e924e548ccbe60ad9564ca7835c33d07f9",
+      "uuid": "11F977BD-EC71-5AA9-B6B9-DB6115775065",
+      "plistName": "Oreo Grey",
+      "accentColor": "#a1a1aa",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-black",
+      "name": "Black",
+      "nativeThemeId": "OreoBlack",
+      "resourceFile": "OreoBlack.cursor",
+      "sha256": "50d1159c930914256f01b1a9a36e77f3eb0420eaf5ced4238cff966e7466dc22",
+      "uuid": "0D069493-0412-56D4-8DAF-6300E1FEAFBF",
+      "plistName": "Oreo Black",
+      "accentColor": "#18181b",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-blue",
+      "name": "Blue",
+      "nativeThemeId": "OreoBlue",
+      "resourceFile": "OreoBlue.cursor",
+      "sha256": "6bdc1c499854afc215e813218aef6ea011e21d51b0c6e509a84c637937b48dee",
+      "uuid": "D74950B4-F227-5ABB-9C4B-AAEA08EDD436",
+      "plistName": "Oreo Blue",
+      "accentColor": "#60a5fa",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-pink",
+      "name": "Pink",
+      "nativeThemeId": "OreoPink",
+      "resourceFile": "OreoPink.cursor",
+      "sha256": "bc30fc11637d8710e17b2d339cbb044ddc39a2363fd67350449a91462576267c",
+      "uuid": "4E03A69E-C449-5FD6-BA9C-C50FD98D5542",
+      "plistName": "Oreo Pink",
+      "accentColor": "#f472b6",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-purple",
+      "name": "Purple",
+      "nativeThemeId": "OreoPurple",
+      "resourceFile": "OreoPurple.cursor",
+      "sha256": "256080f6e08b786ae855aa7de1294248f99fe47b50b35ae1f2a7dfd1ff43d6fd",
+      "uuid": "24B632B3-A0F9-59B6-9012-7B4325C21983",
+      "plistName": "Oreo Purple",
+      "accentColor": "#a78bfa",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-red",
+      "name": "Red",
+      "nativeThemeId": "OreoRed",
+      "resourceFile": "OreoRed.cursor",
+      "sha256": "80f43c65d37b1cb7d32c9e1ab7b58cdcfabd8a65aa4f803d289f75475c5d3fac",
+      "uuid": "09B5B421-2E0D-5517-81CF-32A8D611170A",
+      "plistName": "Oreo Red",
+      "accentColor": "#f87171",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-teal",
+      "name": "Teal",
+      "nativeThemeId": "OreoTeal",
+      "resourceFile": "OreoTeal.cursor",
+      "sha256": "cceb9e562a693366e5cbcb19ec75f6cd3a58f37853ea05420107df5fe279653e",
+      "uuid": "CBB17224-D639-5733-B55D-4A6DEA8690DF",
+      "plistName": "Oreo Teal",
+      "accentColor": "#2dd4bf",
+      "category": "oreo"
+    },
+    {
+      "id": "oreo-spark-light",
+      "name": "Spark Light",
+      "nativeThemeId": "OreoSparkLite",
+      "resourceFile": "OreoSparkLite.cursor",
+      "sha256": "a311a3e8c37b1bed7946d5528ff132e4e3649f51a01523d5a2683e04aff43d44",
+      "uuid": "3B29AAB2-7D92-53A4-8C91-F995AFF57A90",
+      "plistName": "Oreo Spark Lite",
+      "accentColor": "#fbbf24",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-dark",
+      "name": "Spark Dark",
+      "nativeThemeId": "OreoSparkDark",
+      "resourceFile": "OreoSparkDark.cursor",
+      "sha256": "991b039f66196bed3497be96d20ad4d700c79b6ca3cf3b48dac9bc859f752153",
+      "uuid": "CE6E0F75-15F5-5A21-8401-2A60920B3F11",
+      "plistName": "Oreo Spark Dark",
+      "accentColor": "#64748b",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-blue",
+      "name": "Spark Blue",
+      "nativeThemeId": "OreoSparkBlue",
+      "resourceFile": "OreoSparkBlue.cursor",
+      "sha256": "6ad0ec4d078d6f5dd24b6e3918317f4131ea54a2ca0806953a1e308a39bf0b34",
+      "uuid": "8FB95895-6488-5A4D-B549-6C24EBEEF926",
+      "plistName": "Oreo Spark Blue",
+      "accentColor": "#38bdf8",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-green",
+      "name": "Spark Green",
+      "nativeThemeId": "OreoSparkGreen",
+      "resourceFile": "OreoSparkGreen.cursor",
+      "sha256": "4f20797b0947567da6128dd7389d54c09e46c368bae3a026e5b47608c3a17245",
+      "uuid": "6CD682D2-89F2-5C56-9F06-884112985481",
+      "plistName": "Oreo Spark Green",
+      "accentColor": "#4ade80",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-light-pink",
+      "name": "Spark Light Pink",
+      "nativeThemeId": "OreoSparkLightPink",
+      "resourceFile": "OreoSparkLightPink.cursor",
+      "sha256": "9d81d3382193a027d86da333abfa9a0c10823b1430c7059360ba7105ebe39e65",
+      "uuid": "FE78ED82-0917-56ED-A1DC-85C61FF0AA2A",
+      "plistName": "Oreo Spark Light Pink",
+      "accentColor": "#f9a8d4",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-lime",
+      "name": "Spark Lime",
+      "nativeThemeId": "OreoSparkLime",
+      "resourceFile": "OreoSparkLime.cursor",
+      "sha256": "3337f046ff2c6ee26dba54778fc2685cce526798c6b48f88b5ceafddcdffc2ac",
+      "uuid": "CEDDD804-2530-54D1-8B6B-FB7854EA7B8A",
+      "plistName": "Oreo Spark Lime",
+      "accentColor": "#a3e635",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-orange",
+      "name": "Spark Orange",
+      "nativeThemeId": "OreoSparkOrange",
+      "resourceFile": "OreoSparkOrange.cursor",
+      "sha256": "bbb72d7efa61615a96a38f7e766229dfb5d6409a4079c0fd9bff42e6a3c0410d",
+      "uuid": "8C3D6FA7-7782-52C8-9EA2-349AF7139CD7",
+      "plistName": "Oreo Spark Orange",
+      "accentColor": "#fb923c",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-pink",
+      "name": "Spark Pink",
+      "nativeThemeId": "OreoSparkPink",
+      "resourceFile": "OreoSparkPink.cursor",
+      "sha256": "af3a1c31d7b757107c4e10c014562bbf12ca4c93fd5e7e00a8ac1eea7ee4e625",
+      "uuid": "B3F427F6-0287-5C71-9295-022BC8ED7934",
+      "plistName": "Oreo Spark Pink",
+      "accentColor": "#fb7185",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-purple",
+      "name": "Spark Purple",
+      "nativeThemeId": "OreoSparkPurple",
+      "resourceFile": "OreoSparkPurple.cursor",
+      "sha256": "e93a24c7b913c3e3bf31c41bb7034a5565c3d9fda23b72cddcb28c817d631195",
+      "uuid": "5B53BF1D-6CD8-5382-B4FD-F2D505B2C504",
+      "plistName": "Oreo Spark Purple",
+      "accentColor": "#c084fc",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-red",
+      "name": "Spark Red",
+      "nativeThemeId": "OreoSparkRed",
+      "resourceFile": "OreoSparkRed.cursor",
+      "sha256": "cad4e5e4f0f688bd05c8945424b8983e32f94e0a89930be2d6f9e0fe25ccafd5",
+      "uuid": "B73170A5-C405-5D65-9D2A-71C90F38CCFE",
+      "plistName": "Oreo Spark Red",
+      "accentColor": "#f43f5e",
+      "category": "spark"
+    },
+    {
+      "id": "oreo-spark-violet",
+      "name": "Spark Violet",
+      "nativeThemeId": "OreoSparkViolet",
+      "resourceFile": "OreoSparkViolet.cursor",
+      "sha256": "01ae809af1399594638962fa839788952faff493dcf14f43f1b4e16c94fd23fe",
+      "uuid": "933C2ACF-9AB9-5209-BFA9-A1CC77E64BC6",
+      "plistName": "Oreo Spark Violet",
+      "accentColor": "#818cf8",
+      "category": "spark"
+    }
+  ]
+}

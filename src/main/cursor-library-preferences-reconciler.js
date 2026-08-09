@@ -8,7 +8,6 @@ function authoritativeIdentifiers(themes) {
     for (const identifier of [
       getCursorPreferenceId(theme),
       theme?.id,
-      theme?.identifier,
       theme?.nativeThemeId,
       ...(Array.isArray(theme?.nativeThemeIds) ? theme.nativeThemeIds : []),
     ]) {

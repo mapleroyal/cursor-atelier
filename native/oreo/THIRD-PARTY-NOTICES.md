@@ -29,13 +29,14 @@ The vendored source snapshot also includes 19 generated SVG color directories
 from `generator/colours.conf`; its `index.theme` comment was normalized to
 remove a workstation path.
 
-Reproduce the 19 resources and check their locked digests from
-`native/oreo` with:
+Reproduce the 19 resources, then validate them from the repository root with
+`npm run native:preflight`. The canonical catalog is
+`native/oreo/Resources/Themes/catalog.json`.
 
 ```sh
 ArtworkSource/generate_all_themes.sh Resources/Themes
-cd Resources/Themes
-shasum -a 256 -c ../../ArtworkSource/THEME-SHA256SUMS.txt
+cd ../..
+npm run native:preflight
 ```
 
 ## Generated external cursor packs

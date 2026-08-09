@@ -758,10 +758,26 @@ async function resolveInstalledArtifacts(root, identifiers) {
     }
     const packPath = path.join(root, entry.name);
     if (!entry.isDirectory()) {
-      fail(
-        "UNSAFE_STORE",
-        "The imported cursor store contains an unsafe pack.",
-      );
+      continue;
+    }
+    let declaredIdentifier;
+    try {
+      await regularDirectory(packPath);
+      declaredIdentifier = await readInstalledArtifactIdentifier(packPath);
+    } catch (error) {
+      if (
+        error instanceof CursorImportInstallError ||
+        ["EACCES", "ELOOP", "ENOENT", "ENOTDIR", "EPERM"].includes(error?.code)
+      ) {
+        continue;
+      }
+      throw error;
+    }
+    if (
+      !declaredIdentifier ||
+      !requested.has(declaredIdentifier.toLowerCase())
+    ) {
+      continue;
     }
     const artifact = await validateArtifact(packPath);
     if (path.dirname(artifact.directory) !== root) {
@@ -788,6 +804,37 @@ async function resolveInstalledArtifacts(root, identifiers) {
     );
   }
   return [...requested.keys()].map((key) => resolved.get(key));
+}
+
+async function readInstalledArtifactIdentifier(directory) {
+  const canonicalDirectory = await fs.promises.realpath(directory);
+  const manifestFile = path.join(canonicalDirectory, "manifest.json");
+  let manifestStat;
+  try {
+    manifestStat = await regularFile(manifestFile);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (
+    manifestStat.size <= 0 ||
+    manifestStat.size > MAX_IMPORTED_MANIFEST_BYTES
+  ) {
+    return null;
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(await fs.promises.readFile(manifestFile, "utf8"));
+  } catch {
+    return null;
+  }
+  const identifier = manifest?.themes?.[0]?.Identifier;
+  return typeof identifier === "string" && SAFE_NAME.test(identifier)
+    ? identifier
+    : null;
 }
 
 async function replacePrivateManifest(root, artifact, manifest) {

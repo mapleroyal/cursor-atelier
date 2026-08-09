@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import json
 import unittest
 from pathlib import Path
 
@@ -31,9 +32,18 @@ class BuildInventoryTests(unittest.TestCase):
         )
 
     def test_builtin_inventory_is_an_exact_set(self) -> None:
-        self.assertEqual(len(build_all.EXPECTED_OREO_IDENTIFIERS), 19)
+        catalog = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "oreo/Resources/Themes/catalog.json"
+            ).read_text()
+        )
+        built_in_identifiers = {
+            theme["nativeThemeId"] for theme in catalog["themes"]
+        }
+        self.assertEqual(len(built_in_identifiers), 19)
         unified = [job.identifier for job in build_all._jobs()]
-        unified.extend(build_all.EXPECTED_OREO_IDENTIFIERS)
+        unified.extend(built_in_identifiers)
         self.assertEqual(len(unified), 240)
         self.assertEqual(
             build_all._identifier_digest(unified),

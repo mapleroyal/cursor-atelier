@@ -45,8 +45,14 @@ NS_ASSUME_NONNULL_BEGIN
                                                error:
     (NSError * _Nullable * _Nullable)error;
 
-/// Returns the saved allowlisted theme, defaulting to Oreo White.
+/// Returns the saved allowlisted theme, defaulting to the catalog's declared
+/// theme in the main bundle.
 + (NSString *)selectedThemeIdentifier;
+
+/// Equivalent lookup using an explicit resource bundle. The embedded login
+/// helper uses the outer app bundle because its own bundle has no theme catalog.
++ (NSString *)selectedThemeIdentifierForResourceBundle:
+    (NSBundle *)resourceBundle;
 
 /// Persists an allowlisted selection for both the app and login helper.
 + (BOOL)saveSelectedThemeIdentifier:(NSString *)themeIdentifier

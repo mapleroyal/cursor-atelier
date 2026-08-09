@@ -60,32 +60,44 @@ if [[ "$identity_details" != *"$sign_identity"* ]]; then
     exit 1
 fi
 
-theme_count=$(find "$script_dir/Resources/Themes" \
-    -maxdepth 1 -type f -name '*.cursor' | wc -l | tr -d ' ')
-if [[ "$theme_count" != "19" ]]; then
-    print -u2 "Expected exactly 19 built-in Oreo theme resources."
-    exit 1
-fi
-(
-    cd "$script_dir/Resources/Themes"
-    /usr/bin/shasum -a 256 -c \
-        "$script_dir/ArtworkSource/THEME-SHA256SUMS.txt"
-)
+themes_source_path="$script_dir/Resources/Themes"
+catalog_path="$themes_source_path/catalog.json"
+/usr/bin/python3 - "$catalog_path" "$themes_source_path" <<'PY'
+import hashlib
+import json
+import plistlib
+import sys
+from pathlib import Path
 
-engine_source="$script_dir/Sources/OreoCursorEngine.m"
-# Each checked-in Oreo digest must still occur exactly once in the native
-# source. Do not count the manifest parser's key references here; generated
-# packs intentionally supply their own digests at build time.
-while read -r expected_hash theme_filename; do
-    engine_hash_count=$(
-        /usr/bin/grep -Foc "$expected_hash" "$engine_source" || true
-    )
-    if [[ "$engine_hash_count" != "1" ]]; then
-        print -u2 \
-            "Theme hash is not synchronized with OreoCursorEngine.m: $theme_filename"
-        exit 1
-    fi
-done < "$script_dir/ArtworkSource/THEME-SHA256SUMS.txt"
+catalog_path, themes_path = map(Path, sys.argv[1:])
+catalog = json.loads(catalog_path.read_text())
+themes = catalog.get("themes")
+if catalog.get("schemaVersion") != 1 or not isinstance(themes, list) or len(themes) != 19:
+    raise SystemExit("Built-in Oreo catalog must contain exactly 19 schema-v1 themes.")
+resources = {path.name for path in themes_path.glob("*.cursor")}
+declared = {str(theme.get("resourceFile", "")) for theme in themes}
+if resources != declared:
+    raise SystemExit("Built-in Oreo catalog and cursor resources differ.")
+identifiers = set()
+default_theme_id = catalog.get("defaultThemeId")
+for theme in themes:
+    identifier = str(theme.get("nativeThemeId", ""))
+    resource = themes_path / str(theme.get("resourceFile", ""))
+    if not identifier or identifier in identifiers:
+        raise SystemExit("Built-in Oreo catalog contains an invalid identifier.")
+    identifiers.add(identifier)
+    data = resource.read_bytes()
+    cursor = plistlib.loads(data)
+    if (
+        hashlib.sha256(data).hexdigest() != theme.get("sha256")
+        or cursor.get("Identifier") != identifier
+        or cursor.get("ThemeName") != theme.get("plistName")
+        or cursor.get("UUID") != theme.get("uuid")
+    ):
+        raise SystemExit(f"{identifier} differs from catalog.json.")
+if default_theme_id not in identifiers:
+    raise SystemExit("Built-in Oreo catalog defaultThemeId is invalid.")
+PY
 
 cleanup() {
     /bin/rm -rf "$staging_path"

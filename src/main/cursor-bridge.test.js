@@ -89,6 +89,19 @@ afterEach(() => {
 });
 
 describe("cursor bridge unavailable state", () => {
+  it("retains every requested native cleanup when the bridge is unavailable", async () => {
+    const bridge = createCursorBridge({
+      nativePath: "/missing/cursor-bridge",
+      discover: false,
+    });
+
+    await expect(
+      bridge.forgetThemeSizes(["ImportedBlue", "ImportedBlue", "ImportedRed"]),
+    ).resolves.toEqual({
+      failedIdentifiers: ["ImportedBlue", "ImportedRed"],
+    });
+  });
+
   it("never reports a preview-only selection as active", async () => {
     const bridge = createCursorBridge({
       nativePath: "/missing/cursor-bridge",
@@ -96,10 +109,11 @@ describe("cursor bridge unavailable state", () => {
     });
 
     await expect(bridge.status()).resolves.toMatchObject({
+      schemaVersion: 1,
       previewMode: true,
       bridgeAvailable: false,
       canApply: false,
-      isEnabled: false,
+      effectiveApplied: false,
       effectiveVariantId: null,
     });
     await expect(bridge.applyTheme("oreo-blue")).rejects.toThrow(
@@ -149,8 +163,9 @@ describe("cursor bridge unavailable state", () => {
 
     const [theme] = await bridge.listThemes();
     expect(theme).toMatchObject({
+      schemaVersion: 1,
       nativeThemeId: "MogaClassic",
-      available: true,
+      resourceAvailable: true,
       canApply: false,
     });
     expect(theme.preview).toMatch(
@@ -176,10 +191,48 @@ describe("cursor bridge unavailable state", () => {
     await expect(bridge.listThemes()).resolves.toEqual([
       expect.objectContaining({
         nativeThemeId: "MogaClassic",
-        resourceInstalled: true,
+        resourceAvailable: true,
         preview: theme.preview,
       }),
     ]);
+  });
+
+  it("uses stable file metadata for immutable built-in preview URLs", async () => {
+    const root = temporaryDirectory();
+    fs.writeFileSync(path.join(root, "Fixture.cursor"), "cursor");
+    fs.mkdirSync(path.join(root, "previews"), { mode: 0o700 });
+    fs.writeFileSync(path.join(root, "previews", "fixture.png"), ONE_PIXEL_PNG);
+    const readSpy = vi.spyOn(fs, "readSync");
+    const bridge = createCursorBridge({
+      nativePath: "/missing/cursor-bridge",
+      discover: false,
+      manifestRoot: root,
+      manifestData: {
+        schemaVersion: 2,
+        themes: [
+          {
+            Identifier: "Fixture",
+            DisplayName: "Fixture",
+            Resource: "Fixture.cursor",
+            preview: "previews/fixture.png",
+            rolePreviews: [
+              {
+                role: "default",
+                macIdentifier: "com.apple.coregraphics.Arrow",
+                asset: "previews/fixture.png",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const first = (await bridge.listThemes())[0].preview;
+    await bridge.invalidateManifests();
+    const second = (await bridge.listThemes())[0].preview;
+
+    expect(second).toBe(first);
+    expect(readSpy).not.toHaveBeenCalled();
   });
 
   it("prefers the manifest staged beside a discovered development bridge", () => {
@@ -241,12 +294,12 @@ describe("cursor bridge imported manifests", () => {
       (candidate) => candidate.id === "imported-aurora",
     );
     expect(theme).toMatchObject({
+      schemaVersion: 1,
       nativeThemeId: "ImportedAurora",
       displayName: "Imported Aurora",
       availability: "imported",
       imported: true,
-      resourceInstalled: true,
-      available: true,
+      resourceAvailable: true,
       canApply: false,
       nativeListed: false,
       status: "preview",
@@ -258,6 +311,11 @@ describe("cursor bridge imported manifests", () => {
     expect(bridge.resolvePreviewAsset(theme.preview)).toBe(
       fs.realpathSync(pack.previewPath),
     );
+    expect(theme).not.toHaveProperty("identifier");
+    expect(theme).not.toHaveProperty("available");
+    expect(theme).not.toHaveProperty("isAvailable");
+    expect(theme).not.toHaveProperty("SizePercentage");
+    expect(theme).not.toHaveProperty("resourceInstalled");
   });
 
   it("lets an authoritative native inventory make a valid import applyable", async () => {
@@ -286,11 +344,12 @@ describe("cursor bridge imported manifests", () => {
       (candidate) => candidate.id === "imported-aurora",
     );
     expect(theme).toMatchObject({
+      schemaVersion: 1,
       nativeThemeId: "ImportedAurora",
       availability: "imported",
       imported: true,
       nativeListed: true,
-      resourceInstalled: true,
+      resourceAvailable: true,
       canApply: true,
       status: "available",
     });
@@ -396,7 +455,7 @@ describe("cursor bridge imported manifests", () => {
       selectionReassigned: true,
       status: {
         selectedNativeThemeId: "OreoWhite",
-        isEnabled: false,
+        effectiveApplied: false,
       },
     });
     expect(calls).toEqual([
@@ -558,7 +617,7 @@ describe("cursor bridge imported manifests", () => {
       });
 
       await expect(
-        bridge.recoverImportedDeletionState({
+        bridge.recoverNativeState({
           previousSelectedIdentifier: "ImportedAurora",
           previousEffectiveIdentifier: "ImportedAurora",
           previousCursorWasLive: true,
@@ -567,13 +626,14 @@ describe("cursor bridge imported manifests", () => {
           previousLoginItemRegistrationCurrent: priorRegistrationCurrent,
           previousTransactionPending: false,
           teardownPlanned: true,
+          teardownCurrent: true,
         }),
       ).resolves.toMatchObject({
         desiredEnabled: true,
         effectiveApplied: true,
         launchAtLoginDesired: launchDesired,
       });
-      expect(calls).toEqual(expectedCommands);
+      expect(calls).toEqual([["--teardown"], ...expectedCommands]);
     },
   );
 
@@ -1359,30 +1419,31 @@ describe("cursor bridge live native state", () => {
     };
   }
 
-  it("uses one atomic command and refetches live status after mutations", async () => {
+  it("uses the atomic native mutation diagnostics as live status", async () => {
     const fixture = createNativeFixture();
 
-    await expect(fixture.bridge.applyTheme("oreo-blue")).resolves.toMatchObject(
-      {
-        selectedVariantId: "oreo-blue",
-        requestedVariantId: "oreo-blue",
-        effectiveVariantId: "oreo-blue",
-        isEnabled: true,
-        liveVerified: true,
-      },
-    );
-    expect(fixture.calls).toEqual([
-      ["--apply-theme", "OreoBlue"],
-      ["--status"],
-    ]);
+    const applied = await fixture.bridge.applyTheme("oreo-blue");
+    expect(applied).toMatchObject({
+      schemaVersion: 1,
+      selectedVariantId: "oreo-blue",
+      requestedVariantId: "oreo-blue",
+      effectiveVariantId: "oreo-blue",
+      effectiveApplied: true,
+      currentSentinelsMatchTheme: true,
+    });
+    expect(applied).not.toHaveProperty("selectedThemeIdentifier");
+    expect(applied).not.toHaveProperty("themeIdentifier");
+    expect(applied).not.toHaveProperty("isEnabled");
+    expect(applied).not.toHaveProperty("liveVerified");
+    expect(fixture.calls).toEqual([["--apply-theme", "OreoBlue"]]);
 
     await expect(fixture.bridge.restore()).resolves.toMatchObject({
       selectedVariantId: "oreo-blue",
       requestedVariantId: null,
       effectiveVariantId: null,
-      isEnabled: false,
+      effectiveApplied: false,
     });
-    expect(fixture.calls.slice(-2)).toEqual([["--teardown"], ["--status"]]);
+    expect(fixture.calls.slice(-1)).toEqual([["--teardown"]]);
   });
 
   it("reconciles the installed login helper without applying a cursor", async () => {
@@ -1410,6 +1471,7 @@ describe("cursor bridge live native state", () => {
     await expect(
       fixture.bridge.setThemeSize("oreo-blue", 135),
     ).resolves.toEqual({
+      schemaVersion: 1,
       id: "oreo-blue",
       nativeThemeId: "OreoBlue",
       sizePercentage: 135,
@@ -1511,13 +1573,11 @@ describe("cursor bridge live native state", () => {
       desiredEnabled: true,
       persistedEffectiveApplied: true,
       effectiveApplied: false,
-      isEnabled: false,
-      liveVerified: false,
       stateDrifted: true,
     });
   });
 
-  it("refreshes authoritative status after a failed mutation", async () => {
+  it("uses authoritative diagnostics returned by a failed mutation", async () => {
     const commandRunner = vi.fn(async ({ command }) => {
       if (command === "--apply-theme") {
         const error = new Error("process exited");
@@ -1552,11 +1612,12 @@ describe("cursor bridge live native state", () => {
       message: "macOS rejected the cursor change.",
       status: {
         effectiveVariantId: null,
-        isEnabled: false,
+        effectiveApplied: false,
       },
     });
+    expect(commandRunner).toHaveBeenCalledTimes(1);
     expect(commandRunner).toHaveBeenLastCalledWith(
-      expect.objectContaining({ command: "--status" }),
+      expect.objectContaining({ command: "--apply-theme" }),
     );
   });
 });

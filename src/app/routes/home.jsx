@@ -1,12 +1,4 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -25,6 +17,7 @@ import {
   FolderFavouriteIcon,
   InformationCircleIcon,
   Moon02Icon,
+  MoreHorizontalIcon,
   Search01Icon,
   Settings02Icon,
   Sun02Icon,
@@ -89,16 +82,21 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { SettingsScreen } from "@/components/settings-screen";
 import * as catalog from "@/lib/cursor-catalog";
+import { CURSOR_DTO_SCHEMA_VERSION } from "@/lib/cursor-dto";
 import {
   createDefaultCursorPreferences,
   getCursorPreferenceId,
+  mergeCursorPreferences,
   normalizeCursorPreferences,
+  resolveRandomCursorPool,
 } from "@/lib/cursor-preferences";
 import {
   DEFAULT_CURSOR_SIZE_PERCENTAGE,
   MAX_CURSOR_SIZE_PERCENTAGE,
   MIN_CURSOR_SIZE_PERCENTAGE,
+  applyCursorPreferenceUpdates,
   applyCursorTheme,
   assignImportedCursorFamily,
   deleteImportedCursor,
@@ -119,36 +117,22 @@ import {
   matchesCursorPack,
   normalizeCursorSizePercentage,
   openLoginItemsSettings,
+  readRevisionStable,
+  resolveCursorPreferenceUpdate,
   resolveCursorPoolPacks,
   resolvePackQuerySource,
   restoreCursorState,
   setCursorThemeSize,
 } from "@/lib/cursor-ui";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/stores/app-store";
-
-const loadSettingsScreen = () => import("@/components/settings-screen");
-const SettingsScreen = lazy(() =>
-  loadSettingsScreen().then((module) => ({ default: module.SettingsScreen })),
-);
+import {
+  getSystemTheme,
+  subscribeToSystemTheme,
+  useAppStore,
+} from "@/stores/app-store";
 
 const DEFAULT_ROLES = ["default", "text", "pointer", "wait", "progress"];
 const CONTEXT_MENU_DISMISS_MS = 100;
-
-const FALLBACK_PACK = {
-  id: "oreo-white",
-  family: "Oreo",
-  name: "White",
-  variant: "White",
-  author: "Oreo Cursor",
-  license: "GPL-2.0",
-  cursorCount: DEFAULT_ROLES.length,
-  roles: DEFAULT_ROLES,
-  status: "available",
-  available: true,
-  canApply: true,
-  nativeThemeId: "OreoWhite",
-};
 
 const ROLE_LABELS = {
   default: "Arrow",
@@ -243,23 +227,23 @@ function formatAnimationDuration(frameCount, frameDuration) {
 }
 
 function previewSource(value) {
-  if (typeof catalog.normalizePreviewSource === "function") {
-    return catalog.normalizePreviewSource(value);
-  }
   if (typeof value === "string" && value) {
     return value;
   }
-  return value?.src ?? value?.url ?? null;
+  return typeof value?.src === "string" && value.src ? value.src : null;
 }
 
 function normaliseRole(role, index) {
   if (typeof role === "string") {
     return {
       id: role,
+      role,
       name: formatRoleName(role),
+      macIdentifier: null,
       src: null,
       frameCount: 1,
       frameDuration: null,
+      hotspot: null,
       fallback: false,
     };
   }
@@ -268,67 +252,65 @@ function normaliseRole(role, index) {
     role?.macIdentifier ?? role?.role ?? role?.name ?? `cursor-${index}`,
   );
   return {
-    ...role,
     id: key,
+    role: role?.role ?? null,
     name:
       MAC_ROLE_LABELS[key] ?? formatRoleName(role?.name ?? role?.role ?? key),
-    src: previewSource(role),
+    macIdentifier: role?.macIdentifier ?? null,
+    src: previewSource(role?.src),
     frameCount: Number.isFinite(Number(role?.frameCount))
       ? Number(role.frameCount)
       : 1,
     frameDuration: Number.isFinite(Number(role?.frameDuration))
       ? Number(role.frameDuration)
       : null,
+    hotspot: role?.hotspot ?? null,
     fallback: Boolean(role?.fallback),
   };
 }
 
 function normalisePack(pack = {}) {
-  const id = String(
-    pack.id ?? pack.nativeThemeId ?? pack.name ?? "cursor-pack",
-  );
-  const family = String(pack.family ?? pack.collection ?? "Cursor pack");
+  const id = String(pack.id ?? pack.nativeThemeId ?? "cursor-pack");
+  const family = String(pack.family ?? "Cursor pack");
   const variant = String(pack.variant ?? pack.name ?? family);
   const rawRoles =
     Array.isArray(pack.rolePreviews) && pack.rolePreviews.length
       ? pack.rolePreviews
-      : (pack.roles ?? pack.cursorRoles ?? DEFAULT_ROLES);
+      : (pack.cursorRoles ?? DEFAULT_ROLES);
   const roles = Array.isArray(rawRoles)
     ? rawRoles.map(normaliseRole)
     : DEFAULT_ROLES.map(normaliseRole);
-  const available = Boolean(
-    pack.resourceAvailable ??
-    pack.isAvailable ??
-    pack.available ??
-    pack.nativeThemeId,
-  );
-  const canApply = Boolean(pack.canApply ?? available);
+  const resourceAvailable = Boolean(pack.resourceAvailable);
+  const canApply = Boolean(pack.canApply);
   const exactRoleCount =
     Array.isArray(pack.rolePreviews) && pack.rolePreviews.length
       ? pack.rolePreviews.length
       : roles.length;
 
   return {
-    ...pack,
     id,
     family,
     variant,
     name: String(pack.name ?? variant),
     author: pack.author ?? "",
     license: pack.license ?? "",
-    sourceUrl: pack.sourceUrl ?? pack.url ?? "",
+    sourceUrl: pack.sourceUrl ?? "",
+    nativeThemeId: pack.nativeThemeId ?? id,
+    nativeThemeIds: Array.isArray(pack.nativeThemeIds)
+      ? [...pack.nativeThemeIds]
+      : [],
+    resourceAvailable,
+    canApply,
+    imported: Boolean(pack.imported),
+    tags: Array.isArray(pack.tags) ? [...pack.tags] : [],
+    cursorRoles: Array.isArray(pack.cursorRoles) ? [...pack.cursorRoles] : [],
     roles,
     roleCount: exactRoleCount,
     cursorCount: Number.isFinite(Number(pack.cursorCount))
       ? Number(pack.cursorCount)
       : exactRoleCount,
-    status: pack.status ?? (available ? "available" : "unavailable"),
-    available,
-    canApply,
-    nativeThemeId: pack.nativeThemeId ?? id,
-    sizePercentage: normalizeCursorSizePercentage(
-      pack.sizePercentage ?? pack.SizePercentage,
-    ),
+    status: pack.status ?? (resourceAvailable ? "available" : "unavailable"),
+    sizePercentage: normalizeCursorSizePercentage(pack.sizePercentage),
     preview:
       previewSource(pack.preview) ??
       roles.find(
@@ -344,24 +326,38 @@ function normalisePack(pack = {}) {
 function getCatalogue() {
   const source = Array.isArray(catalog.CURSOR_CATALOG)
     ? catalog.CURSOR_CATALOG
-    : Array.isArray(catalog.CURSOR_PACKS)
-      ? catalog.CURSOR_PACKS
-      : [];
+    : [];
 
-  return (source.length ? source : [FALLBACK_PACK]).map(normalisePack);
+  return source.map(normalisePack);
 }
 
 async function getNativeStatus() {
   const method = window.electronAPI?.getCursorStatus;
   if (typeof method !== "function") {
     return {
-      available: false,
+      schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
+      supported: false,
       bridgeAvailable: false,
+      statusAvailable: true,
       previewMode: true,
       reason: "Cursor engine unavailable",
       selectedVariantId: null,
+      requestedVariantId: null,
       effectiveVariantId: null,
+      themeDisplayName: null,
+      themeSizePercentage: DEFAULT_CURSOR_SIZE_PERCENTAGE,
+      resourceAvailable: false,
+      canApply: false,
+      desiredEnabled: false,
       effectiveApplied: false,
+      persistedEffectiveApplied: false,
+      currentSentinelsMatchTheme: false,
+      launchAtLoginDesired: false,
+      loginApprovalRequired: false,
+      loginItemRegistrationCurrent: false,
+      transactionPending: false,
+      stateDrifted: false,
+      lastError: null,
     };
   }
   return method();
@@ -621,6 +617,90 @@ function FamilyContextActions({
   );
 }
 
+function PackManagementMenu({
+  pack,
+  familyNames = [],
+  managementDisabled = false,
+  onAssignFamily,
+  onCreateFamily,
+  onDelete,
+  className,
+}) {
+  const [open, setOpen] = useState(false);
+  const otherFamilies = familyNames.filter(
+    (family) => family.toLocaleLowerCase() !== pack.family.toLocaleLowerCase(),
+  );
+
+  if (pack.imported !== true) {
+    return null;
+  }
+
+  const closeThen = (action) => {
+    setOpen(false);
+    window.setTimeout(action, 0);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Manage ${pack.variant}`}
+          disabled={managementDisabled}
+          className={cn(
+            "shrink-0 text-muted-foreground/70 hover:text-foreground",
+            className,
+          )}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <HugeiconsIcon
+            icon={MoreHorizontalIcon}
+            strokeWidth={2}
+            aria-hidden="true"
+          />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="max-h-72 min-w-48 overflow-y-auto"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <p className="px-3 pt-2 pb-1 text-label-sm text-muted-foreground">
+          Move to family
+        </p>
+        {otherFamilies.map((family) => (
+          <button
+            key={family}
+            type="button"
+            className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+            onClick={() => closeThen(() => onAssignFamily?.(pack, family))}
+          >
+            <span className="truncate">{family}</span>
+          </button>
+        ))}
+        <button
+          type="button"
+          className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+          onClick={() => closeThen(() => onCreateFamily?.(pack))}
+        >
+          New family…
+        </button>
+        <Separator className="my-1" />
+        <button
+          type="button"
+          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm text-destructive outline-none hover:bg-destructive/10 focus-visible:bg-destructive/10 dark:hover:bg-destructive/20 dark:focus-visible:bg-destructive/20"
+          onClick={() => closeThen(() => onDelete?.(pack))}
+        >
+          <HugeiconsIcon icon={Delete01Icon} strokeWidth={2} />
+          Delete cursor…
+        </button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function PackRailShortcut({
   pack,
   label,
@@ -641,27 +721,37 @@ function PackRailShortcut({
       onToggleFavorite={onToggleFavorite}
       onAssignAppearanceCursor={onAssignAppearanceCursor}
     >
-      <button
-        type="button"
-        onClick={() => onSelect(pack.id)}
-        className="group flex w-full min-w-0 items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60"
-      >
-        <PackPreview pack={pack} active={active} />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-title-md">{pack.variant}</span>
-          <span className="block truncate text-body-sm text-muted-foreground">
-            {label ?? pack.family}
+      <div className="group/management relative flex min-w-0 items-center">
+        <button
+          type="button"
+          onClick={() => onSelect(pack.id)}
+          className={cn(
+            "group flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60",
+            pack.imported && "pr-8",
+          )}
+        >
+          <PackPreview pack={pack} active={active} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-title-md">{pack.variant}</span>
+            <span className="block truncate text-body-sm text-muted-foreground">
+              {label ?? pack.family}
+            </span>
           </span>
-        </span>
-        {active ? (
-          <HugeiconsIcon
-            icon={CheckmarkCircle02Icon}
-            strokeWidth={2.2}
-            className="size-4 shrink-0 text-primary"
-            aria-hidden="true"
-          />
-        ) : null}
-      </button>
+          {active ? (
+            <HugeiconsIcon
+              icon={CheckmarkCircle02Icon}
+              strokeWidth={2.2}
+              className="size-4 shrink-0 text-primary"
+              aria-hidden="true"
+            />
+          ) : null}
+        </button>
+        <PackManagementMenu
+          pack={pack}
+          {...libraryActions}
+          className="absolute right-1 opacity-55 group-hover/management:opacity-100 group-focus-within/management:opacity-100"
+        />
+      </div>
     </PackContextActions>
   );
 }
@@ -737,9 +827,9 @@ function PackRail({
     ...libraryActions,
     familyNames,
     appearanceApplicationUnavailable: !engineAvailable,
-    appearanceAssignmentDisabled: libraryActions.managementDisabled,
-    preferencesDisabled:
-      !preferencesAvailable || libraryActions.managementDisabled,
+    appearanceAssignmentDisabled:
+      libraryActions.managementDisabled || libraryActions.preferencesSaving,
+    preferencesDisabled: !preferencesAvailable,
   };
   const currentPack = verifiedActive
     ? allPacks.find((pack) => matchesCursorPack(pack, effectiveId))
@@ -1027,10 +1117,7 @@ function PackRail({
                         familyPacks={allPacksByFamily.get(family) ?? []}
                         favorite
                         managementDisabled={libraryActions.managementDisabled}
-                        preferencesDisabled={
-                          !preferencesAvailable ||
-                          libraryActions.managementDisabled
-                        }
+                        preferencesDisabled={!preferencesAvailable}
                         onDelete={libraryActions.onDeleteFamily}
                         onToggleFavorite={onToggleFamilyFavorite}
                       >
@@ -1238,10 +1325,7 @@ function PackRail({
                       familyPacks={allPacksByFamily.get(family) ?? []}
                       favorite={familyFavorite}
                       managementDisabled={libraryActions.managementDisabled}
-                      preferencesDisabled={
-                        !preferencesAvailable ||
-                        libraryActions.managementDisabled
-                      }
+                      preferencesDisabled={!preferencesAvailable}
                       onDelete={libraryActions.onDeleteFamily}
                       onToggleFavorite={onToggleFamilyFavorite}
                     >
@@ -1310,45 +1394,54 @@ function PackRail({
                                 onAssignAppearanceCursor
                               }
                             >
-                              <button
-                                type="button"
-                                ref={(node) => {
-                                  if (node) {
-                                    optionRefs.current.set(pack.id, node);
-                                  } else {
-                                    optionRefs.current.delete(pack.id);
+                              <div className="group/management relative flex min-w-0 items-center">
+                                <button
+                                  type="button"
+                                  ref={(node) => {
+                                    if (node) {
+                                      optionRefs.current.set(pack.id, node);
+                                    } else {
+                                      optionRefs.current.delete(pack.id);
+                                    }
+                                  }}
+                                  onClick={() => selectShortcut(pack.id)}
+                                  onKeyDown={(event) =>
+                                    handleOptionKeyDown(event, pack.id)
                                   }
-                                }}
-                                onClick={() => selectShortcut(pack.id)}
-                                onKeyDown={(event) =>
-                                  handleOptionKeyDown(event, pack.id)
-                                }
-                                className={cn(
-                                  "group relative flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-2xl px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
-                                  selected
-                                    ? "bg-accent text-accent-foreground"
-                                    : "hover:bg-muted/60",
-                                  !canApply && "opacity-60",
-                                )}
-                                aria-current={selected ? "true" : undefined}
-                                aria-label={`${pack.family} ${pack.variant}${active ? ", active" : ""}${canApply ? "" : ", unavailable"}`}
-                                tabIndex={pack.id === rovingId ? 0 : -1}
-                              >
-                                <PackPreview pack={pack} active={active} />
-                                <span className="min-w-0 flex-1 overflow-hidden">
-                                  <span className="block truncate text-title-md">
-                                    {pack.variant}
+                                  className={cn(
+                                    "group relative flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden rounded-2xl px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
+                                    selected
+                                      ? "bg-accent text-accent-foreground"
+                                      : "hover:bg-muted/60",
+                                    !canApply && "opacity-60",
+                                    pack.imported && "pr-8",
+                                  )}
+                                  aria-current={selected ? "true" : undefined}
+                                  data-pack-option=""
+                                  aria-label={`${pack.family} ${pack.variant}${active ? ", active" : ""}${canApply ? "" : ", unavailable"}`}
+                                  tabIndex={pack.id === rovingId ? 0 : -1}
+                                >
+                                  <PackPreview pack={pack} active={active} />
+                                  <span className="min-w-0 flex-1 overflow-hidden">
+                                    <span className="block truncate text-title-md">
+                                      {pack.variant}
+                                    </span>
                                   </span>
-                                </span>
-                                {active ? (
-                                  <HugeiconsIcon
-                                    icon={CheckmarkCircle02Icon}
-                                    strokeWidth={2.2}
-                                    className="size-4 shrink-0 text-primary"
-                                    aria-hidden="true"
-                                  />
-                                ) : null}
-                              </button>
+                                  {active ? (
+                                    <HugeiconsIcon
+                                      icon={CheckmarkCircle02Icon}
+                                      strokeWidth={2.2}
+                                      className="size-4 shrink-0 text-primary"
+                                      aria-hidden="true"
+                                    />
+                                  ) : null}
+                                </button>
+                                <PackManagementMenu
+                                  pack={pack}
+                                  {...packLibraryActions}
+                                  className="absolute right-1 opacity-55 group-hover/management:opacity-100 group-focus-within/management:opacity-100"
+                                />
+                              </div>
                             </PackContextActions>
                           );
                         })}
@@ -1412,6 +1505,7 @@ function PackDetails({
   randomizationPoolSizes = {},
   selectedBySystem,
   operation,
+  preferencesSaving,
   onApply,
   onSizeCommit,
   onToggleFavorite,
@@ -1430,8 +1524,9 @@ function PackDetails({
   statusErrorMessage,
   onRetryStatus,
   statusRetrying,
+  libraryActions = {},
 }) {
-  const busy = operation !== "idle";
+  const cursorBusy = operation !== "idle";
   const canApply = engineAvailable && pack.canApply === true;
   const [sizeDraft, setSizeDraft] = useState(null);
   const previewSize = sizeDraft ?? pack.sizePercentage;
@@ -1446,6 +1541,19 @@ function PackDetails({
   const darkActionLabel = darkAssigned
     ? "Clear the default dark mode cursor"
     : `Set ${pack.variant} as the default dark mode cursor`;
+  const pendingDetailMessage =
+    operation === "sizing"
+      ? "Saving size…"
+      : operation === "assigning-light"
+        ? "Saving light mode cursor…"
+        : operation === "assigning-dark"
+          ? "Saving dark mode cursor…"
+          : null;
+  const detailFeedback =
+    feedback ??
+    (pendingDetailMessage
+      ? { type: "pending", message: pendingDetailMessage }
+      : null);
 
   const commitSize = useCallback(
     (values) => {
@@ -1502,7 +1610,7 @@ function PackDetails({
                   type="button"
                   variant={active ? "outline" : "default"}
                   size="sm"
-                  disabled={busy || !canApply}
+                  disabled={cursorBusy || !canApply}
                   onClick={onApply}
                 >
                   {operation === "applying"
@@ -1522,7 +1630,7 @@ function PackDetails({
                       aria-label={
                         favorite ? "Remove from Favorites" : "Add to Favorites"
                       }
-                      disabled={busy || !preferencesAvailable}
+                      disabled={!preferencesAvailable}
                       className={cn(
                         "text-muted-foreground",
                         favorite && "text-rose-500 hover:text-rose-500",
@@ -1552,7 +1660,8 @@ function PackDetails({
                       aria-pressed={lightAssigned}
                       aria-label={lightActionLabel}
                       disabled={
-                        busy ||
+                        cursorBusy ||
+                        preferencesSaving ||
                         !preferencesAvailable ||
                         (!lightAssigned && !canApply)
                       }
@@ -1584,7 +1693,8 @@ function PackDetails({
                       aria-pressed={darkAssigned}
                       aria-label={darkActionLabel}
                       disabled={
-                        busy ||
+                        cursorBusy ||
+                        preferencesSaving ||
                         !preferencesAvailable ||
                         (!darkAssigned && !canApply)
                       }
@@ -1612,7 +1722,7 @@ function PackDetails({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={busy || !canApply || !preferencesAvailable}
+                    disabled={!canApply || !preferencesAvailable}
                   >
                     Randomization…
                   </Button>
@@ -1643,6 +1753,7 @@ function PackDetails({
                   })}
                 </PopoverContent>
               </Popover>
+              <PackManagementMenu pack={pack} {...libraryActions} />
             </div>
           </TooltipProvider>
         </div>
@@ -1691,27 +1802,27 @@ function PackDetails({
             </div>
           ) : null}
 
-          {feedback ? (
+          {detailFeedback ? (
             <div
-              role={feedback.type === "error" ? "alert" : "status"}
+              role={detailFeedback.type === "error" ? "alert" : "status"}
               className={cn(
                 "mb-5 flex items-center gap-2 text-body-sm",
-                feedback.type === "error"
+                detailFeedback.type === "error"
                   ? "text-destructive"
                   : "text-muted-foreground",
               )}
             >
               <HugeiconsIcon
                 icon={
-                  feedback.type === "error"
-                    ? InformationCircleIcon
-                    : CheckmarkCircle02Icon
+                  detailFeedback.type === "success"
+                    ? CheckmarkCircle02Icon
+                    : InformationCircleIcon
                 }
                 strokeWidth={2}
                 className="size-4 shrink-0"
                 aria-hidden="true"
               />
-              <span>{feedback.message}</span>
+              <span>{detailFeedback.message}</span>
             </div>
           ) : null}
 
@@ -1733,7 +1844,7 @@ function PackDetails({
                 size="xs"
                 className="-my-1"
                 onClick={onOpenLoginSettings}
-                disabled={busy}
+                disabled={cursorBusy}
               >
                 {operation === "opening-settings"
                   ? "Opening…"
@@ -1812,7 +1923,7 @@ function PackDetails({
                   )
                 }
                 onValueCommit={commitSize}
-                disabled={busy || !canApply}
+                disabled={cursorBusy || !canApply}
               />
             </div>
           </div>
@@ -1915,7 +2026,27 @@ export function HomeRoute() {
   const [familyDialogError, setFamilyDialogError] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [selectionWasChanged, setSelectionWasChanged] = useState(false);
+  const [subscriptionsReady, setSubscriptionsReady] = useState(false);
+  const [pendingPreferenceCount, setPendingPreferenceCount] = useState(0);
+  const [systemAppearance, setSystemAppearance] = useState(() =>
+    getSystemTheme(),
+  );
   const operationRef = useRef(null);
+  const eventRevisionRef = useRef({ preferences: 0, status: 0, themes: 0 });
+  const pendingPreferenceUpdatesRef = useRef([]);
+  const preferenceRequestIdRef = useRef(0);
+  const preferenceSaveQueueRef = useRef(Promise.resolve());
+  const authoritativePreferencesRef = useRef(createDefaultCursorPreferences());
+  const scheduleCorrectionRef = useRef(null);
+
+  const displayPendingPreferences = useCallback((nextPreferences) => {
+    const authoritative = normalizeCursorPreferences(nextPreferences);
+    authoritativePreferencesRef.current = authoritative;
+    return applyCursorPreferenceUpdates(
+      authoritative,
+      pendingPreferenceUpdatesRef.current,
+    );
+  }, []);
 
   const beginOperation = useCallback((kind) => {
     if (operationRef.current) {
@@ -1935,26 +2066,114 @@ export function HomeRoute() {
     setOperation("idle");
   }, []);
 
+  useEffect(
+    () => subscribeToSystemTheme(setSystemAppearance),
+    [setSystemAppearance],
+  );
+
   useEffect(() => {
-    let idleId;
-    const timeoutId = window.setTimeout(() => {
-      if (typeof window.requestIdleCallback === "function") {
-        idleId = window.requestIdleCallback(() => void loadSettingsScreen());
-      } else {
-        void loadSettingsScreen();
-      }
-    }, 1_500);
+    const api = window.electronAPI;
+    const unsubscribers = [];
+    if (typeof api?.onCursorPreferencesChanged === "function") {
+      unsubscribers.push(
+        api.onCursorPreferencesChanged((nextPreferences) => {
+          eventRevisionRef.current.preferences += 1;
+          const displayedPreferences =
+            displayPendingPreferences(nextPreferences);
+          queryClient.setQueryData(
+            ["cursor-preferences"],
+            displayedPreferences,
+          );
+        }),
+      );
+    }
+    if (typeof api?.onCursorChanged === "function") {
+      unsubscribers.push(
+        api.onCursorChanged((event) => {
+          if (event?.reason === "renderer-size-preference") {
+            eventRevisionRef.current.themes += 1;
+            void queryClient.invalidateQueries({ queryKey: ["cursor-themes"] });
+            return;
+          }
+          eventRevisionRef.current.status += 1;
+          void queryClient.invalidateQueries({ queryKey: ["cursor-status"] });
+        }),
+      );
+    }
+    if (typeof api?.onCursorLibraryChanged === "function") {
+      unsubscribers.push(
+        api.onCursorLibraryChanged(() => {
+          eventRevisionRef.current.preferences += 1;
+          eventRevisionRef.current.status += 1;
+          eventRevisionRef.current.themes += 1;
+          void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["cursor-themes"] }),
+            queryClient.invalidateQueries({
+              queryKey: ["cursor-preferences"],
+            }),
+            queryClient.invalidateQueries({ queryKey: ["cursor-status"] }),
+          ]);
+        }),
+      );
+    }
+    if (typeof api?.onNavigate === "function") {
+      unsubscribers.push(
+        api.onNavigate((destination) => {
+          if (destination === "settings") {
+            setView("settings");
+            setRailOpen(false);
+            setFeedback(null);
+          } else if (destination === "catalog") {
+            setView("catalog");
+          }
+        }),
+      );
+    }
+
+    // Initial reads are enabled only after every listener is attached. This
+    // ensures startup automation cannot publish a change into a blind window.
+    const readyTimer = window.setTimeout(() => setSubscriptionsReady(true), 0);
+
     return () => {
-      window.clearTimeout(timeoutId);
-      if (idleId !== undefined) {
-        window.cancelIdleCallback?.(idleId);
+      window.clearTimeout(readyTimer);
+      for (const unsubscribe of unsubscribers) {
+        if (typeof unsubscribe === "function") {
+          unsubscribe();
+        }
       }
     };
+  }, [displayPendingPreferences, queryClient]);
+
+  const readAuthoritativePreferencesSnapshot = useCallback(async () => {
+    const snapshot = await readRevisionStable(
+      eventRevisionRef,
+      "preferences",
+      getNativePreferences,
+    );
+    const authoritative = normalizeCursorPreferences(snapshot);
+    authoritativePreferencesRef.current = authoritative;
+    return authoritative;
+  }, []);
+
+  const readPreferencesSnapshot = useCallback(async () => {
+    return applyCursorPreferenceUpdates(
+      await readAuthoritativePreferencesSnapshot(),
+      pendingPreferenceUpdatesRef.current,
+    );
+  }, [readAuthoritativePreferencesSnapshot]);
+
+  const readThemesSnapshot = useCallback(async () => {
+    return readRevisionStable(eventRevisionRef, "themes", getNativeThemes);
+  }, []);
+
+  const readStatusSnapshot = useCallback(async () => {
+    return readRevisionStable(eventRevisionRef, "status", getNativeStatus);
   }, []);
 
   const preferencesQuery = useQuery({
     queryKey: ["cursor-preferences"],
-    queryFn: getNativePreferences,
+    queryFn: readPreferencesSnapshot,
+    enabled: subscriptionsReady,
     staleTime: Infinity,
     retry: false,
   });
@@ -1969,7 +2188,8 @@ export function HomeRoute() {
 
   const nativeThemesQuery = useQuery({
     queryKey: ["cursor-themes"],
-    queryFn: getNativeThemes,
+    queryFn: readThemesSnapshot,
+    enabled: subscriptionsReady,
     staleTime: 15_000,
     retry: false,
   });
@@ -2003,7 +2223,8 @@ export function HomeRoute() {
 
   const statusQuery = useQuery({
     queryKey: ["cursor-status"],
-    queryFn: getNativeStatus,
+    queryFn: readStatusSnapshot,
+    enabled: subscriptionsReady,
     staleTime: 10_000,
     retry: false,
   });
@@ -2037,10 +2258,38 @@ export function HomeRoute() {
   const engineAvailable = Boolean(
     nativeThemeListAvailable && !nativeThemeQueryError && nativeEngineAvailable,
   );
+  const randomizationPoolSizes = useMemo(
+    () => ({
+      light: resolveRandomCursorPool(packs, preferences, "light").length,
+      dark: resolveRandomCursorPool(packs, preferences, "dark").length,
+    }),
+    [packs, preferences],
+  );
+  const canRandomize = Boolean(
+    engineAvailable &&
+    preferencesAvailable &&
+    randomizationPoolSizes[systemAppearance] > 0,
+  );
+  const hasCompleteRandomizationPools = Boolean(
+    randomizationPoolSizes.light > 0 && randomizationPoolSizes.dark > 0,
+  );
+  const canScheduleRandomization = Boolean(
+    engineAvailable && preferencesAvailable && hasCompleteRandomizationPools,
+  );
+  const missingScheduleAppearance = ["light", "dark"].find(
+    (appearance) => randomizationPoolSizes[appearance] === 0,
+  );
+  const scheduleUnavailableMessage =
+    engineAvailable &&
+    randomizationPoolSizes[systemAppearance] > 0 &&
+    missingScheduleAppearance
+      ? `Scheduling also needs a ${missingScheduleAppearance}-mode cursor.`
+      : null;
   const verifiedActive = isStatusVerifiedActive(authoritativeStatus);
   const canRestore =
     nativeEngineAvailable && isRestoreAvailable(authoritativeStatus);
-  const restoreDisabled = operation !== "idle" || !canRestore;
+  const restoreDisabled =
+    operation !== "idle" || pendingPreferenceCount > 0 || !canRestore;
   const loginApprovalRequired = Boolean(
     nativeEngineAvailable && authoritativeStatus?.loginApprovalRequired,
   );
@@ -2050,21 +2299,7 @@ export function HomeRoute() {
     if (!query) {
       return packs;
     }
-    const filterCatalog =
-      catalog.filterCursorPacks ?? catalog.filterCursorCatalog;
-    if (typeof filterCatalog === "function") {
-      const result = filterCatalog(packs, query);
-      if (Array.isArray(result)) {
-        return result.map(normalisePack);
-      }
-    }
-    return packs.filter((pack) =>
-      [pack.id, pack.name, pack.variant, pack.family, pack.author]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(query),
-    );
+    return catalog.filterCursorCatalog(packs, query);
   }, [packs, search]);
 
   const nativeSelection = packs.find(
@@ -2100,66 +2335,6 @@ export function HomeRoute() {
     };
   }, [queryClient]);
 
-  useEffect(() => {
-    const api = window.electronAPI;
-    const unsubscribers = [];
-    if (typeof api?.onCursorPreferencesChanged === "function") {
-      unsubscribers.push(
-        api.onCursorPreferencesChanged((nextPreferences) => {
-          queryClient.setQueryData(
-            ["cursor-preferences"],
-            normalizeCursorPreferences(nextPreferences),
-          );
-        }),
-      );
-    }
-    if (typeof api?.onCursorChanged === "function") {
-      unsubscribers.push(
-        api.onCursorChanged((event) => {
-          if (event?.reason === "renderer-size-preference") {
-            void queryClient.invalidateQueries({ queryKey: ["cursor-themes"] });
-            return;
-          }
-          void queryClient.invalidateQueries({ queryKey: ["cursor-status"] });
-        }),
-      );
-    }
-    if (typeof api?.onCursorLibraryChanged === "function") {
-      unsubscribers.push(
-        api.onCursorLibraryChanged(() => {
-          void Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["cursor-themes"] }),
-            queryClient.invalidateQueries({
-              queryKey: ["cursor-preferences"],
-            }),
-            queryClient.invalidateQueries({ queryKey: ["cursor-status"] }),
-          ]);
-        }),
-      );
-    }
-    if (typeof api?.onNavigate === "function") {
-      unsubscribers.push(
-        api.onNavigate((destination) => {
-          if (destination === "settings") {
-            setView("settings");
-            setRailOpen(false);
-            setFeedback(null);
-          } else if (destination === "catalog") {
-            setView("catalog");
-          }
-        }),
-      );
-    }
-
-    return () => {
-      for (const unsubscribe of unsubscribers) {
-        if (typeof unsubscribe === "function") {
-          unsubscribe();
-        }
-      }
-    };
-  }, [queryClient]);
-
   const selectedPack =
     packs.find((pack) => pack.id === displayedSelectedId) ??
     filteredPacks[0] ??
@@ -2181,9 +2356,9 @@ export function HomeRoute() {
     await queryClient.invalidateQueries({ queryKey: ["cursor-status"] });
     return queryClient.fetchQuery({
       queryKey: ["cursor-status"],
-      queryFn: getNativeStatus,
+      queryFn: readStatusSnapshot,
     });
-  }, [queryClient]);
+  }, [queryClient, readStatusSnapshot]);
 
   const refreshLibraryQueries = useCallback(async () => {
     await Promise.all([
@@ -2194,7 +2369,7 @@ export function HomeRoute() {
   }, [queryClient]);
 
   const handlePreferenceChange = useCallback(
-    async (patch) => {
+    async (update) => {
       if (!preferencesAvailable) {
         setFeedback({
           scope: "preferences",
@@ -2203,60 +2378,182 @@ export function HomeRoute() {
         });
         return false;
       }
-      const token = beginOperation("saving-preferences");
-      if (!token) {
-        return false;
-      }
+      const previousPreferences = normalizeCursorPreferences(
+        queryClient.getQueryData(["cursor-preferences"]),
+      );
+      const resolveEffectivePatch = (currentPreferences) => {
+        const patch = resolveCursorPreferenceUpdate(update, currentPreferences);
+        const requestedPreferences = mergeCursorPreferences(
+          currentPreferences,
+          patch,
+        );
+        const scheduleHasCompletePools = ["light", "dark"].every(
+          (appearance) =>
+            resolveRandomCursorPool(packs, requestedPreferences, appearance)
+              .length > 0,
+        );
+        return engineAvailable &&
+          requestedPreferences.randomization.schedule.mode !== "off" &&
+          !scheduleHasCompletePools
+          ? {
+              ...patch,
+              randomization: {
+                ...(patch?.randomization ?? {}),
+                schedule: {
+                  ...(patch?.randomization?.schedule ?? {}),
+                  mode: "off",
+                },
+              },
+            }
+          : patch;
+      };
+      const effectivePatch = resolveEffectivePatch(previousPreferences);
+      const optimisticPreferences = mergeCursorPreferences(
+        previousPreferences,
+        effectivePatch,
+      );
+      const entry = {
+        id: ++preferenceRequestIdRef.current,
+        update: resolveEffectivePatch,
+      };
+      pendingPreferenceUpdatesRef.current = [
+        ...pendingPreferenceUpdatesRef.current,
+        entry,
+      ];
+      setPendingPreferenceCount(pendingPreferenceUpdatesRef.current.length);
       setFeedback(null);
+      queryClient.setQueryData(["cursor-preferences"], optimisticPreferences);
+
+      let executionRevision = eventRevisionRef.current.preferences;
+      const save = async () => {
+        const authoritativePreferences =
+          await readAuthoritativePreferencesSnapshot();
+        const rebasedPatch = resolveEffectivePatch(authoritativePreferences);
+        executionRevision = eventRevisionRef.current.preferences;
+        const updated = await updateNativePreferences(rebasedPatch);
+        authoritativePreferencesRef.current = updated;
+        return updated;
+      };
+      const request = preferenceSaveQueueRef.current.then(save, save);
+      preferenceSaveQueueRef.current = request.then(
+        () => undefined,
+        () => undefined,
+      );
+
+      const removePendingEntry = () => {
+        pendingPreferenceUpdatesRef.current =
+          pendingPreferenceUpdatesRef.current.filter(
+            (candidate) => candidate.id !== entry.id,
+          );
+        setPendingPreferenceCount(pendingPreferenceUpdatesRef.current.length);
+      };
+
       try {
-        const updated = await updateNativePreferences(patch);
-        queryClient.setQueryData(["cursor-preferences"], updated);
+        const updated = normalizeCursorPreferences(await request);
+        removePendingEntry();
+        if (executionRevision === eventRevisionRef.current.preferences) {
+          const displayedPreferences = applyCursorPreferenceUpdates(
+            updated,
+            pendingPreferenceUpdatesRef.current,
+          );
+          queryClient.setQueryData(
+            ["cursor-preferences"],
+            displayedPreferences,
+          );
+        }
         return true;
       } catch (error) {
+        removePendingEntry();
         const message = getCursorErrorMessage(error);
-        await Promise.allSettled([
-          queryClient.invalidateQueries({
-            queryKey: ["cursor-preferences"],
-          }),
-        ]);
+        let authoritativePreferences = authoritativePreferencesRef.current;
+        try {
+          authoritativePreferences =
+            await readAuthoritativePreferencesSnapshot();
+        } catch {
+          // Preserve the last confirmed snapshot when reconciliation is also
+          // unavailable; the inline error keeps the failure visible.
+        }
+        const displayedPreferences = applyCursorPreferenceUpdates(
+          authoritativePreferences,
+          pendingPreferenceUpdatesRef.current,
+        );
+        queryClient.setQueryData(["cursor-preferences"], displayedPreferences);
         setFeedback({
           scope: "preferences",
           type: "error",
           message,
         });
         return false;
-      } finally {
-        endOperation(token);
       }
     },
     [
-      beginOperation,
-      endOperation,
+      engineAvailable,
       preferencesAvailable,
       preferencesErrorMessage,
+      packs,
       queryClient,
+      readAuthoritativePreferencesSnapshot,
     ],
   );
+
+  useEffect(() => {
+    if (!preferencesAvailable || !nativeThemeQuerySuccess || !engineAvailable) {
+      return;
+    }
+    if (
+      hasCompleteRandomizationPools ||
+      preferences.randomization.schedule.mode === "off"
+    ) {
+      if (pendingPreferenceCount === 0) {
+        scheduleCorrectionRef.current = null;
+      }
+      return;
+    }
+    if (pendingPreferenceCount > 0) {
+      return;
+    }
+    const correctionKey = JSON.stringify({
+      family: preferences.randomization.family,
+      pools: preferences.randomization.pools,
+      schedule: preferences.randomization.schedule,
+      source: preferences.randomization.source,
+    });
+    if (scheduleCorrectionRef.current === correctionKey) {
+      return;
+    }
+    const disableTimer = window.setTimeout(() => {
+      scheduleCorrectionRef.current = correctionKey;
+      void handlePreferenceChange({
+        randomization: { schedule: { mode: "off" } },
+      });
+    }, 0);
+    return () => window.clearTimeout(disableTimer);
+  }, [
+    handlePreferenceChange,
+    hasCompleteRandomizationPools,
+    engineAvailable,
+    nativeThemeQuerySuccess,
+    pendingPreferenceCount,
+    preferences.randomization,
+    preferencesAvailable,
+  ]);
 
   const handleToggleCursorFavorite = useCallback(
     (preferenceId, favorite) => {
       if (!preferenceId) {
         return;
       }
-      const current = normalizeCursorPreferences(
-        queryClient.getQueryData(["cursor-preferences"]),
-      );
-      const cursorIds = new Set(current.favorites.cursorIds);
-      if (favorite) {
-        cursorIds.add(preferenceId);
-      } else {
-        cursorIds.delete(preferenceId);
-      }
-      void handlePreferenceChange({
-        favorites: { cursorIds: [...cursorIds] },
+      void handlePreferenceChange((current) => {
+        const cursorIds = new Set(current.favorites.cursorIds);
+        if (favorite) {
+          cursorIds.add(preferenceId);
+        } else {
+          cursorIds.delete(preferenceId);
+        }
+        return { favorites: { cursorIds: [...cursorIds] } };
       });
     },
-    [handlePreferenceChange, queryClient],
+    [handlePreferenceChange],
   );
 
   const handleToggleFamilyFavorite = useCallback(
@@ -2264,26 +2561,24 @@ export function HomeRoute() {
       if (!family) {
         return;
       }
-      const current = normalizeCursorPreferences(
-        queryClient.getQueryData(["cursor-preferences"]),
-      );
-      const families = new Set(current.favorites.families);
-      if (favorite) {
-        families.add(family);
-      } else {
-        families.delete(family);
-      }
-      void handlePreferenceChange({
-        favorites: { families: [...families] },
+      void handlePreferenceChange((current) => {
+        const families = new Set(current.favorites.families);
+        if (favorite) {
+          families.add(family);
+        } else {
+          families.delete(family);
+        }
+        return { favorites: { families: [...families] } };
       });
     },
-    [handlePreferenceChange, queryClient],
+    [handlePreferenceChange],
   );
 
   const handleAssignAppearanceCursor = useCallback(
     async (preferenceId, appearance) => {
       if (
         !preferencesAvailable ||
+        pendingPreferenceUpdatesRef.current.length > 0 ||
         !preferenceId ||
         (appearance !== "light" && appearance !== "dark")
       ) {
@@ -2312,9 +2607,12 @@ export function HomeRoute() {
           nextPreferenceId,
         );
         if (result?.preferences) {
+          const displayedPreferences = displayPendingPreferences(
+            result.preferences,
+          );
           queryClient.setQueryData(
             ["cursor-preferences"],
-            normalizeCursorPreferences(result.preferences),
+            displayedPreferences,
           );
         } else {
           await queryClient.invalidateQueries({
@@ -2343,6 +2641,7 @@ export function HomeRoute() {
     },
     [
       beginOperation,
+      displayPendingPreferences,
       endOperation,
       engineAvailable,
       packs,
@@ -2357,26 +2656,25 @@ export function HomeRoute() {
       if (!preferenceId || (role !== "light" && role !== "dark")) {
         return;
       }
-      const current = normalizeCursorPreferences(
-        queryClient.getQueryData(["cursor-preferences"]),
-      );
-      const cursorIds = new Set(current.randomization.pools[role]);
-      if (enabled) {
-        cursorIds.add(preferenceId);
-      } else {
-        cursorIds.delete(preferenceId);
-      }
-      void handlePreferenceChange({
-        randomization: {
-          pools: { [role]: [...cursorIds] },
-        },
+      void handlePreferenceChange((current) => {
+        const cursorIds = new Set(current.randomization.pools[role]);
+        if (enabled) {
+          cursorIds.add(preferenceId);
+        } else {
+          cursorIds.delete(preferenceId);
+        }
+        return {
+          randomization: {
+            pools: { [role]: [...cursorIds] },
+          },
+        };
       });
     },
-    [handlePreferenceChange, queryClient],
+    [handlePreferenceChange],
   );
 
   const handleRandomize = useCallback(async () => {
-    if (!engineAvailable || !preferencesAvailable) {
+    if (!canRandomize) {
       return;
     }
     const token = beginOperation("randomizing");
@@ -2432,9 +2730,8 @@ export function HomeRoute() {
   }, [
     beginOperation,
     endOperation,
-    engineAvailable,
+    canRandomize,
     packs,
-    preferencesAvailable,
     queryClient,
     refreshStatus,
   ]);
@@ -2449,11 +2746,13 @@ export function HomeRoute() {
     }
     setFeedback(null);
     try {
-      await applyCursorTheme(selectedPack.nativeThemeId ?? selectedPack.id);
-      const nextStatus = await refreshStatus();
+      const nextStatus = await applyCursorTheme(
+        selectedPack.nativeThemeId ?? selectedPack.id,
+      );
       if (!isPackVerifiedActive(nextStatus, selectedPack)) {
         throw new Error(`${selectedPack.variant} could not be verified.`);
       }
+      queryClient.setQueryData(["cursor-status"], nextStatus);
       setFeedback({
         scope: "catalog",
         type: "success",
@@ -2477,6 +2776,7 @@ export function HomeRoute() {
     beginOperation,
     endOperation,
     engineAvailable,
+    queryClient,
     refreshStatus,
     selectedPack,
   ]);
@@ -2506,7 +2806,6 @@ export function HomeRoute() {
                   ? {
                       ...theme,
                       sizePercentage: result.sizePercentage,
-                      SizePercentage: result.sizePercentage,
                     }
                   : theme,
               )
@@ -2563,10 +2862,10 @@ export function HomeRoute() {
       }
       queryClient.setQueryData(["cursor-status"], nextStatus);
       if (result?.preferences) {
-        queryClient.setQueryData(
-          ["cursor-preferences"],
-          normalizeCursorPreferences(result.preferences),
+        const displayedPreferences = displayPendingPreferences(
+          result.preferences,
         );
+        queryClient.setQueryData(["cursor-preferences"], displayedPreferences);
       } else {
         await queryClient.invalidateQueries({
           queryKey: ["cursor-preferences"],
@@ -2593,7 +2892,14 @@ export function HomeRoute() {
     } finally {
       endOperation(token);
     }
-  }, [beginOperation, canRestore, endOperation, queryClient, refreshStatus]);
+  }, [
+    beginOperation,
+    canRestore,
+    displayPendingPreferences,
+    endOperation,
+    queryClient,
+    refreshStatus,
+  ]);
 
   const handleImport = useCallback(async () => {
     const token = beginOperation("importing");
@@ -2610,7 +2916,7 @@ export function HomeRoute() {
       await queryClient.invalidateQueries({ queryKey: ["cursor-themes"] });
       const nextThemes = await queryClient.fetchQuery({
         queryKey: ["cursor-themes"],
-        queryFn: getNativeThemes,
+        queryFn: readThemesSnapshot,
       });
       const identifiers = new Set(
         Array.isArray(result?.identifiers)
@@ -2655,7 +2961,13 @@ export function HomeRoute() {
     } finally {
       endOperation(token);
     }
-  }, [beginOperation, endOperation, queryClient, refreshLibraryQueries]);
+  }, [
+    beginOperation,
+    endOperation,
+    queryClient,
+    readThemesSnapshot,
+    refreshLibraryQueries,
+  ]);
 
   const handleAssignFamily = useCallback(
     async (pack, family) => {
@@ -2673,7 +2985,11 @@ export function HomeRoute() {
           message: "Another cursor operation is already in progress.",
         };
       }
-      setFeedback(null);
+      setFeedback({
+        scope: "catalog",
+        type: "pending",
+        message: `Moving ${pack.variant}…`,
+      });
       try {
         const result = await assignImportedCursorFamily([identifier], family);
         await refreshLibraryQueries();
@@ -2761,7 +3077,6 @@ export function HomeRoute() {
     if (!token) {
       return;
     }
-    setDeleteTarget(null);
     setFeedback(null);
     try {
       const result =
@@ -2801,6 +3116,7 @@ export function HomeRoute() {
           ? `${target.label} was removed; some cleanup is still pending.`
           : `${target.label} was moved to Trash.`,
       });
+      setDeleteTarget(null);
     } catch (error) {
       const message = getCursorErrorMessage(error);
       await Promise.allSettled([refreshLibraryQueries()]);
@@ -2809,6 +3125,7 @@ export function HomeRoute() {
         type: "error",
         message,
       });
+      setDeleteTarget(null);
     } finally {
       endOperation(token);
     }
@@ -2859,9 +3176,18 @@ export function HomeRoute() {
         preferences.randomization.pools[role].includes(selectedPreferenceId),
       )
     : [];
+  const familyNames = useMemo(
+    () =>
+      [...new Set(packs.map((pack) => pack.family).filter(Boolean))].sort(
+        (left, right) => left.localeCompare(right),
+      ),
+    [packs],
+  );
   const libraryActions = useMemo(
     () => ({
-      managementDisabled: operation !== "idle",
+      familyNames,
+      managementDisabled: operation !== "idle" || pendingPreferenceCount > 0,
+      preferencesSaving: pendingPreferenceCount > 0,
       onAssignFamily: (pack, family) => {
         void handleAssignFamily(pack, family);
       },
@@ -2874,7 +3200,9 @@ export function HomeRoute() {
       handleOpenFamilyEditor,
       handleRequestCursorDeletion,
       handleRequestFamilyDeletion,
+      familyNames,
       operation,
+      pendingPreferenceCount,
     ],
   );
 
@@ -2892,7 +3220,9 @@ export function HomeRoute() {
                     size="sm"
                     className="pr-8"
                     onClick={handleImport}
-                    disabled={operation !== "idle"}
+                    disabled={
+                      operation !== "idle" || pendingPreferenceCount > 0
+                    }
                   >
                     <HugeiconsIcon
                       icon={Add01Icon}
@@ -3021,44 +3351,34 @@ export function HomeRoute() {
       ) : null}
 
       {view === "settings" ? (
-        <Suspense
-          fallback={
-            <section className="flex min-h-0 flex-1 flex-col bg-background">
-              <header className="titlebar-drag relative h-12 shrink-0 border-b border-border/60">
-                <h1 className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-title-md">
-                  Settings
-                </h1>
-              </header>
-            </section>
-          }
-        >
-          <SettingsScreen
-            packs={catalogueLoadError ? [] : packs}
-            preferences={preferences}
-            appearanceMode={themeMode}
-            onAppearanceModeChange={setThemeMode}
-            onChange={handlePreferenceChange}
-            onRandomize={() => void handleRandomize()}
-            randomizing={operation === "randomizing"}
-            busy={operation !== "idle"}
-            canRandomize={
-              engineAvailable &&
-              preferencesAvailable &&
-              packs.some((pack) => pack.canApply === true)
-            }
-            preferencesAvailable={preferencesAvailable}
-            preferencesError={preferencesQuery.isError}
-            preferencesErrorMessage={preferencesErrorMessage}
-            preferencesRetrying={preferencesQuery.isFetching}
-            onRetryPreferences={() => void preferencesQuery.refetch()}
-            themeError={themeError}
-            feedback={feedback}
-            onClose={() => setView("catalog")}
-          />
-        </Suspense>
+        <SettingsScreen
+          packs={catalogueLoadError ? [] : packs}
+          preferences={preferences}
+          appearanceMode={themeMode}
+          onAppearanceModeChange={setThemeMode}
+          onChange={handlePreferenceChange}
+          onRandomize={() => void handleRandomize()}
+          randomizing={operation === "randomizing"}
+          cursorOperationBusy={operation !== "idle"}
+          saving={pendingPreferenceCount > 0}
+          canRandomize={canRandomize}
+          canScheduleRandomization={canScheduleRandomization}
+          scheduleUnavailableMessage={scheduleUnavailableMessage}
+          randomizationAvailable={engineAvailable}
+          randomizationPoolSize={randomizationPoolSizes[systemAppearance]}
+          systemAppearance={systemAppearance}
+          preferencesAvailable={preferencesAvailable}
+          preferencesError={preferencesQuery.isError}
+          preferencesErrorMessage={preferencesErrorMessage}
+          preferencesRetrying={preferencesQuery.isFetching}
+          onRetryPreferences={() => void preferencesQuery.refetch()}
+          themeError={themeError}
+          feedback={feedback}
+          onClose={() => setView("catalog")}
+        />
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          <aside className="hidden min-h-0 min-w-0 w-[276px] shrink-0 overflow-hidden border-r border-border/60 bg-sidebar/45 md:flex lg:w-[296px]">
+          <aside className="hidden min-h-0 min-w-0 w-[276px] shrink-0 overflow-hidden border-r border-border/60 bg-sidebar/45 min-[960px]:flex lg:w-[296px]">
             <PackRail
               packs={filteredPacks}
               allPacks={packs}
@@ -3098,6 +3418,7 @@ export function HomeRoute() {
               }}
               selectedBySystem={selectedBySystem}
               operation={operation}
+              preferencesSaving={pendingPreferenceCount > 0}
               onApply={() => void handleApply()}
               onSizeCommit={handleSizeCommit}
               onToggleFavorite={() =>
@@ -3129,6 +3450,7 @@ export function HomeRoute() {
               statusErrorMessage={statusErrorMessage}
               onRetryStatus={() => void statusQuery.refetch()}
               statusRetrying={statusQuery.isFetching}
+              libraryActions={libraryActions}
             />
           ) : (
             <CatalogueFailure
@@ -3200,7 +3522,7 @@ export function HomeRoute() {
       <AlertDialog
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => {
-          if (!open && operation !== "deleting") {
+          if (!open && operationRef.current?.kind !== "deleting") {
             setDeleteTarget(null);
           }
         }}
@@ -3218,9 +3540,14 @@ export function HomeRoute() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleDeleteConfirmed()}>
-              Move to Trash
+            <AlertDialogCancel disabled={operation === "deleting"}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={operation === "deleting"}
+              onClick={() => void handleDeleteConfirmed()}
+            >
+              {operation === "deleting" ? "Moving…" : "Move to Trash"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

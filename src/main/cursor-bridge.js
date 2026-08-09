@@ -6,9 +6,11 @@ import { promisify } from "node:util";
 
 import {
   CURSOR_CATALOG,
+  DEFAULT_CURSOR_NATIVE_THEME_ID,
   getCursorCatalogEntry,
   normalizeCursorTheme,
 } from "../lib/cursor-catalog.js";
+import { CURSOR_DTO_SCHEMA_VERSION } from "../lib/cursor-dto.js";
 import {
   assignImportedCursorFamily,
   isBoundedCursorManifestText,
@@ -421,6 +423,39 @@ function safeManifestFile(manifest, relativePath, extensions) {
   }
 }
 
+function safeBundledPreviewFile(manifest, relativePath, canonicalRoot) {
+  if (!manifest?.root || typeof relativePath !== "string") {
+    return null;
+  }
+  const trimmed = relativePath.trim();
+  if (
+    !trimmed ||
+    trimmed !== relativePath ||
+    trimmed.includes("\0") ||
+    trimmed.includes("\\") ||
+    path.isAbsolute(trimmed) ||
+    path.extname(trimmed).toLowerCase() !== ".png"
+  ) {
+    return null;
+  }
+  const components = trimmed.split("/");
+  if (
+    components.length < 2 ||
+    components[0] !== "previews" ||
+    components.some(
+      (component) =>
+        !SAFE_PATH_COMPONENT_PATTERN.test(component) ||
+        component === "." ||
+        component === "..",
+    )
+  ) {
+    return null;
+  }
+  const root = canonicalRoot ?? path.resolve(manifest.root);
+  const candidate = path.resolve(root, trimmed);
+  return isPathWithin(root, candidate) ? candidate : null;
+}
+
 function isPrivateImportedEntry(stat, { file = false } = {}) {
   return (
     (typeof process.getuid !== "function" || stat.uid === process.getuid()) &&
@@ -529,6 +564,20 @@ function sha256File(filePath, prefix = null) {
   return hash.digest("hex");
 }
 
+function fileIdentity(filePath) {
+  const stat = fs.lstatSync(filePath, { bigint: true });
+  return [
+    stat.dev,
+    stat.ino,
+    stat.mode,
+    stat.uid,
+    stat.nlink,
+    stat.size,
+    stat.mtimeNs,
+    stat.ctimeNs,
+  ].join(":");
+}
+
 function hasPngSignature(filePath) {
   const descriptor = fs.openSync(
     filePath,
@@ -545,7 +594,12 @@ function hasPngSignature(filePath) {
   }
 }
 
-function validateImportedManifestTheme(manifest, rawTheme) {
+function validateImportedManifestTheme(
+  manifest,
+  rawTheme,
+  verifyResourceHash = (filePath, expectedHash) =>
+    sha256File(filePath) === expectedHash,
+) {
   if (!rawTheme || typeof rawTheme !== "object" || Array.isArray(rawTheme)) {
     return null;
   }
@@ -581,7 +635,7 @@ function validateImportedManifestTheme(manifest, rawTheme) {
     !resourcePath ||
     typeof expectedHash !== "string" ||
     !SHA256_PATTERN.test(expectedHash) ||
-    sha256File(resourcePath) !== expectedHash.toLowerCase()
+    !verifyResourceHash(resourcePath, expectedHash.toLowerCase())
   ) {
     return null;
   }
@@ -630,7 +684,7 @@ function validateImportedManifestTheme(manifest, rawTheme) {
   };
 }
 
-function readImportedManifest(packRoot) {
+function readImportedManifest(packRoot, verifyResourceHash) {
   const manifestPath = path.join(packRoot, "manifest.json");
   try {
     const manifestStat = fs.lstatSync(manifestPath);
@@ -666,7 +720,7 @@ function readImportedManifest(packRoot) {
       themes: parsed.themes,
     };
     const validatedThemes = parsed.themes.map((theme) =>
-      validateImportedManifestTheme(manifest, theme),
+      validateImportedManifestTheme(manifest, theme, verifyResourceHash),
     );
     if (validatedThemes.some((theme) => !theme)) {
       return null;
@@ -699,7 +753,7 @@ function readImportedManifest(packRoot) {
   }
 }
 
-function scanImportedManifests(importedPacksRoot) {
+function scanImportedManifests(importedPacksRoot, verifyResourceHash) {
   if (
     typeof importedPacksRoot !== "string" ||
     !path.isAbsolute(importedPacksRoot)
@@ -757,7 +811,7 @@ function scanImportedManifests(importedPacksRoot) {
     for (const packRoot of packRoots.sort((left, right) =>
       left === right ? 0 : left < right ? -1 : 1,
     )) {
-      const manifest = readImportedManifest(packRoot);
+      const manifest = readImportedManifest(packRoot, verifyResourceHash);
       if (!manifest) {
         continue;
       }
@@ -777,7 +831,7 @@ function scanImportedManifests(importedPacksRoot) {
   }
 }
 
-function hasResource(manifest, theme, resourceFile) {
+function hasResource(manifest, theme, resourceFile, verifyResourceHash) {
   const explicit = firstThemeValue(theme, [
     "resourceAvailable",
     "resourceInstalled",
@@ -798,7 +852,7 @@ function hasResource(manifest, theme, resourceFile) {
       resourcePath &&
       typeof expectedHash === "string" &&
       SHA256_PATTERN.test(expectedHash) &&
-      sha256File(resourcePath) === expectedHash.toLowerCase(),
+      verifyResourceHash(resourcePath, expectedHash.toLowerCase()),
     );
   }
   return Boolean(
@@ -812,8 +866,8 @@ function hasResource(manifest, theme, resourceFile) {
 
 function createUnavailableState(reason) {
   return {
+    schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
     supported: process.platform === "darwin",
-    available: false,
     bridgeAvailable: false,
     statusAvailable: true,
     previewMode: true,
@@ -823,11 +877,10 @@ function createUnavailableState(reason) {
     effectiveVariantId: null,
     selectedNativeThemeId: null,
     effectiveNativeThemeId: null,
-    themeIdentifier: null,
+    themeDisplayName: null,
     themeSizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
     resourceAvailable: false,
     canApply: false,
-    isEnabled: false,
     desiredEnabled: false,
     effectiveApplied: false,
     persistedEffectiveApplied: false,
@@ -835,10 +888,74 @@ function createUnavailableState(reason) {
     launchAtLoginDesired: false,
     loginApprovalRequired: false,
     loginItemRegistrationCurrent: false,
-    liveVerified: false,
-    liveStatusVerified: false,
+    transactionPending: false,
     stateDrifted: false,
     lastError: null,
+  };
+}
+
+function canonicalRolePreviewDto(role, src = role.src ?? null) {
+  return {
+    role: role.role,
+    name: role.name,
+    macIdentifier: role.macIdentifier,
+    src,
+    frameCount: role.frameCount,
+    frameDuration: role.frameDuration,
+    hotspot: role.hotspot ?? null,
+    fallback: Boolean(role.fallback),
+  };
+}
+
+function canonicalThemeDto(theme) {
+  const rolePreviews = Array.isArray(theme.rolePreviews)
+    ? theme.rolePreviews.map((role) => canonicalRolePreviewDto(role))
+    : [];
+  const cursorRoles = Array.isArray(theme.cursorRoles)
+    ? theme.cursorRoles.map((role) =>
+        role && typeof role === "object"
+          ? canonicalRolePreviewDto(role)
+          : String(role),
+      )
+    : [];
+  return {
+    schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
+    id: theme.id,
+    family: theme.family,
+    name: theme.name,
+    variant: theme.variant,
+    variantLabel: theme.variantLabel,
+    displayName: theme.displayName,
+    author: theme.author,
+    sourceUrl: theme.sourceUrl,
+    upstreamUrl: theme.upstreamUrl,
+    license: theme.license,
+    licenseUrl: theme.licenseUrl,
+    platform: theme.platform,
+    nativeThemeId: theme.nativeThemeId,
+    nativeThemeIds: Array.isArray(theme.nativeThemeIds)
+      ? [...theme.nativeThemeIds]
+      : [],
+    resourceFile: theme.resourceFile ?? null,
+    resourceAvailable: Boolean(theme.resourceAvailable),
+    canApply: Boolean(theme.canApply),
+    availability: theme.availability,
+    status: theme.status,
+    cursorRoles,
+    cursorRoleCount: theme.cursorRoleCount,
+    cursorCount: theme.cursorCount,
+    cursorCountEstimated: Boolean(theme.cursorCountEstimated),
+    cursorAliasCount: theme.cursorAliasCount,
+    accentColor: theme.accentColor,
+    preview: theme.preview ?? null,
+    rolePreviews,
+    tags: Array.isArray(theme.tags) ? [...theme.tags] : [],
+    sha256: theme.sha256,
+    uuid: theme.uuid,
+    imported: Boolean(theme.imported),
+    importedPackIdentifier: theme.importedPackIdentifier ?? null,
+    sizePercentage: theme.sizePercentage,
+    nativeListed: Boolean(theme.nativeListed),
   };
 }
 
@@ -929,30 +1046,110 @@ export function createCursorBridge({
   const manifestByCatalogId = new Map();
   const previewAssets = new Map();
   const previewTokensByPath = new Map();
+  const currentPreviewIdentitiesByPath = new Map();
+  const manifestNamespaces = new WeakMap();
+  const manifestRoots = new WeakMap();
+  const verifiedResourceHashesByPath = new Map();
+  const inMemoryManifestNamespace = crypto.randomBytes(16).toString("hex");
   let indexedManifestThemes;
-  let previewGeneration = 0;
+
+  const verifyResourceHash = (resourcePath, expectedHash) => {
+    // The native inventory is authoritative when a verified bridge exists.
+    // It validates imported resources against the same manifest before
+    // listing them, and every mutation independently revalidates its target.
+    // Avoid synchronously rereading every imported cursor on Electron's main
+    // thread merely to duplicate that work.
+    if (bridgePath) {
+      return true;
+    }
+    try {
+      const before = fileIdentity(resourcePath);
+      const cached = verifiedResourceHashesByPath.get(resourcePath);
+      if (cached?.identity === before) {
+        return cached.sha256 === expectedHash;
+      }
+      const sha256 = sha256File(resourcePath);
+      if (fileIdentity(resourcePath) !== before) {
+        return false;
+      }
+      verifiedResourceHashesByPath.set(resourcePath, {
+        identity: before,
+        sha256,
+      });
+      return sha256 === expectedHash;
+    } catch {
+      return false;
+    }
+  };
 
   const registerPreviewAsset = (manifest, asset) => {
-    const assetPath = manifest.imported
-      ? safeImportedFile(manifest, asset, {
-          extensions: new Set([".png"]),
-          maxBytes: MAX_IMPORTED_PREVIEW_BYTES,
-          preview: true,
-        })
-      : safeManifestFile(manifest, asset, new Set([".png"]));
-    if (!assetPath || (manifest.imported && !hasPngSignature(assetPath))) {
+    let assetPath;
+    if (manifest.imported) {
+      assetPath = safeImportedFile(manifest, asset, {
+        extensions: new Set([".png"]),
+        maxBytes: MAX_IMPORTED_PREVIEW_BYTES,
+        preview: true,
+      });
+    } else {
+      let canonicalRoot = manifestRoots.get(manifest);
+      if (!canonicalRoot) {
+        try {
+          canonicalRoot = fs.realpathSync(manifest.root);
+          manifestRoots.set(manifest, canonicalRoot);
+        } catch {
+          return null;
+        }
+      }
+      assetPath = safeBundledPreviewFile(manifest, asset, canonicalRoot);
+    }
+    if (!assetPath) {
       return null;
     }
-    let token = previewTokensByPath.get(assetPath);
-    if (!token) {
-      token = sha256File(
-        assetPath,
-        `${previewGeneration}\0${manifest.path ?? manifest.root}\0${asset}\0`,
-      );
-      previewTokensByPath.set(assetPath, token);
+    let identity = inMemoryManifestNamespace;
+    if (manifest.imported) {
+      identity = currentPreviewIdentitiesByPath.get(assetPath);
+      if (!identity) {
+        try {
+          identity = fileIdentity(assetPath);
+          currentPreviewIdentitiesByPath.set(assetPath, identity);
+        } catch {
+          return null;
+        }
+      }
+    } else if (manifest.path) {
+      identity = manifestNamespaces.get(manifest);
+      if (!identity) {
+        try {
+          identity = fileIdentity(manifest.path);
+          manifestNamespaces.set(manifest, identity);
+        } catch {
+          return null;
+        }
+      }
     }
-    previewAssets.set(token, assetPath);
-    return `${PREVIEW_SCHEME}://asset/${token}.png`;
+    let cached = previewTokensByPath.get(assetPath);
+    if (
+      manifest.imported &&
+      (cached?.identity !== identity || cached?.pngSignatureValid !== true) &&
+      !hasPngSignature(assetPath)
+    ) {
+      return null;
+    }
+    if (!cached || cached.identity !== identity) {
+      cached = {
+        identity,
+        pngSignatureValid: manifest.imported,
+        token: crypto
+          .createHash("sha256")
+          .update(
+            `${manifest.imported ? "imported" : "bundled"}\0${manifest.path ?? manifest.root}\0${asset}\0${identity}`,
+          )
+          .digest("hex"),
+      };
+      previewTokensByPath.set(assetPath, cached);
+    }
+    previewAssets.set(cached.token, assetPath);
+    return `${PREVIEW_SCHEME}://asset/${cached.token}.png`;
   };
 
   const exposePreviews = (theme, manifest) => {
@@ -960,7 +1157,7 @@ export function createCursorBridge({
       ? theme.rolePreviews.map((role) => {
           const source = role.src ?? role.asset ?? role.preview;
           const src = registerPreviewAsset(manifest, source);
-          return { ...role, src, asset: src };
+          return canonicalRolePreviewDto(role, src);
         })
       : [];
     const preview =
@@ -972,7 +1169,7 @@ export function createCursorBridge({
           role.role === "arrow",
       )?.src ??
       null;
-    return { ...theme, preview, previewUrl: preview, rolePreviews };
+    return { ...theme, preview, rolePreviews };
   };
 
   const getManifest = () => {
@@ -1010,7 +1207,10 @@ export function createCursorBridge({
 
   const getImportedManifests = () => {
     if (loadedImportedManifests === undefined) {
-      loadedImportedManifests = scanImportedManifests(importedPacksRoot);
+      loadedImportedManifests = scanImportedManifests(
+        importedPacksRoot,
+        verifyResourceHash,
+      );
     }
     return loadedImportedManifests;
   };
@@ -1030,8 +1230,7 @@ export function createCursorBridge({
       catalogToNativeId.set(key, value);
     }
     previewAssets.clear();
-    previewTokensByPath.clear();
-    previewGeneration += 1;
+    currentPreviewIdentitiesByPath.clear();
   };
 
   const ensureManifestIndex = () => {
@@ -1065,6 +1264,7 @@ export function createCursorBridge({
             manifest,
             rawTheme,
             resourceFile,
+            verifyResourceHash,
           );
           return exposePreviews(
             {
@@ -1078,8 +1278,6 @@ export function createCursorBridge({
               resourceFile,
               resourceInstalled,
               resourceAvailable: resourceInstalled,
-              available: resourceInstalled,
-              isAvailable: resourceInstalled,
               canApply: false,
               availability: resourceInstalled
                 ? manifest.imported
@@ -1290,9 +1488,7 @@ export function createCursorBridge({
         getCursorCatalogEntry(selectedNativeThemeId))
       : null;
     const resourceAvailable = Boolean(
-      selectedTheme?.resourceAvailable ??
-      selectedTheme?.available ??
-      themeValid,
+      selectedTheme?.resourceAvailable ?? themeValid,
     );
     const actionError = firstThemeValue(raw, [
       "actionError",
@@ -1304,13 +1500,22 @@ export function createCursorBridge({
       firstThemeValue(raw, ["themeSizePercentage", "ThemeSizePercentage"]),
       DEFAULT_THEME_SIZE_PERCENTAGE,
     );
+    const themeDisplayName = String(
+      firstThemeValue(raw, ["themeDisplayName", "ThemeDisplayName"]) ??
+        selectedTheme?.displayName ??
+        "",
+    );
+    const transactionPending = firstBoolean(
+      raw,
+      ["transactionPending", "TransactionPending"],
+      false,
+    );
 
     fallbackState = {
       ...fallbackState,
-      ...raw,
+      schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
       supported,
       themeValid,
-      available: true,
       bridgeAvailable: true,
       statusAvailable: true,
       previewMode: false,
@@ -1323,14 +1528,12 @@ export function createCursorBridge({
       effectiveVariantId: liveApplied ? selectedVariantId : null,
       selectedNativeThemeId,
       effectiveNativeThemeId: liveApplied ? selectedNativeThemeId : null,
-      nativeThemeId: selectedNativeThemeId,
-      themeIdentifier: selectedNativeThemeId,
+      themeDisplayName,
       themeSizePercentage,
       resourceAvailable,
       canApply: Boolean(
         bridgePath && supported && themeValid && resourceAvailable,
       ),
-      isEnabled: liveApplied,
       desiredEnabled,
       effectiveApplied: liveApplied,
       persistedEffectiveApplied,
@@ -1338,8 +1541,7 @@ export function createCursorBridge({
       launchAtLoginDesired,
       loginApprovalRequired,
       loginItemRegistrationCurrent,
-      liveVerified: currentSentinelsMatchTheme,
-      liveStatusVerified: true,
+      transactionPending,
       stateDrifted:
         desiredEnabled !== liveApplied ||
         persistedEffectiveApplied !== liveApplied,
@@ -1366,16 +1568,12 @@ export function createCursorBridge({
       }
       fallbackState = {
         ...fallbackState,
-        available: Boolean(bridgePath),
         bridgeAvailable: Boolean(bridgePath),
         statusAvailable: false,
         previewMode: !bridgePath,
         effectiveVariantId: null,
         effectiveNativeThemeId: null,
-        isEnabled: false,
         effectiveApplied: false,
-        liveVerified: false,
-        liveStatusVerified: false,
         canApply: false,
         reason: error.message,
         lastError: error.message,
@@ -1444,28 +1642,27 @@ export function createCursorBridge({
           ? "imported"
           : "bundled"
         : "catalogued";
-      result.push({
-        ...(catalogEntry ?? {}),
-        ...(manifestEntry ?? {}),
-        ...normalized,
-        id: catalogIdentifier(nativeThemeId),
-        nativeThemeId,
-        identifier: nativeThemeId,
-        sizePercentage,
-        resourceInstalled,
-        resourceAvailable: resourceInstalled,
-        available: resourceInstalled,
-        isAvailable: resourceInstalled,
-        canApply,
-        nativeListed: true,
-        availability,
-        imported: Boolean(manifestEntry?.imported),
-        status: canApply
-          ? "available"
-          : resourceInstalled
-            ? "preview"
-            : "unavailable",
-      });
+      result.push(
+        canonicalThemeDto({
+          ...(catalogEntry ?? {}),
+          ...(manifestEntry ?? {}),
+          ...normalized,
+          id: catalogIdentifier(nativeThemeId),
+          nativeThemeId,
+          sizePercentage,
+          resourceInstalled,
+          resourceAvailable: resourceInstalled,
+          canApply,
+          nativeListed: true,
+          availability,
+          imported: Boolean(manifestEntry?.imported),
+          status: canApply
+            ? "available"
+            : resourceInstalled
+              ? "preview"
+              : "unavailable",
+        }),
+      );
     }
 
     const returned = new Set(
@@ -1475,30 +1672,39 @@ export function createCursorBridge({
       if (returned.has(theme.nativeThemeId.toLowerCase())) {
         continue;
       }
-      result.push({
-        ...theme,
-        sizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
-        canApply: false,
-        nativeListed: listedNativeIds.has(theme.nativeThemeId.toLowerCase()),
-        status: theme.resourceInstalled ? "preview" : "unavailable",
-      });
+      if (
+        bridgePath &&
+        theme.imported &&
+        !listedNativeIds.has(theme.nativeThemeId.toLowerCase())
+      ) {
+        continue;
+      }
+      result.push(
+        canonicalThemeDto({
+          ...theme,
+          sizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
+          canApply: false,
+          nativeListed: listedNativeIds.has(theme.nativeThemeId.toLowerCase()),
+          status: theme.resourceInstalled ? "preview" : "unavailable",
+        }),
+      );
     }
 
     if (result.length) {
       return result;
     }
 
-    return CURSOR_CATALOG.map((theme) => ({
-      ...theme,
-      sizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
-      available: Boolean(theme.availability === "bundled"),
-      isAvailable: Boolean(theme.availability === "bundled"),
-      resourceAvailable: Boolean(theme.availability === "bundled"),
-      resourceInstalled: Boolean(theme.availability === "bundled"),
-      canApply: false,
-      nativeListed: false,
-      status: theme.availability === "bundled" ? "preview" : "unavailable",
-    }));
+    return CURSOR_CATALOG.map((theme) =>
+      canonicalThemeDto({
+        ...theme,
+        sizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
+        resourceAvailable: Boolean(theme.availability === "bundled"),
+        resourceInstalled: Boolean(theme.availability === "bundled"),
+        canApply: false,
+        nativeListed: false,
+        status: theme.availability === "bundled" ? "preview" : "unavailable",
+      }),
+    );
   };
 
   const serializeMutation = (operation) => {
@@ -1551,9 +1757,10 @@ export function createCursorBridge({
     ) {
       throw new TypeError("Valid cursor identifiers are required for cleanup.");
     }
-    const failedIdentifiers = [];
+    const uniqueIdentifiers = [...new Set(identifiers)];
+    const failedIdentifiers = bridgePath ? [] : [...uniqueIdentifiers];
     if (bridgePath) {
-      for (const identifier of [...new Set(identifiers)]) {
+      for (const identifier of uniqueIdentifiers) {
         try {
           await runNative("--forget-theme-size", [identifier]);
         } catch {
@@ -1564,7 +1771,7 @@ export function createCursorBridge({
     return { failedIdentifiers };
   };
 
-  const recoverDeletionNativeState = async (recovery) => {
+  const recoverNativeState = async (recovery) => {
     const previousSelectedIdentifier =
       recovery?.previousSelectedIdentifier ?? null;
     const previousEffectiveIdentifier =
@@ -1576,6 +1783,7 @@ export function createCursorBridge({
       recovery?.previousLoginItemRegistrationCurrent;
     const previousTransactionPending = recovery?.previousTransactionPending;
     const teardownPlanned = recovery?.teardownPlanned;
+    const teardownCurrent = recovery?.teardownCurrent ?? false;
     const booleanValues = [
       previousCursorWasLive,
       previousDesiredEnabled,
@@ -1583,6 +1791,7 @@ export function createCursorBridge({
       previousLoginItemRegistrationCurrent,
       previousTransactionPending,
       teardownPlanned,
+      teardownCurrent,
     ];
     const shouldReapplyCursor = teardownPlanned && previousCursorWasLive;
     if (
@@ -1598,7 +1807,7 @@ export function createCursorBridge({
         !previousSelectedIdentifier &&
         !previousEffectiveIdentifier)
     ) {
-      throw new TypeError("Valid cursor deletion recovery state is required.");
+      throw new TypeError("Valid native cursor recovery state is required.");
     }
     if (previousTransactionPending) {
       const error = new Error(
@@ -1609,10 +1818,14 @@ export function createCursorBridge({
     }
     if (!bridgePath) {
       const error = new Error(
-        "The native cursor bridge is unavailable for deletion recovery.",
+        "The native cursor bridge is unavailable for state recovery.",
       );
       error.code = "NATIVE_BRIDGE_UNAVAILABLE";
       throw error;
+    }
+
+    if (teardownCurrent) {
+      await runNative("--teardown");
     }
 
     const restoreEffectiveIdentifier =
@@ -1672,7 +1885,7 @@ export function createCursorBridge({
       !inactiveStateRestored
     ) {
       const error = new Error(
-        "The prior native cursor state could not be verified after deletion recovery.",
+        "The prior native cursor state could not be verified after recovery.",
       );
       error.code = "NATIVE_RECOVERY_UNVERIFIED";
       error.status = recoveredStatus;
@@ -1710,14 +1923,9 @@ export function createCursorBridge({
         throw error;
       }
       const selectedIdentifier = String(
-        currentStatus.selectedNativeThemeId ??
-          currentStatus.themeIdentifier ??
-          "",
+        currentStatus.selectedNativeThemeId ?? "",
       ).toLowerCase();
-      previousSelectedIdentifier =
-        currentStatus.selectedNativeThemeId ??
-        currentStatus.themeIdentifier ??
-        null;
+      previousSelectedIdentifier = currentStatus.selectedNativeThemeId ?? null;
       const selectedIsTarget =
         Boolean(selectedIdentifier) && targets.has(selectedIdentifier);
       const effectiveIdentifiers = [
@@ -1837,9 +2045,7 @@ export function createCursorBridge({
         ? { disposeArtifact: trashImportedArtifact }
         : {}),
       ...(nativeRecovery ? { nativeRecovery } : {}),
-      ...(nativeRecovery
-        ? { recoverNativeState: recoverDeletionNativeState }
-        : {}),
+      ...(nativeRecovery ? { recoverNativeState } : {}),
     });
     try {
       if (shouldTeardown) {
@@ -1850,7 +2056,7 @@ export function createCursorBridge({
         // Teardown intentionally leaves SelectedThemeIdentifier untouched. A
         // valid bundled fallback must be persisted before the quarantined files
         // are disposed or later native status would target a missing theme.
-        await runNative("--select-theme", ["OreoWhite"]);
+        await runNative("--select-theme", [DEFAULT_CURSOR_NATIVE_THEME_ID]);
         selectionReassigned = true;
       }
       await removal.markCommitted();
@@ -2018,8 +2224,32 @@ export function createCursorBridge({
 
   const refreshAfterMutation = async (operation) => {
     try {
-      await operation();
+      const result = await operation();
+      if (
+        result &&
+        typeof result === "object" &&
+        (firstThemeValue(result, [
+          "selectedThemeIdentifier",
+          "SelectedThemeIdentifier",
+          "themeIdentifier",
+          "ThemeIdentifier",
+        ]) !== null ||
+          [
+            "desiredEnabled",
+            "DesiredEnabled",
+            "effectiveApplied",
+            "EffectiveApplied",
+            "currentSentinelsMatchTheme",
+            "CurrentSentinelsMatchTheme",
+          ].some((key) => result[key] !== undefined))
+      ) {
+        return normalizeStatus(result);
+      }
     } catch (error) {
+      if (error?.details) {
+        error.status = normalizeStatus(error.details);
+        throw error;
+      }
       const refreshed = await status();
       error.status = refreshed;
       throw error;
@@ -2079,6 +2309,7 @@ export function createCursorBridge({
         String(normalizedSize),
       ]);
       return {
+        schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
         id: catalogIdentifier(theme.nativeThemeId),
         nativeThemeId: theme.nativeThemeId,
         sizePercentage: normalizedSize,
@@ -2116,8 +2347,8 @@ export function createCursorBridge({
     assignImportedFamily,
     deleteImportedThemes,
     deleteImportedFamily,
-    recoverImportedDeletionState: (recovery) =>
-      serializeMutation(() => recoverDeletionNativeState(recovery)),
+    recoverNativeState: (recovery) =>
+      serializeMutation(() => recoverNativeState(recovery)),
     forgetThemeSizes: (identifiers) =>
       serializeMutation(() => forgetThemeSizePreferences(identifiers)),
     invalidateManifests,

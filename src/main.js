@@ -676,7 +676,7 @@ async function startApplication() {
       importedPacksRoot,
       disposeArtifact: (artifactPath) => shell.trashItem(artifactPath),
       recoverDeletionNativeState: (recovery) =>
-        bridge.recoverImportedDeletionState(recovery),
+        bridge.recoverNativeState(recovery),
       persistPendingThemeSizeCleanup,
     });
     if (reconciliation.cleanupPending) {

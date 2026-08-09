@@ -15,7 +15,7 @@ function packList(scope) {
 }
 
 function packButtons(scope) {
-  return packList(scope).locator("button[aria-label]");
+  return packList(scope).locator("button[data-pack-option]");
 }
 
 function findPackagedAsar() {
@@ -300,6 +300,7 @@ test.describe("Cursor Atelier packaged app", () => {
     await page.setViewportSize({ width: 760, height: 560 });
 
     await expect(page.locator("aside")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Packs" })).toBeVisible();
     await page.getByRole("button", { name: "Packs" }).click();
 
     const drawer = page.getByRole("dialog", {
@@ -328,12 +329,20 @@ test.describe("Cursor Atelier packaged app", () => {
     expect(bounds.bodyScrollHeight).toBe(bounds.bodyClientHeight);
     expect(bounds.bodyClientWidth).toBe(bounds.viewportWidth);
     expect(bounds.bodyScrollWidth).toBe(bounds.bodyClientWidth);
+
+    await page.setViewportSize({ width: 959, height: 560 });
+    await expect(page.locator("aside")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Packs" })).toBeVisible();
+
+    await page.setViewportSize({ width: 960, height: 560 });
+    await expect(page.locator("aside")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Packs" })).toBeHidden();
   });
 
   test("keeps the document fixed while both panes remain user-scrollable", async ({
     cursorPage: page,
   }) => {
-    await page.setViewportSize({ width: 800, height: 360 });
+    await page.setViewportSize({ width: 1024, height: 360 });
 
     const detail = page.getByTestId("detail-scroll");
     const rail = page.getByTestId("pack-rail-scroll");
@@ -506,10 +515,11 @@ test.describe("Cursor Atelier packaged app", () => {
     await expect(page.locator("#random-source")).toHaveText(
       "Light & Dark Pools",
     );
-    await page.locator("#random-schedule").click();
-    await page
-      .getByRole("option", { name: "Every x hours", exact: true })
-      .click();
+    await page.evaluate(() =>
+      window.electronAPI.updateCursorPreferences({
+        randomization: { schedule: { mode: "interval" } },
+      }),
+    );
     const interval = page.locator("#random-interval");
     await expect(interval).toHaveValue("1");
     await interval.fill("5");
@@ -517,7 +527,8 @@ test.describe("Cursor Atelier packaged app", () => {
     await expect(interval).toHaveValue("1");
     await interval.fill("");
     await interval.blur();
-    await expect(interval).toHaveValue("1");
+    await expect(interval).toHaveValue("");
+    await expect(page.getByText("Enter 0.25–720 hours.")).toBeVisible();
     await expect
       .poll(() =>
         page.evaluate(async () => {
@@ -526,9 +537,13 @@ test.describe("Cursor Atelier packaged app", () => {
         }),
       )
       .toBe(1);
+    await interval.press("Escape");
 
-    await page.locator("#random-schedule").click();
-    await page.getByRole("option", { name: "Daily", exact: true }).click();
+    await page.evaluate(() =>
+      window.electronAPI.updateCursorPreferences({
+        randomization: { schedule: { mode: "daily" } },
+      }),
+    );
     const dailyTime = page.locator("#random-daily-time");
     await expect(dailyTime).toHaveValue("09:00");
     await dailyTime.fill("18:30");
@@ -536,7 +551,8 @@ test.describe("Cursor Atelier packaged app", () => {
     await expect(dailyTime).toHaveValue("09:00");
     await dailyTime.fill("");
     await dailyTime.blur();
-    await expect(dailyTime).toHaveValue("09:00");
+    await expect(dailyTime).toHaveValue("");
+    await expect(page.getByText("Enter a valid time.")).toBeVisible();
     await expect
       .poll(() =>
         page.evaluate(async () => {
@@ -545,17 +561,28 @@ test.describe("Cursor Atelier packaged app", () => {
         }),
       )
       .toBe("09:00");
+    await dailyTime.press("Escape");
 
-    await page.locator("#random-schedule").click();
-    await page
-      .getByRole("option", { name: "Specific times", exact: true })
-      .click();
+    await page.evaluate(() =>
+      window.electronAPI.updateCursorPreferences({
+        randomization: {
+          schedule: { mode: "times", times: ["09:00", "17:00"] },
+        },
+      }),
+    );
     const firstTime = page.getByLabel("Random cursor time 1");
     const secondTime = page.getByLabel("Random cursor time 2");
-    await firstTime.fill("20:00");
-    await expect(firstTime).toHaveValue("20:00");
+    await secondTime.fill("09:00");
+    await secondTime.blur();
+    await expect(secondTime).toHaveValue("09:00");
+    await expect(page.getByText("Times must be unique.")).toBeVisible();
+    await secondTime.press("Escape");
+    await expect(firstTime).toHaveValue("09:00");
     await expect(secondTime).toHaveValue("17:00");
     await page.getByRole("button", { name: "Add Time", exact: true }).click();
+    const thirdTime = page.getByLabel("Random cursor time 3");
+    await expect(thirdTime).toHaveValue("17:15");
+    await expect(thirdTime).toBeFocused();
     await expect
       .poll(() =>
         page.evaluate(async () => {
@@ -563,7 +590,7 @@ test.describe("Cursor Atelier packaged app", () => {
           return preferences.randomization.schedule.times;
         }),
       )
-      .toEqual(["00:00", "17:00", "20:00"]);
+      .toEqual(["09:00", "17:00", "17:15"]);
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
   });

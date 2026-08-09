@@ -5,26 +5,5 @@
   "unifiedThemeCount": 240,
   "roleCount": 47,
   "externalIdentifierSHA256": "1d095665ad0cd9edb43c1c14243b78eb5f75516d6a4637b6b9f0afb68b7b67d2",
-  "unifiedIdentifierSHA256": "24f22189f7282046a0fc8693d1c5eecb2dc229ad679db12f69a9623c3734a993",
-  "builtInIdentifiers": [
-    "OreoBlack",
-    "OreoBlue",
-    "OreoGrey",
-    "OreoPink",
-    "OreoPurple",
-    "OreoRed",
-    "OreoSparkBlue",
-    "OreoSparkDark",
-    "OreoSparkGreen",
-    "OreoSparkLightPink",
-    "OreoSparkLime",
-    "OreoSparkLite",
-    "OreoSparkOrange",
-    "OreoSparkPink",
-    "OreoSparkPurple",
-    "OreoSparkRed",
-    "OreoSparkViolet",
-    "OreoTeal",
-    "OreoWhite"
-  ]
+  "unifiedIdentifierSHA256": "24f22189f7282046a0fc8693d1c5eecb2dc229ad679db12f69a9623c3734a993"
 }

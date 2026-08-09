@@ -36,7 +36,55 @@ function theme(nativeThemeId, family = "Oreo") {
   };
 }
 
-function bridge({ themes, status, applyTheme } = {}) {
+function verifiedActiveStatus(identifier, overrides = {}) {
+  return {
+    bridgeAvailable: true,
+    supported: true,
+    previewMode: false,
+    statusAvailable: true,
+    selectedNativeThemeId: identifier,
+    effectiveNativeThemeId: identifier,
+    desiredEnabled: true,
+    persistedEffectiveApplied: true,
+    effectiveApplied: true,
+    currentSentinelsMatchTheme: true,
+    launchAtLoginDesired: false,
+    loginApprovalRequired: false,
+    loginItemRegistrationCurrent: false,
+    transactionPending: false,
+    stateDrifted: false,
+    ...overrides,
+  };
+}
+
+function verifiedRestoredStatus(overrides = {}) {
+  return {
+    bridgeAvailable: true,
+    supported: true,
+    previewMode: false,
+    statusAvailable: true,
+    selectedNativeThemeId: "OreoWhite",
+    effectiveNativeThemeId: null,
+    desiredEnabled: false,
+    persistedEffectiveApplied: false,
+    effectiveApplied: false,
+    currentSentinelsMatchTheme: false,
+    launchAtLoginDesired: false,
+    loginApprovalRequired: false,
+    loginItemRegistrationCurrent: false,
+    transactionPending: false,
+    stateDrifted: false,
+    ...overrides,
+  };
+}
+
+function bridge({
+  themes,
+  status,
+  applyTheme,
+  restore,
+  recoverNativeState,
+} = {}) {
   const apply =
     applyTheme ??
     (async (identifier) => ({
@@ -45,9 +93,37 @@ function bridge({ themes, status, applyTheme } = {}) {
       effectiveApplied: true,
       currentSentinelsMatchTheme: true,
     }));
+  const restoreState =
+    restore ??
+    (async () => {
+      const restored = verifiedRestoredStatus();
+      if (status && typeof status === "object") {
+        Object.assign(status, restored);
+      }
+      return restored;
+    });
+  const recoverState =
+    recoverNativeState ??
+    (async (recovery) => {
+      const recovered = verifiedActiveStatus(
+        recovery.previousEffectiveIdentifier,
+        {
+          selectedNativeThemeId: recovery.previousSelectedIdentifier,
+          launchAtLoginDesired: recovery.previousLaunchAtLoginDesired,
+          loginItemRegistrationCurrent:
+            recovery.previousLoginItemRegistrationCurrent,
+        },
+      );
+      if (status && typeof status === "object") {
+        Object.assign(status, recovered);
+      }
+      return recovered;
+    });
   return {
     listThemes: vi.fn(async () => themes ?? []),
-    status: vi.fn(async () => status ?? {}),
+    status: vi.fn(async () => structuredClone(status ?? {})),
+    restore: vi.fn(restoreState),
+    recoverNativeState: vi.fn(recoverState),
     applyTheme: vi.fn(async (identifier, options) => {
       if (options?.shouldApply && options.shouldApply() !== true) {
         return { applySkipped: true, reason: "stale-request" };
@@ -324,6 +400,201 @@ describe("cursor automation", () => {
     expect(preferencesStore.get().randomization.lastRunAt).toBeNull();
   });
 
+  it("restores authoritative stock state when a random cursor becomes stale during native execution", async () => {
+    let releaseApply;
+    let markApplyStarted;
+    const applyStarted = new Promise((resolve) => {
+      markApplyStarted = resolve;
+    });
+    const liveStatus = verifiedRestoredStatus();
+    const preferencesStore = createMemoryPreferences({
+      randomization: { source: "all" },
+    });
+    const changed = vi.fn();
+    let firstApply = true;
+    const nativeBridge = bridge({
+      themes: [theme("OreoBlack"), theme("OreoWhite")],
+      status: liveStatus,
+      applyTheme: async (identifier) => {
+        if (firstApply) {
+          firstApply = false;
+          markApplyStarted();
+          await new Promise((resolve) => {
+            releaseApply = resolve;
+          });
+        }
+        Object.assign(
+          liveStatus,
+          verifiedActiveStatus(identifier, {
+            launchAtLoginDesired: true,
+            loginItemRegistrationCurrent: true,
+          }),
+        );
+        return { ...liveStatus };
+      },
+    });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+      random: () => 0,
+      now: () => new Date("2026-08-06T20:15:00.000Z"),
+      onCursorChanged: changed,
+    });
+
+    const randomization = automation.randomize();
+    await applyStarted;
+    preferencesStore.update({
+      favorites: { cursorIds: ["OreoBlack"] },
+      randomization: { source: "favorites" },
+    });
+    releaseApply();
+
+    await expect(randomization).resolves.toBeNull();
+    expect(nativeBridge.applyTheme).toHaveBeenCalledOnce();
+    expectGuardedApply(nativeBridge.applyTheme, "OreoBlack");
+    expect(nativeBridge.restore).toHaveBeenCalledOnce();
+    expect(nativeBridge.recoverNativeState).not.toHaveBeenCalled();
+    expect(liveStatus.effectiveNativeThemeId).toBeNull();
+    expect(liveStatus.launchAtLoginDesired).toBe(false);
+    expect(liveStatus.loginItemRegistrationCurrent).toBe(false);
+    expect(preferencesStore.get()).toMatchObject({
+      appearance: { lightCursorId: null },
+      randomization: { source: "favorites", lastRunAt: null },
+    });
+    expect(changed).toHaveBeenCalledOnce();
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "manual:stale-compensated",
+        cursor: expect.objectContaining({ nativeThemeId: null }),
+      }),
+    );
+  });
+
+  it("compensates a stale random apply even when preference rollback fails", async () => {
+    let releaseApply;
+    let markApplyStarted;
+    const applyStarted = new Promise((resolve) => {
+      markApplyStarted = resolve;
+    });
+    const liveStatus = verifiedActiveStatus("OreoWhite");
+    const preferencesStore = createMemoryPreferences({
+      randomization: { source: "all" },
+    });
+    const update = preferencesStore.update;
+    let updateCalls = 0;
+    preferencesStore.update = vi.fn((patch) => {
+      updateCalls += 1;
+      if (updateCalls === 3) {
+        throw new Error("rollback write failed");
+      }
+      return update(patch);
+    });
+    let firstApply = true;
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite"), theme("OreoBlack")],
+      status: liveStatus,
+      applyTheme: async (identifier) => {
+        if (firstApply) {
+          firstApply = false;
+          markApplyStarted();
+          await new Promise((resolve) => {
+            releaseApply = resolve;
+          });
+        }
+        Object.assign(liveStatus, {
+          selectedNativeThemeId: identifier,
+          effectiveNativeThemeId: identifier,
+          launchAtLoginDesired: true,
+          loginItemRegistrationCurrent: true,
+        });
+        return { ...liveStatus };
+      },
+    });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+      random: () => 0,
+      now: () => new Date("2026-08-06T20:15:00.000Z"),
+    });
+
+    const randomization = automation.randomize();
+    await applyStarted;
+    preferencesStore.update({
+      favorites: { cursorIds: ["OreoBlack"] },
+      randomization: { source: "favorites" },
+    });
+    releaseApply();
+    const failure = await randomization.catch((error) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure).toMatchObject({
+      code: "CURSOR_STALE_RANDOMIZATION_RECOVERY_FAILED",
+      rollbackError: expect.objectContaining({
+        message: "rollback write failed",
+      }),
+      compensationError: null,
+    });
+    expect(nativeBridge.recoverNativeState).toHaveBeenCalledOnce();
+    expect(liveStatus).toMatchObject({
+      effectiveNativeThemeId: "OreoWhite",
+      launchAtLoginDesired: false,
+      loginItemRegistrationCurrent: false,
+    });
+  });
+
+  it("rolls back stale randomization preferences without reconstructing drifted prior native state", async () => {
+    const liveStatus = verifiedActiveStatus("OreoWhite", {
+      stateDrifted: true,
+    });
+    const preferencesStore = createMemoryPreferences({
+      randomization: { source: "all" },
+    });
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite"), theme("OreoBlack")],
+      status: liveStatus,
+      applyTheme: async (identifier) => {
+        preferencesStore.update({
+          favorites: { cursorIds: [identifier] },
+          randomization: { source: "favorites" },
+        });
+        Object.assign(
+          liveStatus,
+          verifiedActiveStatus(identifier, {
+            launchAtLoginDesired: true,
+            loginItemRegistrationCurrent: true,
+          }),
+        );
+        return { ...liveStatus };
+      },
+    });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+      random: () => 0,
+      now: () => new Date("2026-08-06T20:15:00.000Z"),
+    });
+
+    const failure = await automation.randomize().catch((error) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure).toMatchObject({
+      code: "CURSOR_STALE_RANDOMIZATION_RECOVERY_FAILED",
+      rollbackError: null,
+      compensationError: expect.objectContaining({
+        code: "CURSOR_STALE_APPLY_PRIOR_STATE_UNVERIFIED",
+      }),
+    });
+    expect(preferencesStore.get()).toMatchObject({
+      appearance: { lightCursorId: null },
+      randomization: { source: "favorites", lastRunAt: null },
+    });
+    expect(nativeBridge.recoverNativeState).not.toHaveBeenCalled();
+    expect(nativeBridge.restore).not.toHaveBeenCalled();
+  });
+
   it("does not switch appearances until automatic switching is enabled", async () => {
     let systemAppearance = "light";
     const preferencesStore = createMemoryPreferences({
@@ -456,6 +727,83 @@ describe("cursor automation", () => {
 
     expect(nativeMutations).toBe(0);
     expect(changed).not.toHaveBeenCalled();
+    automation.stop();
+  });
+
+  it("reverts an appearance cursor that becomes stale during native execution", async () => {
+    let systemAppearance = "light";
+    let releaseApply;
+    let markApplyStarted;
+    const applyStarted = new Promise((resolve) => {
+      markApplyStarted = resolve;
+    });
+    const liveStatus = verifiedActiveStatus("OreoWhite");
+    const preferencesStore = createMemoryPreferences({
+      appearance: {
+        automaticSwitching: true,
+        lightCursorId: "OreoWhite",
+        darkCursorId: "OreoBlack",
+      },
+    });
+    const changed = vi.fn();
+    let delayNextApply = false;
+    const nativeBridge = bridge({
+      themes: [theme("OreoWhite"), theme("OreoBlack")],
+      status: liveStatus,
+      applyTheme: async (identifier) => {
+        if (delayNextApply) {
+          delayNextApply = false;
+          markApplyStarted();
+          await new Promise((resolve) => {
+            releaseApply = resolve;
+          });
+        }
+        Object.assign(liveStatus, {
+          selectedNativeThemeId: identifier,
+          effectiveNativeThemeId: identifier,
+          effectiveApplied: true,
+          currentSentinelsMatchTheme: true,
+          launchAtLoginDesired: true,
+          loginItemRegistrationCurrent: true,
+        });
+        return { ...liveStatus };
+      },
+    });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => systemAppearance,
+      onCursorChanged: changed,
+    });
+
+    await automation.start({ runLaunch: false });
+    systemAppearance = "dark";
+    delayNextApply = true;
+    const appearanceChange = automation.appearanceChanged();
+    await applyStarted;
+    systemAppearance = "light";
+    releaseApply();
+
+    await expect(appearanceChange).resolves.toBeNull();
+    expect(nativeBridge.applyTheme).toHaveBeenCalledOnce();
+    expectGuardedApply(nativeBridge.applyTheme, "OreoBlack");
+    expect(nativeBridge.recoverNativeState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previousEffectiveIdentifier: "OreoWhite",
+        previousLaunchAtLoginDesired: false,
+        previousLoginItemRegistrationCurrent: false,
+        teardownCurrent: true,
+      }),
+    );
+    expect(liveStatus.effectiveNativeThemeId).toBe("OreoWhite");
+    expect(liveStatus.launchAtLoginDesired).toBe(false);
+    expect(changed).toHaveBeenCalledOnce();
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "appearance:stale-compensated",
+        cursor: expect.objectContaining({ nativeThemeId: "OreoWhite" }),
+      }),
+    );
     automation.stop();
   });
 

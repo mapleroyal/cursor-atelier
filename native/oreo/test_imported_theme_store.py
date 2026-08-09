@@ -39,6 +39,8 @@ class ImportedThemeStoreTests(unittest.TestCase):
                     BOOL snapshotExists, BOOL effective, BOOL activeBootCurrent);
                 NSUInteger OreoCursorTestingSnapshotRestore(
                     BOOL snapshotExists, BOOL effective, BOOL activeBootCurrent);
+                NSUInteger OreoCursorTestingImportedValidationCount(void);
+                void OreoCursorTestingResetImportedValidationCount(void);
 
                 static void PrintJSON(id object) {
                     NSData *data = [NSJSONSerialization
@@ -84,6 +86,18 @@ class ImportedThemeStoreTests(unittest.TestCase):
                         }
                         if (argc == 2 && strcmp(argv[1], "list") == 0) {
                             PrintJSON([OreoCursorEngine availableThemes]);
+                            return 0;
+                        }
+                        if (argc == 2 &&
+                            strcmp(argv[1], "cached-list") == 0) {
+                            [OreoCursorEngine availableThemes];
+                            OreoCursorTestingResetImportedValidationCount();
+                            NSArray *themes = [OreoCursorEngine availableThemes];
+                            PrintJSON(@{
+                                @"themeCount": @(themes.count),
+                                @"fullValidationCount":
+                                    @(OreoCursorTestingImportedValidationCount()),
+                            });
                             return 0;
                         }
                         if (argc == 3 && strcmp(argv[1], "resource") == 0) {
@@ -220,10 +234,18 @@ class ImportedThemeStoreTests(unittest.TestCase):
         manifest.chmod(0o600)
         return pack, data, entry
 
-    def _run(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        *arguments: str,
+        check: bool = True,
+        theme_root: pathlib.Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment["HOME"] = str(self.home)
         environment["CFFIXED_USER_HOME"] = str(self.home)
+        environment["OREO_TEST_THEME_ROOT"] = str(
+            theme_root or (NATIVE_ROOT / "Resources" / "Themes")
+        )
         return subprocess.run(
             [str(self._harness), *arguments],
             env=environment,
@@ -243,6 +265,45 @@ class ImportedThemeStoreTests(unittest.TestCase):
         # Restore: inactive is always a no-op, owned state restores only with a
         # snapshot, and missing owned state remains an explicit failure.
         self.assertEqual(policy["restore"], [0, 0, 1, 1, 2, 2])
+
+    def test_builtin_catalog_loader_fails_closed_when_missing_or_invalid(self) -> None:
+        self._install("orphaned-pack", "OrphanedFixture")
+        for catalog in (None, "{}"):
+            with self.subTest(catalog=catalog):
+                with tempfile.TemporaryDirectory() as directory:
+                    theme_root = pathlib.Path(directory)
+                    if catalog is not None:
+                        (theme_root / "catalog.json").write_text(catalog)
+                    themes = json.loads(
+                        self._run("list", theme_root=theme_root).stdout
+                    )
+                    self.assertEqual(themes, [])
+
+    def test_builtin_catalog_orders_its_declared_default_first(self) -> None:
+        source_root = NATIVE_ROOT / "Resources" / "Themes"
+        with tempfile.TemporaryDirectory() as directory:
+            theme_root = pathlib.Path(directory)
+            for resource in source_root.glob("*.cursor"):
+                shutil.copy2(resource, theme_root / resource.name)
+            catalog = json.loads((source_root / "catalog.json").read_text())
+            catalog["defaultThemeId"] = catalog["themes"][1]["nativeThemeId"]
+            (theme_root / "catalog.json").write_text(json.dumps(catalog))
+
+            themes = json.loads(self._run("list", theme_root=theme_root).stdout)
+
+            self.assertEqual(themes[0]["Identifier"], catalog["defaultThemeId"])
+            engine = ENGINE_SOURCE.read_text(encoding="utf-8")
+            selection = engine[
+                engine.index(
+                    "+ (NSString *)selectedThemeIdentifierForResourceBundle:"
+                ) : engine.index(
+                    "+ (BOOL)saveSelectedThemeIdentifier:"
+                )
+            ]
+            self.assertIn(
+                "OreoThemeSpecifications(resourceBundle).firstObject",
+                selection,
+            )
 
     def test_discovers_and_integrity_checks_an_imported_resource(self) -> None:
         pack, data, entry = self._install("fixture-pack")
@@ -267,6 +328,30 @@ class ImportedThemeStoreTests(unittest.TestCase):
         )
         rejected = self._run("resource", entry["Identifier"], check=False)
         self.assertEqual(rejected.returncode, 2)
+
+    def test_reuses_validation_receipts_for_unchanged_imports(self) -> None:
+        self._install("cached-pack", "CachedFixture")
+
+        result = json.loads(self._run("cached-list").stdout)
+
+        self.assertGreater(result["themeCount"], 0)
+        self.assertEqual(result["fullValidationCount"], 0)
+        receipt = self.imported_root.parent / "ImportedThemeValidation.json"
+        self.assertTrue(receipt.is_file())
+        self.assertEqual(receipt.stat().st_mode & 0o077, 0)
+
+    def test_invalidates_a_receipt_when_the_resource_identity_changes(self) -> None:
+        pack, data, entry = self._install("changed-pack", "ChangedFixture")
+        self._themes()
+
+        (pack / entry["Resource"]).write_bytes(data + b"tampered")
+        result = json.loads(self._run("cached-list").stdout)
+
+        self.assertEqual(result["fullValidationCount"], 0)
+        self.assertNotIn(
+            entry["Identifier"],
+            {theme["Identifier"] for theme in self._themes()},
+        )
 
     def test_rejects_resource_manifest_and_pack_symlinks(self) -> None:
         scenarios = ("resource", "manifest", "pack")
@@ -604,7 +689,7 @@ class ImportedThemeStoreTests(unittest.TestCase):
             NATIVE_ROOT / "HelperSources" / "OreoLoginHelperMain.m"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "initWithThemeIdentifier:[OreoCursorEngine selectedThemeIdentifier]",
+            "selectedThemeIdentifierForResourceBundle:self.hostBundle",
             helper,
         )
         engine = ENGINE_SOURCE.read_text(encoding="utf-8")

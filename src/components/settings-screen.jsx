@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
@@ -38,15 +38,28 @@ const SCHEDULE_OPTIONS = [
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function areValidTimes(times) {
-  return (
-    times.every((time) => TIME_PATTERN.test(time)) &&
-    new Set(times).size === times.length
-  );
+  return getTimesValidationMessage(times) === null;
 }
 
-function getNextTime(times) {
+export function getTimesValidationMessage(times) {
+  if (times.some((time) => !TIME_PATTERN.test(time))) {
+    return "Enter a valid time.";
+  }
+  if (new Set(times).size !== times.length) {
+    return "Times must be unique.";
+  }
+  return null;
+}
+
+export function getNextTime(times) {
   const occupied = new Set(times);
-  for (let minutes = 0; minutes < 24 * 60; minutes += 15) {
+  const lastTime = times.at(-1);
+  const [lastHour, lastMinute] = TIME_PATTERN.test(lastTime)
+    ? lastTime.split(":").map(Number)
+    : [0, -15];
+  const start = (lastHour * 60 + lastMinute + 15) % (24 * 60);
+  for (let offset = 0; offset < 24 * 60; offset += 15) {
+    const minutes = (start + offset) % (24 * 60);
     const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
     const remainder = String(minutes % 60).padStart(2, "0");
     const candidate = `${hours}:${remainder}`;
@@ -80,6 +93,7 @@ function saveDraft(save, restore) {
 
 function IntervalHoursInput({ value, disabled, onValueChange }) {
   const [draft, setDraft] = useState(String(value));
+  const [validationMessage, setValidationMessage] = useState(null);
   const cancelBlurRef = useRef(false);
 
   const commit = () => {
@@ -87,16 +101,18 @@ function IntervalHoursInput({ value, disabled, onValueChange }) {
       cancelBlurRef.current = false;
       return;
     }
-    if (!draft.trim()) {
-      setDraft(String(value));
-      return;
-    }
     const parsed = Number(draft);
-    if (!Number.isFinite(parsed)) {
-      setDraft(String(value));
+    if (
+      !draft.trim() ||
+      !Number.isFinite(parsed) ||
+      parsed < 0.25 ||
+      parsed > 720
+    ) {
+      setValidationMessage("Enter 0.25–720 hours.");
       return;
     }
     const next = Math.min(720, Math.max(0.25, Math.round(parsed * 4) / 4));
+    setValidationMessage(null);
     setDraft(String(next));
     if (next !== Number(value)) {
       saveDraft(
@@ -107,37 +123,52 @@ function IntervalHoursInput({ value, disabled, onValueChange }) {
   };
 
   return (
-    <div className="flex w-full items-center gap-2 sm:w-52">
-      <Input
-        id="random-interval"
-        type="number"
-        inputMode="decimal"
-        min="0.25"
-        max="720"
-        step="0.25"
-        value={draft}
-        disabled={disabled}
-        className="text-right type-numeric"
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-          if (event.key === "Escape") {
-            cancelBlurRef.current = true;
-            setDraft(String(value));
-            event.currentTarget.blur();
-          }
-        }}
-      />
-      <span className="shrink-0 text-body-sm text-muted-foreground">hours</span>
+    <div className="w-full sm:w-52">
+      <div className="flex items-center gap-2">
+        <Input
+          id="random-interval"
+          type="number"
+          inputMode="decimal"
+          min="0.25"
+          max="720"
+          step="0.25"
+          value={draft}
+          disabled={disabled}
+          aria-invalid={validationMessage ? "true" : undefined}
+          className="text-right type-numeric"
+          onChange={(event) => {
+            setDraft(event.currentTarget.value);
+            setValidationMessage(null);
+          }}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
+            if (event.key === "Escape") {
+              cancelBlurRef.current = true;
+              setDraft(String(value));
+              setValidationMessage(null);
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <span className="shrink-0 text-body-sm text-muted-foreground">
+          hours
+        </span>
+      </div>
+      {validationMessage ? (
+        <p role="alert" className="mt-1.5 text-body-sm text-destructive">
+          {validationMessage}
+        </p>
+      ) : null}
     </div>
   );
 }
 
 function DailyTimeInput({ value, disabled, onValueChange }) {
   const [draft, setDraft] = useState(value);
+  const [validationMessage, setValidationMessage] = useState(null);
   const cancelBlurRef = useRef(false);
 
   const commit = () => {
@@ -146,9 +177,10 @@ function DailyTimeInput({ value, disabled, onValueChange }) {
       return;
     }
     if (!TIME_PATTERN.test(draft)) {
-      setDraft(value);
+      setValidationMessage("Enter a valid time.");
       return;
     }
+    setValidationMessage(null);
     if (draft !== value) {
       saveDraft(
         () => onValueChange(draft),
@@ -158,44 +190,103 @@ function DailyTimeInput({ value, disabled, onValueChange }) {
   };
 
   return (
-    <Input
-      id="random-daily-time"
-      type="time"
-      value={draft}
-      className="type-numeric sm:w-52"
-      disabled={disabled}
-      onChange={(event) => setDraft(event.currentTarget.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.currentTarget.blur();
-        } else if (event.key === "Escape") {
-          cancelBlurRef.current = true;
-          setDraft(value);
-          event.currentTarget.blur();
-        }
-      }}
-    />
+    <div className="w-full sm:w-52">
+      <Input
+        id="random-daily-time"
+        type="time"
+        value={draft}
+        className="type-numeric"
+        disabled={disabled}
+        aria-invalid={validationMessage ? "true" : undefined}
+        onChange={(event) => {
+          setDraft(event.currentTarget.value);
+          setValidationMessage(null);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          } else if (event.key === "Escape") {
+            cancelBlurRef.current = true;
+            setDraft(value);
+            setValidationMessage(null);
+            event.currentTarget.blur();
+          }
+        }}
+      />
+      {validationMessage ? (
+        <p role="alert" className="mt-1.5 text-body-sm text-destructive">
+          {validationMessage}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
 function SpecificTimesInput({ times, disabled, onValueChange }) {
-  const [rows, setRows] = useState(() =>
-    times.map((time, index) => ({ id: `${index}-${time}`, value: time })),
+  const timesSignature = JSON.stringify(times);
+  const authoritativeTimes = useMemo(
+    () => JSON.parse(timesSignature),
+    [timesSignature],
   );
+  const nextRowIdRef = useRef(authoritativeTimes.length);
+  const [rows, setRows] = useState(() =>
+    authoritativeTimes.map((time, index) => ({
+      id: `time-${index}`,
+      value: time,
+    })),
+  );
+  const [validationMessage, setValidationMessage] = useState(null);
+  const [focusIndex, setFocusIndex] = useState(null);
   const canceledBlurRef = useRef(new Set());
+  const inputRefs = useRef(new Map());
   const rowValues = rows.map((row) => row.value);
   const rowsAreValid = areValidTimes(rowValues);
   const nextTime = rowsAreValid ? getNextTime(rowValues) : null;
 
-  const restoreRows = () =>
+  useEffect(() => {
+    setRows((current) => {
+      if (
+        current.length === authoritativeTimes.length &&
+        current.every((row, index) => row.value === authoritativeTimes[index])
+      ) {
+        return current;
+      }
+      return authoritativeTimes.map((time) => ({
+        id: `time-${nextRowIdRef.current++}`,
+        value: time,
+      }));
+    });
+    setValidationMessage(null);
+  }, [authoritativeTimes]);
+
+  useEffect(() => {
+    if (focusIndex === null) {
+      return;
+    }
+    const input = inputRefs.current.get(rows[focusIndex]?.id);
+    if (input) {
+      input.focus();
+      setFocusIndex(null);
+    }
+  }, [focusIndex, rows]);
+
+  const restoreRows = () => {
     setRows(
-      times.map((time, index) => ({ id: `${index}-${time}`, value: time })),
+      authoritativeTimes.map((time) => ({
+        id: `time-${nextRowIdRef.current++}`,
+        value: time,
+      })),
     );
+    setValidationMessage(null);
+    setFocusIndex(null);
+  };
 
   const updateRow = (id, value) => {
-    setRows((current) =>
-      current.map((row) => (row.id === id ? { ...row, value } : row)),
+    const next = rows.map((row) => (row.id === id ? { ...row, value } : row));
+    setRows(next);
+    setValidationMessage(
+      getTimesValidationMessage(next.map((row) => row.value)),
     );
   };
 
@@ -204,11 +295,12 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
       return;
     }
     const nextTimes = rows.map((row) => row.value);
-    if (!areValidTimes(nextTimes)) {
-      restoreRows();
+    const nextValidationMessage = getTimesValidationMessage(nextTimes);
+    setValidationMessage(nextValidationMessage);
+    if (nextValidationMessage) {
       return;
     }
-    if (nextTimes.some((time, index) => time !== times[index])) {
+    if (nextTimes.some((time, index) => time !== authoritativeTimes[index])) {
       saveDraft(() => onValueChange(nextTimes), restoreRows);
     }
   };
@@ -218,8 +310,16 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
       {rows.map((row, index) => (
         <div key={row.id} className="flex min-w-0 items-center gap-1.5">
           <Input
+            ref={(node) => {
+              if (node) {
+                inputRefs.current.set(row.id, node);
+              } else {
+                inputRefs.current.delete(row.id);
+              }
+            }}
             type="time"
             aria-label={`Random cursor time ${index + 1}`}
+            aria-invalid={validationMessage ? "true" : undefined}
             value={row.value}
             className="type-numeric"
             disabled={disabled}
@@ -230,7 +330,8 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
                 event.currentTarget.blur();
               } else if (event.key === "Escape") {
                 canceledBlurRef.current.add(row.id);
-                updateRow(row.id, times[index] ?? "");
+                updateRow(row.id, authoritativeTimes[index] ?? "");
+                setValidationMessage(null);
                 event.currentTarget.blur();
               }
             }}
@@ -251,9 +352,12 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
             }
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
-              const nextTimes = rows
-                .filter((candidate) => candidate.id !== row.id)
-                .map((candidate) => candidate.value);
+              const nextRows = rows.filter(
+                (candidate) => candidate.id !== row.id,
+              );
+              const nextTimes = nextRows.map((candidate) => candidate.value);
+              setRows(nextRows);
+              setValidationMessage(null);
               saveDraft(() => onValueChange(nextTimes), restoreRows);
             }}
           >
@@ -265,6 +369,11 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
           </Button>
         </div>
       ))}
+      {validationMessage ? (
+        <p role="alert" className="text-body-sm text-destructive">
+          {validationMessage}
+        </p>
+      ) : null}
       <Button
         type="button"
         variant="ghost"
@@ -275,7 +384,14 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
           if (!nextTime) {
             return;
           }
-          saveDraft(() => onValueChange([...rowValues, nextTime]), restoreRows);
+          const nextRows = [
+            ...rows,
+            { id: `time-${nextRowIdRef.current++}`, value: nextTime },
+          ];
+          const nextTimes = nextRows.map((row) => row.value);
+          setRows(nextRows);
+          setFocusIndex(nextRows.length - 1);
+          saveDraft(() => onValueChange(nextTimes), restoreRows);
         }}
       >
         <HugeiconsIcon icon={Add01Icon} strokeWidth={2} aria-hidden="true" />
@@ -330,7 +446,6 @@ function ScheduleFields({ schedule, disabled, onChange }) {
         <FieldLabel>Times</FieldLabel>
       </FieldContent>
       <SpecificTimesInput
-        key={times.join("|")}
         times={times}
         disabled={disabled}
         onValueChange={(nextTimes) => onChange({ times: nextTimes })}
@@ -347,8 +462,14 @@ export function SettingsScreen({
   onChange,
   onRandomize,
   randomizing,
-  busy,
+  cursorOperationBusy,
+  saving,
   canRandomize,
+  canScheduleRandomization,
+  scheduleUnavailableMessage,
+  randomizationAvailable,
+  randomizationPoolSize,
+  systemAppearance,
   preferencesAvailable,
   preferencesError,
   preferencesErrorMessage,
@@ -383,10 +504,16 @@ export function SettingsScreen({
     typeof randomizationFeedback === "string"
       ? randomizationFeedback
       : randomizationFeedback?.message;
-  const settingsDisabled = busy || !preferencesAvailable;
+  const settingsDisabled = !preferencesAvailable;
   const displayedPreferenceError = preferencesError
     ? preferencesErrorMessage
     : preferenceError?.message;
+  const emptyPoolMessage =
+    preferencesAvailable &&
+    randomizationAvailable &&
+    randomizationPoolSize === 0
+      ? `No ${systemAppearance}-mode cursors match these settings.`
+      : null;
 
   return (
     <section
@@ -415,11 +542,20 @@ export function SettingsScreen({
           >
             Settings
           </h1>
-          <AppearanceModeSelector
-            className="titlebar-no-drag ml-auto"
-            value={appearanceMode}
-            onValueChange={onAppearanceModeChange}
-          />
+          <div className="titlebar-no-drag ml-auto flex items-center gap-2">
+            {saving ? (
+              <span
+                role="status"
+                className="text-body-sm text-muted-foreground"
+              >
+                Saving…
+              </span>
+            ) : null}
+            <AppearanceModeSelector
+              value={appearanceMode}
+              onValueChange={onAppearanceModeChange}
+            />
+          </div>
         </div>
       </header>
 
@@ -521,7 +657,7 @@ export function SettingsScreen({
 
             <SettingsSection title="Randomization">
               <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-                {feedbackMessage ? (
+                {feedbackMessage || emptyPoolMessage ? (
                   <p
                     role={
                       randomizationFeedback?.type === "error"
@@ -534,7 +670,7 @@ export function SettingsScreen({
                         "text-destructive",
                     )}
                   >
-                    {feedbackMessage}
+                    {feedbackMessage ?? emptyPoolMessage}
                   </p>
                 ) : null}
                 <Button
@@ -543,6 +679,8 @@ export function SettingsScreen({
                   disabled={
                     settingsDisabled ||
                     !canRandomize ||
+                    cursorOperationBusy ||
+                    saving ||
                     randomizing ||
                     (randomization.source === "family" && !randomization.family)
                   }
@@ -644,7 +782,13 @@ export function SettingsScreen({
                   <SelectContent>
                     <SelectGroup>
                       {SCHEDULE_OPTIONS.map(([value, label]) => (
-                        <SelectItem key={value} value={value}>
+                        <SelectItem
+                          key={value}
+                          value={value}
+                          disabled={
+                            value !== "off" && !canScheduleRandomization
+                          }
+                        >
                           {label}
                         </SelectItem>
                       ))}
@@ -652,6 +796,11 @@ export function SettingsScreen({
                   </SelectContent>
                 </Select>
               </Field>
+              {scheduleUnavailableMessage ? (
+                <p className="text-body-sm text-muted-foreground">
+                  {scheduleUnavailableMessage}
+                </p>
+              ) : null}
               <ScheduleFields
                 schedule={schedule}
                 disabled={settingsDisabled}

@@ -263,11 +263,12 @@ application and are not mutable library data. A family can be deleted only when
 all of its current members are imported. The renderer confirms either operation
 before Electron serializes it with imports and cursor mutations. If a target is
 live, Electron restores the macOS cursors first; if it is the persisted native
-selection, Electron then selects bundled `OreoWhite` while custom cursors remain
-off. Validated pack directories are atomically moved out of the indexed store
-before Electron sends them to Trash. Manifest caches, favorites, appearance and
-randomization references, and native per-theme size preferences are pruned only
-after the library removal. Cleanup failures are reported separately and never
+selection, Electron then selects the bundled default declared by
+`Resources/Themes/catalog.json` while custom cursors remain off. Validated pack
+directories are atomically moved out of the indexed store before Electron sends
+them to Trash. Manifest caches, favorites, appearance and randomization
+references, and native per-theme size preferences are pruned only after the
+library removal. Cleanup failures are reported separately and never
 misrepresent an already completed removal as a failed one.
 
 ## Package layout and identities

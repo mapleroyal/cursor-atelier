@@ -6,6 +6,7 @@ import {
   getNextRandomizationDate,
   resolveRandomCursorPool,
 } from "../lib/cursor-preferences.js";
+import { isVerifiedRestoredStatus } from "./cursor-state-service.js";
 
 const MAX_TIMER_DELAY_MS = 24 * 60 * 60 * 1000;
 const MIN_TIMER_DELAY_MS = 250;
@@ -87,6 +88,68 @@ function isStaleApplyResult(status) {
   return status?.applySkipped === true && status?.reason === "stale-request";
 }
 
+function activeNativeRecovery(status) {
+  const selectedIdentifier = status?.selectedNativeThemeId ?? null;
+  const effectiveIdentifier = status?.effectiveNativeThemeId;
+  if (
+    !status ||
+    typeof status !== "object" ||
+    status.bridgeAvailable !== true ||
+    status.supported !== true ||
+    status.previewMode === true ||
+    status.statusAvailable !== true ||
+    status.stateDrifted !== false ||
+    status.transactionPending !== false ||
+    status.desiredEnabled !== true ||
+    status.persistedEffectiveApplied !== true ||
+    status.effectiveApplied !== true ||
+    status.currentSentinelsMatchTheme !== true ||
+    typeof effectiveIdentifier !== "string" ||
+    !effectiveIdentifier.trim() ||
+    (selectedIdentifier !== null &&
+      (typeof selectedIdentifier !== "string" || !selectedIdentifier.trim())) ||
+    typeof status.launchAtLoginDesired !== "boolean" ||
+    typeof status.loginItemRegistrationCurrent !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    previousSelectedIdentifier: selectedIdentifier,
+    previousEffectiveIdentifier: effectiveIdentifier,
+    previousCursorWasLive: true,
+    previousDesiredEnabled: true,
+    previousLaunchAtLoginDesired: status.launchAtLoginDesired,
+    previousLoginItemRegistrationCurrent: status.loginItemRegistrationCurrent,
+    previousTransactionPending: false,
+    teardownPlanned: true,
+    teardownCurrent: true,
+  };
+}
+
+function recoveredNativeStateMatches(recovery, status) {
+  const recovered = activeNativeRecovery(status);
+  const identifiersMatch = (left, right) =>
+    String(left ?? "").toLowerCase() === String(right ?? "").toLowerCase();
+  return Boolean(
+    recovered &&
+    identifiersMatch(
+      recovered.previousSelectedIdentifier,
+      recovery.previousSelectedIdentifier,
+    ) &&
+    identifiersMatch(
+      recovered.previousEffectiveIdentifier,
+      recovery.previousEffectiveIdentifier,
+    ) &&
+    recovered.previousLaunchAtLoginDesired ===
+      recovery.previousLaunchAtLoginDesired &&
+    (recovery.previousLaunchAtLoginDesired
+      ? status.loginItemRegistrationCurrent === true ||
+        status.loginApprovalRequired === true
+      : recovered.previousLoginItemRegistrationCurrent ===
+        recovery.previousLoginItemRegistrationCurrent),
+  );
+}
+
 function requireVerifiedApplication(status, cursor) {
   if (!isCurrentCursorActive(status, cursor)) {
     const error = plainError(
@@ -115,7 +178,9 @@ export function createCursorAutomation({
     !bridge ||
     typeof bridge.listThemes !== "function" ||
     typeof bridge.status !== "function" ||
-    typeof bridge.applyTheme !== "function"
+    typeof bridge.applyTheme !== "function" ||
+    typeof bridge.restore !== "function" ||
+    typeof bridge.recoverNativeState !== "function"
   ) {
     throw new TypeError("A complete cursor bridge is required.");
   }
@@ -278,6 +343,58 @@ export function createCursorAutomation({
     return themes;
   };
 
+  const compensateStaleApplication = async (previousStatus, reason) => {
+    const recovery = activeNativeRecovery(previousStatus);
+    let previousCursor = null;
+    let compensatedStatus;
+
+    if (recovery) {
+      previousCursor = {
+        nativeThemeId: recovery.previousEffectiveIdentifier,
+      };
+      compensatedStatus = await bridge.recoverNativeState(recovery);
+      if (!recoveredNativeStateMatches(recovery, compensatedStatus)) {
+        const error = plainError(
+          "The prior native cursor state could not be verified after reverting an obsolete cursor change.",
+          "CURSOR_STALE_APPLY_COMPENSATION_FAILED",
+        );
+        error.status = compensatedStatus;
+        throw error;
+      }
+    } else if (isVerifiedRestoredStatus(previousStatus)) {
+      try {
+        compensatedStatus = await bridge.restore();
+      } catch (error) {
+        if (!isVerifiedRestoredStatus(error?.status)) {
+          throw error;
+        }
+        compensatedStatus = error.status;
+      }
+      if (!isVerifiedRestoredStatus(compensatedStatus)) {
+        const error = plainError(
+          "The obsolete cursor change could not be reverted.",
+          "CURSOR_STALE_APPLY_COMPENSATION_FAILED",
+        );
+        error.status = compensatedStatus;
+        throw error;
+      }
+    } else {
+      const error = plainError(
+        "The native cursor state before the obsolete change was not safe to reconstruct.",
+        "CURSOR_STALE_APPLY_PRIOR_STATE_UNVERIFIED",
+      );
+      error.status = previousStatus;
+      throw error;
+    }
+
+    notifyCursorChanged(
+      previousCursor,
+      compensatedStatus,
+      `${reason}:stale-compensated`,
+    );
+    return compensatedStatus;
+  };
+
   const applyRandomCursor = async (
     reason,
     { expectedMode = null, expectedScheduleGeneration = null } = {},
@@ -351,6 +468,51 @@ export function createCursorAutomation({
         ? currentRollbackPatch
         : null;
     };
+    const rollbackStaleRandomization = () => {
+      const currentRollbackPatch = rollbackPatchForCurrent();
+      if (!currentRollbackPatch) {
+        return;
+      }
+      preferencesStore.update(currentRollbackPatch);
+    };
+    const rollbackSkippedRandomization = () => {
+      try {
+        rollbackStaleRandomization();
+      } catch (rollbackError) {
+        const aggregate = new AggregateError(
+          [rollbackError],
+          "The stale cursor change could not restore its saved randomization state.",
+        );
+        aggregate.code = "CURSOR_RANDOMIZATION_ROLLBACK_FAILED";
+        throw aggregate;
+      }
+    };
+    const recoverStaleRandomization = async () => {
+      let rollbackError = null;
+      let compensationError = null;
+      try {
+        rollbackStaleRandomization();
+      } catch (error) {
+        rollbackError = error;
+      }
+      try {
+        await compensateStaleApplication(status, reason);
+      } catch (error) {
+        compensationError = error;
+      }
+      const errors = [rollbackError, compensationError].filter(Boolean);
+      if (errors.length) {
+        const aggregate = new AggregateError(
+          errors,
+          "The obsolete cursor change could not restore all prior application state.",
+        );
+        aggregate.code = "CURSOR_STALE_RANDOMIZATION_RECOVERY_FAILED";
+        aggregate.rollbackError = rollbackError;
+        aggregate.compensationError = compensationError;
+        aggregate.status = compensationError?.status ?? null;
+        throw aggregate;
+      }
+    };
     const randomizationConfiguration = JSON.stringify(
       automaticRandomizationPreferences(preferences),
     );
@@ -375,19 +537,7 @@ export function createCursorAutomation({
         shouldApply,
       });
       if (isStaleApplyResult(appliedStatus)) {
-        const currentRollbackPatch = rollbackPatchForCurrent();
-        if (currentRollbackPatch) {
-          try {
-            preferencesStore.update(currentRollbackPatch);
-          } catch (rollbackError) {
-            const aggregate = new AggregateError(
-              [rollbackError],
-              "The stale cursor change was skipped but its saved randomization state could not be restored.",
-            );
-            aggregate.code = "CURSOR_RANDOMIZATION_ROLLBACK_FAILED";
-            throw aggregate;
-          }
-        }
+        rollbackSkippedRandomization();
         return null;
       }
       nextStatus = requireVerifiedApplication(appliedStatus, cursor);
@@ -413,6 +563,10 @@ export function createCursorAutomation({
           rollbackPatchForCurrent,
         });
       }
+    }
+    if (!shouldApply()) {
+      await recoverStaleRandomization();
+      return null;
     }
     retryAt = null;
     notifyCursorChanged(cursor, nextStatus, reason);
@@ -474,25 +628,30 @@ export function createCursorAutomation({
     }
 
     const identifier = getCursorPreferenceId(cursor);
+    const shouldApply = () => {
+      const currentPreferences = preferencesStore.get();
+      const currentAppearance = readSystemAppearance();
+      const currentTargetIdentifier =
+        currentAppearance === "dark"
+          ? currentPreferences.appearance.darkCursorId
+          : currentPreferences.appearance.lightCursorId;
+      return (
+        currentPreferences.appearance.automaticSwitching === true &&
+        currentAppearance === appearance &&
+        currentTargetIdentifier === targetIdentifier
+      );
+    };
     const appliedStatus = await bridge.applyTheme(identifier, {
-      shouldApply: () => {
-        const currentPreferences = preferencesStore.get();
-        const currentAppearance = readSystemAppearance();
-        const currentTargetIdentifier =
-          currentAppearance === "dark"
-            ? currentPreferences.appearance.darkCursorId
-            : currentPreferences.appearance.lightCursorId;
-        return (
-          currentPreferences.appearance.automaticSwitching === true &&
-          currentAppearance === appearance &&
-          currentTargetIdentifier === targetIdentifier
-        );
-      },
+      shouldApply,
     });
     if (isStaleApplyResult(appliedStatus)) {
       return null;
     }
     const nextStatus = requireVerifiedApplication(appliedStatus, cursor);
+    if (!shouldApply()) {
+      await compensateStaleApplication(status, reason);
+      return null;
+    }
     lastAppearance = appearance;
     notifyCursorChanged(cursor, nextStatus, reason);
     return { cursor: cursorSummary(cursor), status: nextStatus };
@@ -754,25 +913,27 @@ export function createCursorAutomation({
         }
 
         let nextStatus;
+        let previousStatus;
         const transactionIdentifier = getCursorPreferenceId(cursor);
         const transactionIsCurrent = () =>
           preferencesStore.get().appearance[appearancePreference] ===
           transactionIdentifier;
+        const shouldApply = () =>
+          readSystemAppearance() === appearance && transactionIsCurrent();
         const rollbackPatchForCurrent = () =>
           transactionIsCurrent() ? rollbackPatch : null;
         try {
-          const status = await bridge.status();
-          if (isCurrentCursorActive(status, cursor)) {
+          previousStatus = await bridge.status();
+          if (isCurrentCursorActive(previousStatus, cursor)) {
             return {
               cursor: cursorSummary(cursor),
               preferences: preferencesStore.get(),
-              status,
+              status: previousStatus,
             };
           }
 
           const appliedStatus = await bridge.applyTheme(transactionIdentifier, {
-            shouldApply: () =>
-              readSystemAppearance() === appearance && transactionIsCurrent(),
+            shouldApply,
           });
           if (isStaleApplyResult(appliedStatus)) {
             return {
@@ -801,6 +962,17 @@ export function createCursorAutomation({
               rollbackPatchForCurrent,
             });
           }
+        }
+        if (!shouldApply()) {
+          await compensateStaleApplication(
+            previousStatus,
+            `assign:${appearance}`,
+          );
+          return {
+            cursor: cursorSummary(cursor),
+            preferences: preferencesStore.get(),
+            status: null,
+          };
         }
         notifyCursorChanged(cursor, nextStatus, `assign:${appearance}`);
         return {

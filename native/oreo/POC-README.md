@@ -181,8 +181,8 @@ native/oreo/ArtworkSource/generate_all_themes.sh \
   native/oreo/Resources/Themes
 ```
 
-Expected SHA-256 values are in
-`native/oreo/ArtworkSource/THEME-SHA256SUMS.txt`.
+Expected identifiers, UUIDs, and SHA-256 values are in the canonical
+`native/oreo/Resources/Themes/catalog.json`.
 
 ## Licenses
 

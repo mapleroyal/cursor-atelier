@@ -1,0 +1,1 @@
+export const CURSOR_DTO_SCHEMA_VERSION = 1;

@@ -44,8 +44,8 @@ native/oreo/ArtworkSource/generate_all_themes.sh \
 Set `PYTHON=/path/to/python3` to use a specific interpreter; otherwise the
 script uses `python3` from `PATH`, including an active virtual environment.
 
-The expected SHA-256 values are recorded in
-`ArtworkSource/THEME-SHA256SUMS.txt`.
+The identifiers, display metadata, UUIDs, and expected SHA-256 values are
+recorded once in `Resources/Themes/catalog.json`.
 
 The checked-in hashes were produced on macOS 26.5.2 (build 25F84) with
 `rsvg-convert` 2.62.3, Python 3.9.6, and Pillow 11.3.0. The checked-in

@@ -109,6 +109,24 @@ function copyArtifactWithIdentifier(source, directory, identifier) {
   return { directory };
 }
 
+function addCorruptInstalledPack(source, store, identifier = "Broken") {
+  const directory = path.join(store, `${identifier}-deadbeef0000`);
+  copyArtifactWithIdentifier(source, directory, identifier);
+  fs.appendFileSync(path.join(directory, "Example.cursor"), "corrupt");
+  makeTreePrivate(directory);
+  return directory;
+}
+
+function addUnsafeManifestPack(source, store, identifier = "Unsafe") {
+  const directory = path.join(store, `${identifier}-badbadbadbad`);
+  copyArtifactWithIdentifier(source, directory, identifier);
+  makeTreePrivate(directory);
+  const manifestPath = path.join(directory, "manifest.json");
+  fs.unlinkSync(manifestPath);
+  fs.symlinkSync(path.join(source, "manifest.json"), manifestPath);
+  return directory;
+}
+
 function makeTreePrivate(root) {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const entryPath = path.join(root, entry.name);
@@ -332,6 +350,60 @@ describe("imported cursor installation", () => {
     ).toBe("Imported");
   });
 
+  it("assigns a healthy pack without validating an unrelated corrupt pack", async () => {
+    const data = fixture();
+    await installImportedArtifacts({
+      artifacts: [data.artifact],
+      stagingDirectory: data.staging,
+      importedPacksRoot: data.store,
+    });
+    const corruptDirectory = addCorruptInstalledPack(
+      data.destination,
+      data.store,
+    );
+
+    await expect(
+      assignImportedCursorFamily({
+        identifiers: ["Example"],
+        family: "Studio",
+        importedPacksRoot: data.store,
+      }),
+    ).resolves.toMatchObject({
+      identifiers: ["Example"],
+      family: "Studio",
+      updatedCount: 1,
+    });
+    expect(fs.existsSync(corruptDirectory)).toBe(true);
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(data.destination, "manifest.json"), "utf8"),
+      ).themes[0].Group,
+    ).toBe("Studio");
+  });
+
+  it("assigns a healthy pack without opening an unrelated unsafe manifest", async () => {
+    const data = fixture();
+    await installImportedArtifacts({
+      artifacts: [data.artifact],
+      stagingDirectory: data.staging,
+      importedPacksRoot: data.store,
+    });
+    const unsafeDirectory = addUnsafeManifestPack(data.destination, data.store);
+
+    await expect(
+      assignImportedCursorFamily({
+        identifiers: ["Example"],
+        family: "Studio",
+        importedPacksRoot: data.store,
+      }),
+    ).resolves.toMatchObject({ updatedCount: 1 });
+    expect(
+      fs
+        .lstatSync(path.join(unsafeDirectory, "manifest.json"))
+        .isSymbolicLink(),
+    ).toBe(true);
+  });
+
   it("removes only validated imported artifacts after resolving every target", async () => {
     const data = fixture();
     await installImportedArtifacts({
@@ -366,6 +438,31 @@ describe("imported cursor installation", () => {
     });
     expect(disposed).toEqual([path.basename(data.destination)]);
     expect(fs.existsSync(data.destination)).toBe(false);
+  });
+
+  it("removes a healthy pack without validating an unrelated corrupt pack", async () => {
+    const data = fixture();
+    await installImportedArtifacts({
+      artifacts: [data.artifact],
+      stagingDirectory: data.staging,
+      importedPacksRoot: data.store,
+    });
+    const corruptDirectory = addCorruptInstalledPack(
+      data.destination,
+      data.store,
+    );
+
+    await expect(
+      removeImportedCursorArtifacts({
+        identifiers: ["Example"],
+        importedPacksRoot: data.store,
+      }),
+    ).resolves.toMatchObject({
+      identifiers: ["Example"],
+      removedCount: 1,
+    });
+    expect(fs.existsSync(data.destination)).toBe(false);
+    expect(fs.existsSync(corruptDirectory)).toBe(true);
   });
 
   it("quarantines an exact removal set and can roll it back before disposal", async () => {

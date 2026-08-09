@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createCursorPreferencesStore } from "./cursor-preferences-store.js";
-import { restoreCursorState } from "./cursor-state-service.js";
+import {
+  isVerifiedRestoredStatus,
+  restoreCursorState,
+} from "./cursor-state-service.js";
 
 function controlledStore({ failClear = false, failRollback = false } = {}) {
   let writes = 0;
@@ -34,6 +37,9 @@ function controlledStore({ failClear = false, failRollback = false } = {}) {
 
 function verifiedRestoredStatus(overrides = {}) {
   return {
+    bridgeAvailable: true,
+    supported: true,
+    previewMode: false,
     statusAvailable: true,
     currentSentinelsMatchTheme: false,
     desiredEnabled: false,
@@ -47,6 +53,13 @@ function verifiedRestoredStatus(overrides = {}) {
 }
 
 describe("cursor state restore", () => {
+  it("rejects authoritative-looking restore statuses with missing state flags", () => {
+    const incompleteStatus = verifiedRestoredStatus();
+    delete incompleteStatus.transactionPending;
+
+    expect(isVerifiedRestoredStatus(incompleteStatus)).toBe(false);
+  });
+
   it("does not touch native state when clearing assignments cannot persist", async () => {
     const bridge = { restore: vi.fn() };
     const preferencesStore = controlledStore({ failClear: true });
@@ -158,6 +171,39 @@ describe("cursor state restore", () => {
     expect(onRestored).toHaveBeenCalledWith(status);
   });
 
+  it("commits when a failed native command carries verified restored state", async () => {
+    const status = verifiedRestoredStatus();
+    const transportError = Object.assign(
+      new Error("native command exited before reporting success"),
+      { status },
+    );
+    const bridge = {
+      restore: vi.fn(async () => Promise.reject(transportError)),
+    };
+    const preferencesStore = controlledStore();
+    const onRestored = vi.fn();
+    const onRestoreFailed = vi.fn();
+
+    await expect(
+      restoreCursorState({
+        bridge,
+        preferencesStore,
+        onRestored,
+        onRestoreFailed,
+      }),
+    ).resolves.toEqual({
+      status,
+      preferences: expect.objectContaining({
+        appearance: expect.objectContaining({
+          lightCursorId: null,
+          darkCursorId: null,
+        }),
+      }),
+    });
+    expect(onRestored).toHaveBeenCalledWith(status);
+    expect(onRestoreFailed).not.toHaveBeenCalled();
+  });
+
   it("returns the authoritative preferences after a concurrent successful restore", async () => {
     let resolveRestore;
     let markRestoreStarted;
@@ -234,6 +280,29 @@ describe("cursor state restore", () => {
     });
     expect(onRestoreFailed).toHaveBeenCalledWith(status);
   });
+
+  it.each([
+    ["native bridge is unavailable", { bridgeAvailable: false }],
+    ["platform is unsupported", { supported: false }],
+    ["bridge is in preview mode", { previewMode: true }],
+  ])(
+    "rejects restored-looking state when the %s",
+    async (_label, overrides) => {
+      const status = verifiedRestoredStatus(overrides);
+      const preferencesStore = controlledStore();
+
+      await expect(
+        restoreCursorState({
+          bridge: { restore: vi.fn(async () => status) },
+          preferencesStore,
+        }),
+      ).rejects.toMatchObject({ code: "CURSOR_RESTORE_UNVERIFIED", status });
+      expect(preferencesStore.get().appearance).toMatchObject({
+        lightCursorId: "OreoWhite",
+        darkCursorId: "OreoBlack",
+      });
+    },
+  );
 
   it("fails closed when restored status omits sentinel verification", async () => {
     const status = verifiedRestoredStatus();

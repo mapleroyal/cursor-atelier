@@ -159,8 +159,10 @@ embedding base64 data:
 The unified manifest contains every generated external variant and the 19
 built-in Oreo rows. Human-facing `Group`, `DisplayName`, and `Variant` values
 are kept separate from `UpstreamVariant`, which preserves the source label.
-Oreo resources stay in `native/oreo/Resources/Themes`; only their renderer
-preview assets and metadata are generated here.
+The built-in identities and metadata come from the canonical
+`native/oreo/Resources/Themes/catalog.json`. Oreo resources stay beside that
+catalog; only their renderer preview assets and unified-manifest rows are
+generated here.
 
 The 240 rows contain 11,280 role-preview references. Aliases intentionally
 share files, so the generated preview tree contains 9,328 unique PNGs rather

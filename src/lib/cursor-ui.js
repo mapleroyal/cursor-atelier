@@ -1,3 +1,8 @@
+import {
+  mergeCursorPreferences,
+  normalizeCursorPreferences,
+} from "./cursor-preferences.js";
+
 export const MIN_CURSOR_SIZE_PERCENTAGE = 50;
 export const MAX_CURSOR_SIZE_PERCENTAGE = 200;
 export const DEFAULT_CURSOR_SIZE_PERCENTAGE = 100;
@@ -14,19 +19,42 @@ export function normalizeCursorSizePercentage(
     : fallback;
 }
 
+export async function readRevisionStable(revisionRef, key, readSnapshot) {
+  for (;;) {
+    const revision = revisionRef.current[key];
+    const snapshot = await readSnapshot();
+    if (revision === revisionRef.current[key]) {
+      return snapshot;
+    }
+  }
+}
+
+export function resolveCursorPreferenceUpdate(update, preferences) {
+  const patch =
+    typeof update === "function"
+      ? update(normalizeCursorPreferences(preferences))
+      : update;
+  return patch && typeof patch === "object" && !Array.isArray(patch)
+    ? patch
+    : {};
+}
+
+export function applyCursorPreferenceUpdates(preferences, updates) {
+  return (Array.isArray(updates) ? updates : []).reduce(
+    (current, entry) =>
+      mergeCursorPreferences(
+        current,
+        resolveCursorPreferenceUpdate(entry?.update ?? entry, current),
+      ),
+    normalizeCursorPreferences(preferences),
+  );
+}
+
 export function getStatusVariant(status) {
   if (!status || typeof status !== "object") {
     return null;
   }
-
-  const value =
-    status.effectiveVariantId ??
-    status.effectiveNativeThemeId ??
-    status.activeVariantId ??
-    status.currentVariantId ??
-    status.currentThemeId ??
-    status.activeThemeId;
-
+  const value = status.effectiveVariantId;
   return value === null || value === undefined ? null : String(value);
 }
 
@@ -35,12 +63,7 @@ export function getSelectedStatusVariant(status) {
     return null;
   }
 
-  const value =
-    status.selectedVariantId ??
-    status.selectedThemeId ??
-    status.selectedThemeIdentifier ??
-    status.themeIdentifier;
-
+  const value = status.selectedVariantId;
   return value === null || value === undefined ? null : String(value);
 }
 
@@ -49,18 +72,9 @@ export function getStatusEnabled(status) {
     return null;
   }
 
-  for (const key of [
-    "effectiveApplied",
-    "isEnabled",
-    "enabled",
-    "customCursorsEnabled",
-    "active",
-  ]) {
-    if (typeof status[key] === "boolean") {
-      return status[key];
-    }
-  }
-  return null;
+  return typeof status.effectiveApplied === "boolean"
+    ? status.effectiveApplied
+    : null;
 }
 
 export function isStatusVerifiedActive(status) {
@@ -182,12 +196,24 @@ export function isRestoreAvailable(status) {
 }
 
 export function isStatusVerifiedRestored(status) {
-  return Boolean(
-    status &&
-    status.statusAvailable === true &&
-    status.currentSentinelsMatchTheme === false &&
-    !isRestoreAvailable(status),
-  );
+  if (
+    !status ||
+    status.bridgeAvailable !== true ||
+    status.supported !== true ||
+    status.statusAvailable !== true ||
+    status.previewMode !== false ||
+    status.currentSentinelsMatchTheme !== false
+  ) {
+    return false;
+  }
+  return [
+    "desiredEnabled",
+    "persistedEffectiveApplied",
+    "effectiveApplied",
+    "launchAtLoginDesired",
+    "loginItemRegistrationCurrent",
+    "transactionPending",
+  ].every((key) => status[key] === false || status[key] === 0);
 }
 
 export async function applyCursorTheme(packId) {

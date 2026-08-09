@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  applyCursorPreferenceUpdates,
   applyCursorTheme,
   assignImportedCursorFamily,
   deleteImportedCursor,
@@ -22,11 +23,17 @@ import {
   matchesCursorPack,
   normalizeCursorSizePercentage,
   openLoginItemsSettings,
+  readRevisionStable,
+  resolveCursorPreferenceUpdate,
   resolveCursorPoolPacks,
   resolvePackQuerySource,
   restoreCursorState,
   setCursorThemeSize,
 } from "@/lib/cursor-ui";
+import {
+  createDefaultCursorPreferences,
+  mergeCursorPreferences,
+} from "@/lib/cursor-preferences";
 
 const originalWindow = globalThis.window;
 
@@ -39,6 +46,46 @@ afterEach(() => {
 });
 
 describe("cursor status presentation", () => {
+  it("retries snapshot reads until intervening events stop changing the revision", async () => {
+    const revisionRef = { current: { status: 0 } };
+    const snapshots = ["first", "second", "stable"];
+    let reads = 0;
+
+    const result = await readRevisionStable(revisionRef, "status", async () => {
+      const snapshot = snapshots[reads];
+      reads += 1;
+      if (reads < snapshots.length) {
+        revisionRef.current.status += 1;
+      }
+      return snapshot;
+    });
+
+    expect(result).toBe("stable");
+    expect(reads).toBe(3);
+  });
+
+  it("rebases a queued semantic preference update after an earlier failure", () => {
+    const base = createDefaultCursorPreferences();
+    const favoriteUpdate = (identifier) => ({
+      update: (current) => {
+        const cursorIds = new Set(current.favorites.cursorIds);
+        cursorIds.add(identifier);
+        return { favorites: { cursorIds: [...cursorIds] } };
+      },
+    });
+    const first = favoriteUpdate("FirstCursor");
+    const second = favoriteUpdate("SecondCursor");
+
+    expect(
+      applyCursorPreferenceUpdates(base, [first, second]).favorites.cursorIds,
+    ).toEqual(["FirstCursor", "SecondCursor"]);
+
+    const secondPatch = resolveCursorPreferenceUpdate(second.update, base);
+    expect(
+      mergeCursorPreferences(base, secondPatch).favorites.cursorIds,
+    ).toEqual(["SecondCursor"]);
+  });
+
   it("keeps a restored selection separate from the effective cursor", () => {
     const status = {
       selectedVariantId: "oreo-blue",
@@ -121,7 +168,10 @@ describe("cursor status presentation", () => {
   it("verifies restore against live, persisted, login, and journal state", () => {
     expect(
       isStatusVerifiedRestored({
+        bridgeAvailable: true,
+        supported: true,
         statusAvailable: true,
+        previewMode: false,
         desiredEnabled: false,
         effectiveApplied: false,
         persistedEffectiveApplied: false,
@@ -133,21 +183,57 @@ describe("cursor status presentation", () => {
     ).toBe(true);
     expect(
       isStatusVerifiedRestored({
+        bridgeAvailable: true,
+        supported: true,
         statusAvailable: true,
+        previewMode: false,
         desiredEnabled: false,
         currentSentinelsMatchTheme: true,
       }),
     ).toBe(false);
     expect(
       isStatusVerifiedRestored({
+        bridgeAvailable: true,
+        supported: true,
         statusAvailable: false,
+        previewMode: false,
         desiredEnabled: false,
       }),
     ).toBe(false);
     expect(
       isStatusVerifiedRestored({
+        bridgeAvailable: true,
+        supported: true,
         statusAvailable: true,
+        previewMode: false,
         desiredEnabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      isStatusVerifiedRestored({
+        bridgeAvailable: false,
+        supported: true,
+        statusAvailable: true,
+        previewMode: false,
+        currentSentinelsMatchTheme: false,
+      }),
+    ).toBe(false);
+    expect(
+      isStatusVerifiedRestored({
+        bridgeAvailable: true,
+        supported: false,
+        statusAvailable: true,
+        previewMode: false,
+        currentSentinelsMatchTheme: false,
+      }),
+    ).toBe(false);
+    expect(
+      isStatusVerifiedRestored({
+        bridgeAvailable: true,
+        supported: true,
+        statusAvailable: true,
+        previewMode: true,
+        currentSentinelsMatchTheme: false,
       }),
     ).toBe(false);
   });
@@ -329,7 +415,7 @@ describe("cursor rail behavior", () => {
     const cursor = { id: "oreo-blue", nativeThemeId: "OreoBlue" };
     const verifiedStatus = {
       statusAvailable: true,
-      effectiveNativeThemeId: "OreoBlue",
+      effectiveVariantId: "OreoBlue",
       effectiveApplied: true,
       currentSentinelsMatchTheme: true,
     };
@@ -338,7 +424,7 @@ describe("cursor rail behavior", () => {
     expect(
       isRandomizationResultVerified({
         cursor,
-        status: { ...verifiedStatus, effectiveNativeThemeId: "OreoRed" },
+        status: { ...verifiedStatus, effectiveVariantId: "OreoRed" },
       }),
     ).toBe(false);
     expect(

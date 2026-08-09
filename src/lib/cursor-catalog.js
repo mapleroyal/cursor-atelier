@@ -1,7 +1,12 @@
+import OREO_CATALOG_MANIFEST from "../../native/oreo/Resources/Themes/catalog.json";
+
+import { CURSOR_DTO_SCHEMA_VERSION } from "./cursor-dto.js";
+
 /**
  * The bundled cursor catalogue is deliberately static. Cursor artwork for
- * these entries is converted and packaged at build time; this module only
- * contains the metadata the renderer needs to present it and its attribution.
+ * these entries is converted and packaged at build time; built-in Oreo
+ * identity comes from the same catalog consumed by native code, while this
+ * module adds renderer metadata for the remaining upstream families.
  * User imports are not added here: the Electron bridge merges separately
  * validated schema-v2 manifests from the private per-user store at runtime.
  *
@@ -63,12 +68,16 @@ export const CURSOR_ROLES = Object.freeze([
 /** Number of cursor records emitted by the current native converter. */
 export const NATIVE_CURSOR_COUNT = 47;
 export const NATIVE_CURSOR_ALIAS_COUNT = 77;
+export const DEFAULT_CURSOR_NATIVE_THEME_ID =
+  OREO_CATALOG_MANIFEST.defaultThemeId;
 
 export function normalizePreviewSource(value) {
   const source =
     typeof value === "string"
       ? value
       : (value?.src ??
+        value?.asset ??
+        value?.preview ??
         value?.url ??
         value?.dataUrl ??
         value?.previewUrl ??
@@ -79,40 +88,42 @@ export function normalizePreviewSource(value) {
 
 export function normalizeRolePreviews(value) {
   const entries = Array.isArray(value)
-    ? value
+    ? value.map((entry) => ({ entry, roleHint: null }))
     : value && typeof value === "object"
-      ? Object.entries(value).map(([role, preview]) =>
-          typeof preview === "string"
-            ? { role, src: preview }
-            : { role, ...preview },
-        )
+      ? Object.entries(value).map(([roleHint, entry]) => ({
+          entry: typeof entry === "string" ? { src: entry } : entry,
+          roleHint,
+        }))
       : [];
 
   return entries
-    .filter((entry) => entry && typeof entry === "object")
-    .map((entry) => ({
-      ...entry,
-      role: String(entry.role ?? entry.name ?? entry.macIdentifier ?? "Cursor"),
-      name: String(entry.name ?? entry.role ?? entry.macIdentifier ?? "Cursor"),
-      macIdentifier: entry.macIdentifier
-        ? String(entry.macIdentifier)
-        : undefined,
-      src: normalizePreviewSource(entry),
-      frameCount: Number.isFinite(Number(entry.frameCount))
-        ? Number(entry.frameCount)
-        : 1,
-      frameDuration: Number.isFinite(Number(entry.frameDuration))
-        ? Number(entry.frameDuration)
-        : null,
-      hotspot:
-        entry.hotspot && typeof entry.hotspot === "object"
-          ? {
-              x: Number(entry.hotspot.x),
-              y: Number(entry.hotspot.y),
-            }
+    .filter(({ entry }) => entry && typeof entry === "object")
+    .map(({ entry, roleHint }) => {
+      const role = String(
+        roleHint ?? entry.role ?? entry.name ?? entry.macIdentifier ?? "Cursor",
+      );
+      const hotspotX = Number(entry.hotspot?.x);
+      const hotspotY = Number(entry.hotspot?.y);
+      return {
+        role,
+        name: String(entry.name ?? entry.role ?? role),
+        ...(entry.macIdentifier
+          ? { macIdentifier: String(entry.macIdentifier) }
+          : {}),
+        src: normalizePreviewSource(entry),
+        frameCount: Number.isFinite(Number(entry.frameCount))
+          ? Number(entry.frameCount)
+          : 1,
+        frameDuration: Number.isFinite(Number(entry.frameDuration))
+          ? Number(entry.frameDuration)
           : null,
-      fallback: Boolean(entry.fallback),
-    }));
+        hotspot:
+          Number.isFinite(hotspotX) && Number.isFinite(hotspotY)
+            ? { x: hotspotX, y: hotspotY }
+            : null,
+        fallback: Boolean(entry.fallback),
+      };
+    });
 }
 
 function createEntry({
@@ -139,12 +150,13 @@ function createEntry({
   ]);
 
   return Object.freeze({
+    schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
     id,
     family,
     name,
     variant,
     variantLabel: variant,
-    displayName: family === "Oreo" ? `Oreo ${name}` : `${family} ${name}`,
+    displayName: `${family} ${name}`,
     author,
     sourceUrl,
     ...(upstreamUrl ? { upstreamUrl } : {}),
@@ -155,18 +167,12 @@ function createEntry({
     nativeThemeIds: nativeIdentifiers,
     resourceFile,
     availability: bundled ? "bundled" : "catalogued",
-    // `available`/`status` are intentionally kept alongside the more
-    // descriptive availability field because the native bridge and renderer
-    // consume the same manifest in a few different contexts.
-    available: bundled,
-    isAvailable: bundled,
+    resourceAvailable: bundled,
     canApply: bundled,
     status: bundled ? "available" : "unavailable",
     cursorRoles: CURSOR_ROLES,
-    roles: CURSOR_ROLES,
     cursorRoleCount: CURSOR_ROLES.length,
     cursorCount,
-    nativeCursorCount: cursorCount,
     cursorCountEstimated,
     cursorAliasCount: NATIVE_CURSOR_ALIAS_COUNT,
     accentColor,
@@ -176,54 +182,18 @@ function createEntry({
   });
 }
 
-const OREO_SOURCE_URL = "https://github.com/mapleroyal/oreo-cursor-macos";
-const OREO_UPSTREAM_URL = "https://github.com/varlesh/oreo-cursors";
-const OREO_LICENSE = "GPL-2.0";
-const OREO_AUTHOR = "Alexey Varfolomeev (varlesh), Sourav Goswami";
-
-const OREO_VARIANTS = [
-  ["oreo-white", "White", "OreoWhite", "#e4e4e7", "oreo"],
-  ["oreo-gray", "Gray", "OreoGrey", "#a1a1aa", "oreo"],
-  ["oreo-black", "Black", "OreoBlack", "#18181b", "oreo"],
-  ["oreo-blue", "Blue", "OreoBlue", "#60a5fa", "oreo"],
-  ["oreo-pink", "Pink", "OreoPink", "#f472b6", "oreo"],
-  ["oreo-purple", "Purple", "OreoPurple", "#a78bfa", "oreo"],
-  ["oreo-red", "Red", "OreoRed", "#f87171", "oreo"],
-  ["oreo-teal", "Teal", "OreoTeal", "#2dd4bf", "oreo"],
-  ["oreo-spark-light", "Spark Light", "OreoSparkLite", "#fbbf24", "spark"],
-  ["oreo-spark-dark", "Spark Dark", "OreoSparkDark", "#64748b", "spark"],
-  ["oreo-spark-blue", "Spark Blue", "OreoSparkBlue", "#38bdf8", "spark"],
-  ["oreo-spark-green", "Spark Green", "OreoSparkGreen", "#4ade80", "spark"],
-  [
-    "oreo-spark-light-pink",
-    "Spark Light Pink",
-    "OreoSparkLightPink",
-    "#f9a8d4",
-    "spark",
-  ],
-  ["oreo-spark-lime", "Spark Lime", "OreoSparkLime", "#a3e635", "spark"],
-  ["oreo-spark-orange", "Spark Orange", "OreoSparkOrange", "#fb923c", "spark"],
-  ["oreo-spark-pink", "Spark Pink", "OreoSparkPink", "#fb7185", "spark"],
-  ["oreo-spark-purple", "Spark Purple", "OreoSparkPurple", "#c084fc", "spark"],
-  ["oreo-spark-red", "Spark Red", "OreoSparkRed", "#f43f5e", "spark"],
-  ["oreo-spark-violet", "Spark Violet", "OreoSparkViolet", "#818cf8", "spark"],
-];
-
-const OREO_CATALOG = OREO_VARIANTS.map(
-  ([id, name, nativeThemeId, accentColor, group]) =>
-    createEntry({
-      id,
-      family: "Oreo",
-      name,
-      sourceUrl: OREO_SOURCE_URL,
-      upstreamUrl: OREO_UPSTREAM_URL,
-      license: OREO_LICENSE,
-      licenseUrl: `${OREO_SOURCE_URL}/blob/main/Resources/Oreo-GPL-2.0.txt`,
-      author: OREO_AUTHOR,
-      accentColor,
-      nativeThemeId,
-      tags: ["oreo", group, "bundled", "macos"],
-    }),
+const OREO_CATALOG = OREO_CATALOG_MANIFEST.themes.map((theme) =>
+  createEntry({
+    ...theme,
+    family: OREO_CATALOG_MANIFEST.family,
+    sourceUrl: OREO_CATALOG_MANIFEST.sourceUrl,
+    upstreamUrl: OREO_CATALOG_MANIFEST.upstreamUrl,
+    license: OREO_CATALOG_MANIFEST.license,
+    licenseUrl: OREO_CATALOG_MANIFEST.licenseUrl,
+    author: OREO_CATALOG_MANIFEST.author,
+    bundled: true,
+    tags: ["oreo", theme.category, "bundled", "macos"],
+  }),
 );
 
 // The GNOME-Look page tags are inconsistent with the license text embedded
@@ -554,17 +524,6 @@ export const CURSOR_NATIVE_THEME_IDS = Object.freeze(
     ),
 );
 
-// Lower-case alias keeps imports ergonomic while the uppercase constant is
-// useful when the catalogue is treated as a manifest-like value.
-export const cursorCatalog = CURSOR_CATALOG;
-
-// Compatibility names for consumers that treat the catalogue as a manifest
-// (the renderer's first pass used CURSOR_PACKS/default while the native
-// bridge work settled on CURSOR_CATALOG).
-export const CURSOR_PACKS = CURSOR_CATALOG;
-export const defaultCatalog = CURSOR_CATALOG;
-export default CURSOR_CATALOG;
-
 function firstThemeValue(theme, keys) {
   for (const key of keys) {
     const value = theme?.[key];
@@ -703,7 +662,7 @@ export function normalizeCursorTheme(theme = {}, catalog = CURSOR_CATALOG) {
     resourceAvailable ??
     base?.canApply ??
     false;
-  const available = resourceAvailable ?? base?.available ?? false;
+  const available = resourceAvailable ?? base?.resourceAvailable ?? false;
   const status = String(
     firstThemeValue(theme, ["status", "Status"]) ??
       (available ? "available" : "unavailable"),
@@ -761,6 +720,7 @@ export function normalizeCursorTheme(theme = {}, catalog = CURSOR_CATALOG) {
   const uuid = firstThemeValue(theme, ["uuid", "UUID"]);
 
   return {
+    schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
     ...(base ?? {
       id,
       family,
@@ -775,18 +735,16 @@ export function normalizeCursorTheme(theme = {}, catalog = CURSOR_CATALOG) {
       license: String(firstThemeValue(theme, ["license", "License"]) ?? ""),
       platform: "macOS",
       cursorRoles: CURSOR_ROLES,
-      roles: CURSOR_ROLES,
       cursorRoleCount: CURSOR_ROLES.length,
       cursorCount: NATIVE_CURSOR_COUNT,
-      nativeCursorCount: NATIVE_CURSOR_COUNT,
       cursorCountEstimated: true,
       cursorAliasCount: NATIVE_CURSOR_ALIAS_COUNT,
       accentColor: "#64748b",
+      resourceAvailable: false,
       preview: null,
       rolePreviews: Object.freeze([]),
       tags: Object.freeze(["generated", "macos"]),
     }),
-    ...theme,
     id,
     family,
     sourceUrl,
@@ -805,15 +763,12 @@ export function normalizeCursorTheme(theme = {}, catalog = CURSOR_CATALOG) {
     nativeThemeIds: Object.freeze([...new Set(nativeThemeIds)]),
     resourceFile: resourceFile ?? base?.resourceFile ?? null,
     resourceAvailable: Boolean(available),
-    available: Boolean(available),
-    isAvailable: Boolean(available),
     canApply: Boolean(canApply),
     availability: available ? "bundled" : "catalogued",
     status,
     preview,
     rolePreviews,
     cursorRoles: Array.isArray(cursorRoles) ? cursorRoles : CURSOR_ROLES,
-    roles: Array.isArray(cursorRoles) ? cursorRoles : CURSOR_ROLES,
     cursorCount: Number(
       firstThemeValue(theme, [
         "cursorCount",
@@ -843,26 +798,6 @@ export function mergeCursorCatalogWithNativeThemes(
   catalog = CURSOR_CATALOG,
   nativeThemes = [],
 ) {
-  // Accept mergeCursorCatalogWithNativeThemes(nativeThemes) as a convenience
-  // for preload consumers that already know the static catalogue is the
-  // default. Raw native rows carry Identifier/Resource keys that curated
-  // entries do not, so the overload is unambiguous.
-  if (
-    Array.isArray(nativeThemes) &&
-    nativeThemes.length === 0 &&
-    catalog !== CURSOR_CATALOG &&
-    Array.isArray(catalog) &&
-    catalog.some(
-      (entry) =>
-        entry?.Identifier ||
-        entry?.identifier ||
-        entry?.Resource ||
-        entry?.resourceFile,
-    )
-  ) {
-    nativeThemes = catalog;
-    catalog = CURSOR_CATALOG;
-  }
   if (!Array.isArray(nativeThemes) || nativeThemes.length === 0) {
     return [...catalog];
   }
@@ -976,10 +911,6 @@ export function filterCursorCatalog(catalog = CURSOR_CATALOG, query = "") {
 
     return terms.every((term) => haystack.includes(term));
   });
-}
-
-export function filterCursorPacks(catalog = CURSOR_CATALOG, query = "") {
-  return filterCursorCatalog(catalog, query);
 }
 
 export function getCursorCatalogEntry(id, catalog = CURSOR_CATALOG) {

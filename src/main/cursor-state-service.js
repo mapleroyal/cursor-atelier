@@ -11,10 +11,13 @@ function appearanceCursorRollbackPatch(previousPreferences, preferences) {
   return Object.keys(appearance).length ? { appearance } : null;
 }
 
-function isVerifiedRestoredStatus(status) {
+export function isVerifiedRestoredStatus(status) {
   if (
     !status ||
     typeof status !== "object" ||
+    status.bridgeAvailable !== true ||
+    status.supported !== true ||
+    status.previewMode !== false ||
     status.statusAvailable !== true ||
     status.currentSentinelsMatchTheme !== false
   ) {
@@ -27,7 +30,7 @@ function isVerifiedRestoredStatus(status) {
     "launchAtLoginDesired",
     "loginItemRegistrationCurrent",
     "transactionPending",
-  ].every((key) => status[key] !== true && status[key] !== 1);
+  ].every((key) => status[key] === false || status[key] === 0);
 }
 
 export async function restoreCursorState({
@@ -66,41 +69,45 @@ export async function restoreCursorState({
       throw error;
     }
   } catch (restoreError) {
-    let failure = restoreError;
-    try {
-      const rollbackPatch = appearanceCursorRollbackPatch(
-        previousPreferences,
-        preferencesStore.get(),
-      );
-      if (rollbackPatch) {
-        preferencesStore.update(rollbackPatch);
-      }
-    } catch (rollbackError) {
-      const error = new AggregateError(
-        [restoreError, rollbackError],
-        `${restoreError.message} Saved cursor assignments could not be restored after the native restore failed.`,
-        { cause: restoreError },
-      );
-      error.code = "CURSOR_RESTORE_ROLLBACK_FAILED";
-      error.rollbackError = rollbackError;
-      error.status = restoreError?.status ?? null;
-      failure = error;
-    }
-    if (failure?.status && typeof failure.status === "object") {
+    if (isVerifiedRestoredStatus(restoreError?.status)) {
+      status = restoreError.status;
+    } else {
+      let failure = restoreError;
       try {
-        onRestoreFailed(failure.status);
-      } catch (notificationError) {
+        const rollbackPatch = appearanceCursorRollbackPatch(
+          previousPreferences,
+          preferencesStore.get(),
+        );
+        if (rollbackPatch) {
+          preferencesStore.update(rollbackPatch);
+        }
+      } catch (rollbackError) {
+        const error = new AggregateError(
+          [restoreError, rollbackError],
+          `${restoreError.message} Saved cursor assignments could not be restored after the native restore failed.`,
+          { cause: restoreError },
+        );
+        error.code = "CURSOR_RESTORE_ROLLBACK_FAILED";
+        error.rollbackError = rollbackError;
+        error.status = restoreError?.status ?? null;
+        failure = error;
+      }
+      if (failure?.status && typeof failure.status === "object") {
         try {
-          onNotificationError(notificationError);
-        } catch (reportingError) {
-          console.error(
-            "Cursor restore failure notification reporter failed.",
-            reportingError,
-          );
+          onRestoreFailed(failure.status);
+        } catch (notificationError) {
+          try {
+            onNotificationError(notificationError);
+          } catch (reportingError) {
+            console.error(
+              "Cursor restore failure notification reporter failed.",
+              reportingError,
+            );
+          }
         }
       }
+      throw failure;
     }
-    throw failure;
   }
 
   try {

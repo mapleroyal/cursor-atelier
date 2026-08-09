@@ -1,6 +1,7 @@
 import * as React from "react";
 
-const MOBILE_BREAKPOINT = 768;
+// The fixed pack rail needs enough room to leave a useful detail pane.
+const MOBILE_BREAKPOINT = 960;
 
 export function useIsMobile() {
   const [isMobile, setIsMobile] = React.useState(
