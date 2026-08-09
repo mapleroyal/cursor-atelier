@@ -48,6 +48,7 @@ static const NSUInteger OreoMaximumImportedThemes = 512;
 static const NSUInteger OreoMaximumImportedThemesPerPack = 64;
 static const NSUInteger OreoMaximumImportedManifestBytes = 16 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedThemeBytes = 32 * 1024 * 1024;
+static const NSUInteger OreoMaximumImportedPreviewBytes = 16 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedPackThemeBytes = 128 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedThemeBytesTotal = 512 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedReceiptBytes = 4 * 1024 * 1024;
@@ -117,6 +118,7 @@ static NSString * const OreoThemeSourceSpecKey = @"Source";
 static NSString * const OreoThemeLicenseSpecKey = @"License";
 static NSString * const OreoThemeLicenseURLSpecKey = @"LicenseURL";
 static NSString * const OreoThemeAuthorSpecKey = @"Author";
+static NSString * const OreoThemePreviewSpecKey = @"Preview";
 static NSString * const OreoThemeImportedPackSpecKey =
     @"ImportedPackIdentifier";
 static NSString * const OreoThemeManifestResourceName = @"manifest";
@@ -202,6 +204,8 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *
 OreoThemeSpecificationsForBundle(NSBundle *bundle);
 static NSArray<NSDictionary<NSString *, NSString *> *> *
 OreoBundledThemeSpecificationsForBundle(NSBundle *bundle);
+static NSDictionary<NSString *, id> *
+OreoBundledThemeCatalogForBundle(NSBundle *bundle);
 static NSArray<NSDictionary<NSString *, NSString *> *> *
 OreoImportedThemeSpecifications(NSSet<NSString *> *reservedIdentifiers);
 static NSDictionary<NSString *, NSDictionary *> * _Nullable
@@ -211,18 +215,19 @@ OreoDecodedThemeCursors(NSData *data,
 
 static NSDictionary<NSString *, NSString *> *
 OreoThemeSpecificationForBundle(NSString *identifier, NSBundle *bundle) {
+    NSDictionary<NSString *, id> *catalog =
+        OreoBundledThemeCatalogForBundle(bundle);
     NSArray<NSDictionary<NSString *, NSString *> *> *bundledThemes =
-        OreoBundledThemeSpecificationsForBundle(bundle);
+        catalog[@"Themes"];
     if (bundledThemes.count < OreoBuiltInThemeCount) {
         return nil;
     }
-    for (NSDictionary<NSString *, NSString *> *theme in bundledThemes) {
-        if ([theme[OreoThemeIdentifierSpecKey] isEqualToString:identifier]) {
-            return theme;
-        }
+    NSDictionary<NSString *, NSString *> *bundled =
+        catalog[@"ByIdentifier"][identifier];
+    if (bundled) {
+        return bundled;
     }
-    NSSet<NSString *> *bundledIdentifiers = [NSSet setWithArray:
-        [bundledThemes valueForKey:OreoThemeIdentifierSpecKey]];
+    NSSet<NSString *> *bundledIdentifiers = catalog[@"Identifiers"];
     for (NSDictionary<NSString *, NSString *> *theme in
              OreoImportedThemeSpecifications(bundledIdentifiers)) {
         if ([theme[OreoThemeIdentifierSpecKey] isEqualToString:identifier]) {
@@ -378,6 +383,32 @@ static BOOL OreoIsSafeThemeResourceName(id object) {
                                 @"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                                 @"0123456789._-"];
     return [resource rangeOfCharacterFromSet:[allowed invertedSet]].location ==
+           NSNotFound;
+}
+
+static BOOL OreoIsSafeThemePreviewResourceName(id object,
+                                                NSString *identifier) {
+    if (![object isKindOfClass:[NSString class]] ||
+        !OreoIsSafeThemeIdentifier(identifier)) {
+        return NO;
+    }
+    NSString *resource = object;
+    NSArray<NSString *> *components = resource.pathComponents;
+    if (resource.length == 0 || resource.length > 256 ||
+        resource.isAbsolutePath || components.count != 3 ||
+        ![components[0] isEqualToString:@"previews"] ||
+        ![components[1] isEqualToString:identifier] ||
+        ![components[2].pathExtension.lowercaseString isEqualToString:@"png"] ||
+        ![components[2].lastPathComponent isEqualToString:components[2]]) {
+        return NO;
+    }
+    NSCharacterSet *allowed =
+        [NSCharacterSet characterSetWithCharactersInString:
+                               @"abcdefghijklmnopqrstuvwxyz"
+                                @"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                @"0123456789._-"];
+    return [components[2]
+               rangeOfCharacterFromSet:[allowed invertedSet]].location ==
            NSNotFound;
 }
 
@@ -853,6 +884,71 @@ OreoImportedFileIdentityAtDirectoryFD(int directoryFD, NSString *name,
     };
 }
 
+static NSURL * _Nullable OreoImportedRegularFileURLAtDirectoryFD(
+    int directoryFD, NSString *name, NSUInteger maximumBytes) {
+    struct stat pathStatus;
+    if (fstatat(directoryFD, name.fileSystemRepresentation, &pathStatus,
+                AT_SYMLINK_NOFOLLOW) != 0 ||
+        !OreoStatusIsPrivateOwnedRegularFile(&pathStatus, maximumBytes)) {
+        return nil;
+    }
+    int fileFD = openat(directoryFD, name.fileSystemRepresentation,
+                        O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    struct stat descriptorStatus;
+    char resolvedPath[PATH_MAX];
+    BOOL valid = fileFD >= 0 &&
+        OreoFileDescriptorIsWithinDirectory(fileFD, directoryFD) &&
+        fstat(fileFD, &descriptorStatus) == 0 &&
+        OreoStatusIsPrivateOwnedRegularFile(&descriptorStatus, maximumBytes) &&
+        descriptorStatus.st_dev == pathStatus.st_dev &&
+        descriptorStatus.st_ino == pathStatus.st_ino &&
+        descriptorStatus.st_size == pathStatus.st_size &&
+        descriptorStatus.st_mode == pathStatus.st_mode &&
+        descriptorStatus.st_uid == pathStatus.st_uid &&
+        descriptorStatus.st_nlink == pathStatus.st_nlink &&
+        descriptorStatus.st_mtimespec.tv_sec == pathStatus.st_mtimespec.tv_sec &&
+        descriptorStatus.st_mtimespec.tv_nsec == pathStatus.st_mtimespec.tv_nsec &&
+        descriptorStatus.st_ctimespec.tv_sec == pathStatus.st_ctimespec.tv_sec &&
+        descriptorStatus.st_ctimespec.tv_nsec == pathStatus.st_ctimespec.tv_nsec &&
+        fcntl(fileFD, F_GETPATH, resolvedPath) == 0;
+    NSURL *url = valid
+        ? [NSURL fileURLWithFileSystemRepresentation:resolvedPath
+                                        isDirectory:NO
+                                      relativeToURL:nil]
+        : nil;
+    if (fileFD >= 0) {
+        close(fileFD);
+    }
+    return url;
+}
+
+static NSURL * _Nullable OreoImportedPackFileURL(
+    NSString *packIdentifier, NSString *name, NSUInteger maximumBytes) {
+    if (!OreoIsSafeImportedPackIdentifier(packIdentifier)) {
+        return nil;
+    }
+    int rootFD = OreoOpenImportedPacksDirectory();
+    if (rootFD < 0) {
+        return nil;
+    }
+    int packFD = openat(rootFD, packIdentifier.fileSystemRepresentation,
+                        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (packFD < 0 ||
+        !OreoFileDescriptorIsPrivateOwnedDirectory(packFD) ||
+        !OreoFileDescriptorIsWithinDirectory(packFD, rootFD)) {
+        if (packFD >= 0) {
+            close(packFD);
+        }
+        close(rootFD);
+        return nil;
+    }
+    NSURL *url = OreoImportedRegularFileURLAtDirectoryFD(
+        packFD, name, maximumBytes);
+    close(packFD);
+    close(rootFD);
+    return url;
+}
+
 static int OreoOpenApplicationDataDirectory(void) {
     NSURL *dataDirectoryURL = OreoApplicationDataDirectoryURL();
     int dataFD = open(dataDirectoryURL.fileSystemRepresentation,
@@ -986,9 +1082,10 @@ OreoGeneratedThemeSpecifications(NSBundle *bundle) {
     if (!bundle) {
         return @[];
     }
-    NSURL *manifestURL = [bundle URLForResource:OreoThemeManifestResourceName
-                                  withExtension:@"json"
-                                   subdirectory:@"Themes"];
+    NSURL *themesURL = OreoBuiltInThemeDirectoryURL(bundle);
+    NSURL *manifestURL = [themesURL URLByAppendingPathComponent:
+        [OreoThemeManifestResourceName stringByAppendingPathExtension:@"json"]
+                                               isDirectory:NO];
     if (!manifestURL) {
         return @[];
     }
@@ -1027,20 +1124,9 @@ OreoGeneratedThemeSpecifications(NSBundle *bundle) {
     }
 
     NSMutableSet<NSString *> *identifiers = [NSMutableSet set];
-    for (NSString *identifier in
-             [OreoThemeSpecifications(bundle)
-                 valueForKey:OreoThemeIdentifierSpecKey]) {
-        NSString *canonicalIdentifier =
-            OreoCanonicalThemeIdentifier(identifier);
-        if (canonicalIdentifier) {
-            [identifiers addObject:canonicalIdentifier];
-        }
-    }
     NSMutableSet *resources = [NSMutableSet set];
     NSMutableArray<NSDictionary<NSString *, NSString *> *> *themes =
         [NSMutableArray arrayWithCapacity:entries.count];
-    NSURL *themesURL = [[bundle resourceURL]
-        URLByAppendingPathComponent:@"Themes" isDirectory:YES];
 
     for (id object in entries) {
         NSDictionary<NSString *, NSString *> *validated =
@@ -1063,6 +1149,20 @@ OreoGeneratedThemeSpecifications(NSBundle *bundle) {
             NSLog(@"Cursor Atelier: generated theme %@ is missing %@.",
                   identifier, resource);
             continue;
+        }
+        NSString *preview = [object isKindOfClass:[NSDictionary class]]
+            ? OreoManifestString(object, @"preview", NO) : nil;
+        if (OreoIsSafeThemePreviewResourceName(preview, identifier)) {
+            NSURL *previewURL = [themesURL
+                URLByAppendingPathComponent:preview isDirectory:NO];
+            struct stat previewStatus;
+            if (lstat(previewURL.fileSystemRepresentation, &previewStatus) == 0 &&
+                S_ISREG(previewStatus.st_mode)) {
+                NSMutableDictionary<NSString *, NSString *> *withPreview =
+                    [validated mutableCopy];
+                withPreview[OreoThemePreviewSpecKey] = preview;
+                validated = [withPreview copy];
+            }
         }
         [identifiers addObject:canonicalIdentifier];
         [resources addObject:resource];
@@ -1290,6 +1390,13 @@ OreoImportedThemeSpecifications(NSSet<NSString *> *reservedIdentifiers) {
             NSMutableDictionary<NSString *, NSString *> *installed =
                 [validated mutableCopy];
             installed[OreoThemeImportedPackSpecKey] = packIdentifier;
+            NSString *preview = [object isKindOfClass:[NSDictionary class]]
+                ? OreoManifestString(object, @"preview", NO) : nil;
+            if (OreoIsSafeThemePreviewResourceName(preview, identifier) &&
+                OreoImportedRegularFileURLAtDirectoryFD(
+                    packFD, preview, OreoMaximumImportedPreviewBytes)) {
+                installed[OreoThemePreviewSpecKey] = preview;
+            }
             [packThemeIdentifiers addObject:canonicalIdentifier];
             [packResources addObject:resource];
             [packThemes addObject:[installed copy]];
@@ -1320,17 +1427,116 @@ OreoImportedThemeSpecifications(NSSet<NSString *> *reservedIdentifiers) {
     return [themes copy];
 }
 
-static NSArray<NSDictionary<NSString *, NSString *> *> *
-OreoBundledThemeSpecificationsForBundle(NSBundle *bundle) {
+static NSDictionary<NSString *, id> *
+OreoBundledThemeCatalogForBundle(NSBundle *bundle) {
+    NSString *cacheKey = [NSString stringWithFormat:@"%@|%@",
+        bundle.bundleURL.URLByStandardizingPath.path ?: @"",
+        OreoBuiltInThemeDirectoryURL(bundle).URLByStandardizingPath.path ?: @""];
+    if (cacheKey.length <= 1) {
+        return @{
+            @"Themes": @[],
+            @"ByIdentifier": @{},
+            @"Identifiers": [NSSet set],
+        };
+    }
+    static NSMutableDictionary<NSString *, NSDictionary *> *cache;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        cache = [NSMutableDictionary dictionary];
+    });
+    @synchronized (cache) {
+        NSDictionary *cached = cache[cacheKey];
+        if (cached) {
+            return cached;
+        }
+    }
+
     NSArray<NSDictionary<NSString *, NSString *> *> *builtInThemes =
         OreoThemeSpecifications(bundle);
     if (builtInThemes.count != OreoBuiltInThemeCount) {
-        return @[];
+        NSDictionary *empty = @{
+            @"Themes": @[],
+            @"ByIdentifier": @{},
+            @"Identifiers": [NSSet set],
+        };
+        @synchronized (cache) {
+            cache[cacheKey] = empty;
+        }
+        return empty;
     }
     NSMutableArray<NSDictionary<NSString *, NSString *> *> *themes =
         [builtInThemes mutableCopy];
-    [themes addObjectsFromArray:OreoGeneratedThemeSpecifications(bundle)];
-    return [themes copy];
+    NSMutableDictionary<NSString *, NSNumber *> *indexByCanonicalIdentifier =
+        [NSMutableDictionary dictionaryWithCapacity:builtInThemes.count];
+    NSMutableSet<NSString *> *resources = [NSMutableSet set];
+    for (NSUInteger index = 0; index < themes.count; index++) {
+        NSDictionary<NSString *, NSString *> *theme = themes[index];
+        NSString *canonical = OreoCanonicalThemeIdentifier(
+            theme[OreoThemeIdentifierSpecKey]);
+        if (canonical) {
+            indexByCanonicalIdentifier[canonical] = @(index);
+        }
+        [resources addObject:
+            theme[OreoThemeResourceSpecKey].lowercaseString ?: @""];
+    }
+
+    for (NSDictionary<NSString *, NSString *> *generated in
+             OreoGeneratedThemeSpecifications(bundle)) {
+        NSString *canonical = OreoCanonicalThemeIdentifier(
+            generated[OreoThemeIdentifierSpecKey]);
+        NSNumber *existingIndex = indexByCanonicalIdentifier[canonical];
+        if (existingIndex) {
+            NSDictionary<NSString *, NSString *> *existing =
+                themes[existingIndex.unsignedIntegerValue];
+            BOOL sameResourceIdentity = YES;
+            for (NSString *key in @[
+                     OreoThemeResourceSpecKey, OreoThemeSHA256SpecKey,
+                     OreoThemeUUIDSpecKey, OreoThemePlistNameSpecKey]) {
+                if (![existing[key] isEqualToString:generated[key]]) {
+                    sameResourceIdentity = NO;
+                    break;
+                }
+            }
+            NSString *preview = generated[OreoThemePreviewSpecKey];
+            if (sameResourceIdentity && preview.length > 0) {
+                NSMutableDictionary<NSString *, NSString *> *merged =
+                    [existing mutableCopy];
+                merged[OreoThemePreviewSpecKey] = preview;
+                themes[existingIndex.unsignedIntegerValue] = [merged copy];
+            }
+            continue;
+        }
+        NSString *resourceKey =
+            generated[OreoThemeResourceSpecKey].lowercaseString;
+        if (!canonical || [resources containsObject:resourceKey]) {
+            continue;
+        }
+        indexByCanonicalIdentifier[canonical] = @(themes.count);
+        [resources addObject:resourceKey];
+        [themes addObject:generated];
+    }
+
+    NSArray<NSDictionary<NSString *, NSString *> *> *orderedThemes =
+        [themes copy];
+    NSMutableDictionary<NSString *, NSDictionary *> *byIdentifier =
+        [NSMutableDictionary dictionaryWithCapacity:orderedThemes.count];
+    for (NSDictionary<NSString *, NSString *> *theme in orderedThemes) {
+        byIdentifier[theme[OreoThemeIdentifierSpecKey]] = theme;
+    }
+    NSDictionary<NSString *, id> *catalog = @{
+        @"Themes": orderedThemes,
+        @"ByIdentifier": [byIdentifier copy],
+        @"Identifiers": [NSSet setWithArray:byIdentifier.allKeys],
+    };
+    @synchronized (cache) {
+        cache[cacheKey] = catalog;
+    }
+    return catalog;
+}
+
+static NSArray<NSDictionary<NSString *, NSString *> *> *
+OreoBundledThemeSpecificationsForBundle(NSBundle *bundle) {
+    return OreoBundledThemeCatalogForBundle(bundle)[@"Themes"] ?: @[];
 }
 
 static NSArray<NSDictionary<NSString *, NSString *> *> *
@@ -1898,6 +2104,38 @@ OreoThemeCursorsByScalingGeometry(
         return nil;
     }
     return OreoThemeResourceData(specification, NSBundle.mainBundle, error);
+}
+
++ (NSURL *)themePreviewURLForTheme:(NSDictionary<NSString *, id> *)theme {
+    NSString *identifier = [theme[OreoThemeIdentifierSpecKey]
+        isKindOfClass:[NSString class]]
+        ? theme[OreoThemeIdentifierSpecKey] : nil;
+    if (!OreoIsSafeThemeIdentifier(identifier)) {
+        return nil;
+    }
+    NSString *packIdentifier = [theme[OreoThemeImportedPackSpecKey]
+        isKindOfClass:[NSString class]]
+        ? theme[OreoThemeImportedPackSpecKey] : nil;
+    if (packIdentifier.length > 0) {
+        NSString *preview = [theme[OreoThemePreviewSpecKey]
+            isKindOfClass:[NSString class]]
+            ? theme[OreoThemePreviewSpecKey] : nil;
+        if (!OreoIsSafeThemePreviewResourceName(preview, identifier)) {
+            return nil;
+        }
+        return OreoImportedPackFileURL(
+            packIdentifier, preview, OreoMaximumImportedPreviewBytes);
+    }
+
+    NSDictionary<NSString *, NSString *> *specification =
+        OreoBundledThemeCatalogForBundle(
+            NSBundle.mainBundle)[@"ByIdentifier"][identifier];
+    NSString *preview = specification[OreoThemePreviewSpecKey];
+    if (preview.length == 0) {
+        return nil;
+    }
+    return [OreoBuiltInThemeDirectoryURL(NSBundle.mainBundle)
+        URLByAppendingPathComponent:preview isDirectory:NO];
 }
 
 + (NSString *)selectedThemeIdentifierForResourceBundle:

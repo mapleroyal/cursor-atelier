@@ -13,6 +13,8 @@ import * as tar from "tar";
 import UPNG from "@upng/upng-js/dist/UPNG.esm.js";
 import yauzl from "yauzl";
 
+import { sanitizeCursorManifestText } from "./cursor-manifest-text.js";
+
 const openZip = promisify(yauzl.open);
 
 const MAC_TO_ROLE = Object.freeze({
@@ -171,8 +173,10 @@ export const DEFAULT_IMPORT_LIMITS = Object.freeze({
   maxRepresentationSize: 320,
   maxSourceFrames: 512,
   maxSourcePixelsPerFile: 64 * 1024 * 1024,
+  maxDecodedSourceBytesPerVariant: 256 * 1024 * 1024,
   maxPlistBytes: 256 * 1024 * 1024,
   maxCursorOutputBytes: 32 * 1024 * 1024,
+  maxGeneratedBytes: 512 * 1024 * 1024,
 });
 
 export class CursorImportError extends Error {
@@ -196,6 +200,29 @@ function mergedLimits(limits = {}) {
     result[key] = value;
   }
   return result;
+}
+
+function createDecodedSourceBudget(limits) {
+  let decodedBytes = 0;
+  return {
+    reserve(byteLength) {
+      const next = decodedBytes + byteLength;
+      if (
+        !Number.isSafeInteger(byteLength) ||
+        byteLength <= 0 ||
+        next > limits.maxDecodedSourceBytesPerVariant
+      ) {
+        fail(
+          "LIMIT_EXCEEDED",
+          "A cursor variant exceeds the decoded artwork limit.",
+        );
+      }
+      decodedBytes = next;
+    },
+    release(byteLength) {
+      decodedBytes -= byteLength;
+    },
+  };
 }
 
 function normalizedCursorFilename(value) {
@@ -231,12 +258,7 @@ function selectedFrameIndices(frameCount, maximum = MAX_MACOS_FRAMES) {
 
 function safeText(value, fallback, maximum = 96) {
   const bounded = String(value ?? "").slice(0, maximum * 16);
-  const cleaned = [...bounded]
-    .map((character) => {
-      const codePoint = character.codePointAt(0);
-      return codePoint <= 31 || codePoint === 127 ? " " : character;
-    })
-    .join("")
+  const cleaned = sanitizeCursorManifestText(bounded)
     .replace(/\s+/g, " ")
     .trim();
   return [...(cleaned || fallback)].slice(0, maximum).join("");
@@ -1290,7 +1312,11 @@ function readUInt32(buffer, offset, label) {
   return buffer.readUInt32LE(offset);
 }
 
-function parseXcursorBuffer(buffer, limits = DEFAULT_IMPORT_LIMITS) {
+function parseXcursorBuffer(
+  buffer,
+  limits = DEFAULT_IMPORT_LIMITS,
+  decodedBudget = createDecodedSourceBudget(limits),
+) {
   if (!isXcursorPrefix(buffer) || buffer.length < 16) {
     fail("INVALID_XCURSOR", "The file is not an Xcursor binary.");
   }
@@ -1352,6 +1378,7 @@ function parseXcursorBuffer(buffer, limits = DEFAULT_IMPORT_LIMITS) {
     ) {
       fail("INVALID_XCURSOR", "An Xcursor image chunk has invalid geometry.");
     }
+    decodedBudget.reserve(pixelCount * 4);
     const rgba = Buffer.allocUnsafe(pixelCount * 4);
     for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
       const word = buffer.readUInt32LE(pixelStart + pixelIndex * 4);
@@ -2090,7 +2117,7 @@ async function pngMetadata(buffer, limits) {
   }
 }
 
-async function framesFromPlistRecord(record, limits) {
+async function framesFromPlistRecord(record, limits, decodedBudget) {
   if (!record || typeof record !== "object") {
     fail("INVALID_CURSOR", "A plist cursor record is malformed.");
   }
@@ -2151,18 +2178,6 @@ async function framesFromPlistRecord(record, limits) {
         "A plist cursor representation does not match its declared frame count.",
       );
     }
-    const { data, info } = await sharp(encoded, {
-      limitInputPixels: limits.maxSourcePixelsPerFile,
-    })
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    if (info.width !== metadata.width || info.height !== metadata.height) {
-      fail(
-        "INVALID_CURSOR",
-        "A plist cursor representation decoded inconsistently.",
-      );
-    }
     const frameHeight = metadata.height / frameCount;
     const horizontalScale = metadata.width / pointsWide;
     const verticalScale = frameHeight / pointsHigh;
@@ -2180,9 +2195,6 @@ async function framesFromPlistRecord(record, limits) {
         "A plist cursor representation does not use one isotropic declared scale.",
       );
     }
-    // PNG stores straight-alpha color. Treat it as authoritative; guessing that
-    // dark translucent pixels are premultiplied visibly brightens dark themes.
-    const rgba = clearTransparentRgb(data);
     const sourceScale = (horizontalScale + verticalScale) / 2;
     const targetSize = Math.max(1, Math.round(32 * sourceScale));
     if (targetSize > limits.maxSourceDimension) {
@@ -2191,12 +2203,34 @@ async function framesFromPlistRecord(record, limits) {
         "A plist cursor representation has an excessive scale.",
       );
     }
+    const decodedByteLength = metadata.width * metadata.height * 4;
+    decodedBudget.reserve(decodedByteLength);
+    const { data, info } = await sharp(encoded, {
+      limitInputPixels: limits.maxSourcePixelsPerFile,
+    })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    if (info.width !== metadata.width || info.height !== metadata.height) {
+      fail(
+        "INVALID_CURSOR",
+        "A plist cursor representation decoded inconsistently.",
+      );
+    }
+    if (groups.has(targetSize)) {
+      decodedBudget.release(decodedByteLength);
+      continue;
+    }
+    // PNG stores straight-alpha color. Treat it as authoritative; guessing that
+    // dark translucent pixels are premultiplied visibly brightens dark themes.
+    const rgba = clearTransparentRgb(data);
     const frameBytes = metadata.width * frameHeight * 4;
     const frames = [];
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
       frames.push({
-        rgba: Buffer.from(
-          rgba.subarray(frameIndex * frameBytes, (frameIndex + 1) * frameBytes),
+        rgba: rgba.subarray(
+          frameIndex * frameBytes,
+          (frameIndex + 1) * frameBytes,
         ),
         width: metadata.width,
         height: frameHeight,
@@ -2206,9 +2240,7 @@ async function framesFromPlistRecord(record, limits) {
         nominalSize: targetSize,
       });
     }
-    if (!groups.has(targetSize)) {
-      groups.set(targetSize, frames);
-    }
+    groups.set(targetSize, frames);
   }
   return groups;
 }
@@ -2278,6 +2310,7 @@ async function loadPlistVariant(file, format, limits) {
   }
   const sourceFrames = new Map();
   const parsedRoles = new Map();
+  const decodedBudget = createDecodedSourceBudget(limits);
   for (const [macIdentifier, role] of Object.entries(MAC_TO_ROLE)) {
     if (!role || parsedRoles.has(role) || !parsed.Cursors[macIdentifier]) {
       continue;
@@ -2285,7 +2318,11 @@ async function loadPlistVariant(file, format, limits) {
     parsedRoles.set(role, true);
     sourceFrames.set(
       role,
-      await framesFromPlistRecord(parsed.Cursors[macIdentifier], limits),
+      await framesFromPlistRecord(
+        parsed.Cursors[macIdentifier],
+        limits,
+        decodedBudget,
+      ),
     );
   }
   const fallbackName = titleFromName(
@@ -2414,6 +2451,7 @@ async function loadXcursorVariant(cursorDirectory, files, limits) {
   const neededRoles = new Set(Object.values(MAC_TO_ROLE).filter(Boolean));
   const sourceFrames = new Map();
   const frameCache = new Map();
+  const decodedBudget = createDecodedSourceBudget(limits);
   for (const [role, file] of roleFiles) {
     if (!neededRoles.has(role)) {
       continue;
@@ -2422,7 +2460,10 @@ async function loadXcursorVariant(cursorDirectory, files, limits) {
       const buffer = await fsPromises.readFile(file.absolute);
       frameCache.set(
         file.digest,
-        groupXcursorFrames(parseXcursorBuffer(buffer, limits), limits),
+        groupXcursorFrames(
+          parseXcursorBuffer(buffer, limits, decodedBudget),
+          limits,
+        ),
       );
     }
     sourceFrames.set(role, frameCache.get(file.digest));
@@ -2437,7 +2478,12 @@ async function loadXcursorVariant(cursorDirectory, files, limits) {
   };
 }
 
-async function discoverVariants(scan, sourceFormat, limits) {
+async function discoverVariants(
+  scan,
+  sourceFormat,
+  limits,
+  consumeVariant = null,
+) {
   const xcursorDirectories = new Set();
   const plistFiles = [];
   let capeCount = 0;
@@ -2472,13 +2518,9 @@ async function discoverVariants(scan, sourceFormat, limits) {
     if (directories.length > limits.maxThemes) {
       fail("LIMIT_EXCEEDED", "The source contains too many cursor variants.");
     }
-    const variants = [];
-    for (const directory of directories) {
-      variants.push(await loadXcursorVariant(directory, scan.files, limits));
-    }
-    return {
+    const discovered = {
       format: sourceFormat,
-      variants,
+      variants: [],
       warnings:
         capeCount > 0
           ? [
@@ -2486,31 +2528,45 @@ async function discoverVariants(scan, sourceFormat, limits) {
             ]
           : [],
     };
+    for (const directory of directories) {
+      const variant = await loadXcursorVariant(directory, scan.files, limits);
+      if (consumeVariant) {
+        await consumeVariant(variant, discovered);
+      } else {
+        discovered.variants.push(variant);
+      }
+    }
+    return discovered;
   }
 
   if (plistFiles.length > 0) {
     if (plistFiles.length > limits.maxThemes) {
       fail("LIMIT_EXCEEDED", "The source contains too many cursor variants.");
     }
-    const variants = [];
-    for (const file of plistFiles) {
-      variants.push({
-        ...(await loadPlistVariant(file, file.format, limits)),
-        format: file.format,
-      });
-    }
     const formats = new Set(plistFiles.map((file) => file.format));
     const sourceContainer = sourceFormat.endsWith("-archive")
       ? "archive"
       : "directory";
-    return {
+    const discovered = {
       format:
         formats.size === 1
           ? `${[...formats][0]}-${sourceContainer}`
           : `plist-${sourceContainer}`,
-      variants,
+      variants: [],
       warnings: [],
     };
+    for (const file of plistFiles) {
+      const variant = {
+        ...(await loadPlistVariant(file, file.format, limits)),
+        format: file.format,
+      };
+      if (consumeVariant) {
+        await consumeVariant(variant, discovered);
+      } else {
+        discovered.variants.push(variant);
+      }
+    }
+    return discovered;
   }
 
   if (rawSourceCount > 0) {
@@ -2591,6 +2647,7 @@ async function writeArtifact(
   sourceFormat,
   sharedWarnings,
   limits,
+  maximumGeneratedBytes,
 ) {
   const displayName = safeText(variant.displayName, "Imported Cursor");
   const identifier = `${slugIdentifier(displayName)}-${variant.digest.slice(0, 16)}`;
@@ -2610,6 +2667,17 @@ async function writeArtifact(
   }
 
   try {
+    let generatedBytes = 0;
+    const countGeneratedBytes = (byteLength) => {
+      const next = generatedBytes + byteLength;
+      if (next > maximumGeneratedBytes) {
+        fail(
+          "LIMIT_EXCEEDED",
+          "The converted cursor artifacts exceed the import output limit.",
+        );
+      }
+      generatedBytes = next;
+    };
     const built = await buildTheme(
       variant.sourceFrames,
       {
@@ -2631,6 +2699,7 @@ async function writeArtifact(
         `The converted theme is ${(cursorBytes.length / (1024 * 1024)).toFixed(1)} MiB; macOS imports are limited to 32 MiB.`,
       );
     }
+    countGeneratedBytes(cursorBytes.length);
     await fsPromises.writeFile(cursorPath, cursorBytes, {
       flag: "wx",
       mode: 0o600,
@@ -2646,14 +2715,12 @@ async function writeArtifact(
       if (!assets.has(binding.resolved)) {
         const assetName = `${binding.resolved}.png`;
         const assetPath = path.join(previewRoot, assetName);
-        await fsPromises.writeFile(
-          assetPath,
-          await previewPng(record, limits),
-          {
-            flag: "wx",
-            mode: 0o600,
-          },
-        );
+        const previewBytes = await previewPng(record, limits);
+        countGeneratedBytes(previewBytes.length);
+        await fsPromises.writeFile(assetPath, previewBytes, {
+          flag: "wx",
+          mode: 0o600,
+        });
         assets.set(
           binding.resolved,
           path.posix.join("previews", identifier, assetName),
@@ -2697,22 +2764,29 @@ async function writeArtifact(
       themes: [entry],
     };
     const manifestPath = path.join(artifactRoot, "manifest.json");
-    await fsPromises.writeFile(
-      manifestPath,
+    const manifestBytes = Buffer.from(
       `${JSON.stringify(manifest, null, 2)}\n`,
-      { flag: "wx", mode: 0o600 },
+      "utf8",
     );
+    countGeneratedBytes(manifestBytes.length);
+    await fsPromises.writeFile(manifestPath, manifestBytes, {
+      flag: "wx",
+      mode: 0o600,
+    });
     return {
-      identifier,
-      displayName,
-      digest: variant.digest,
-      directory: artifactRoot,
-      manifestPath,
-      cursorPath,
-      sourceFormat: entry.SourceFormat,
-      sourceLabel: variant.sourceLabel,
-      warnings,
-      entry,
+      generatedBytes,
+      artifact: {
+        identifier,
+        displayName,
+        digest: variant.digest,
+        directory: artifactRoot,
+        manifestPath,
+        cursorPath,
+        sourceFormat: entry.SourceFormat,
+        sourceLabel: variant.sourceLabel,
+        warnings,
+        entry,
+      },
     };
   } catch (error) {
     await fsPromises.rm(artifactRoot, { recursive: true, force: true });
@@ -2811,12 +2885,43 @@ export async function importCursorSource({
 
   let discovered;
   let temporaryRoot;
+  const artifacts = [];
+  const seen = new Map();
+  const duplicateWarnings = [];
+  let generatedBytes = 0;
+  const consumeVariant = async (variant, metadata) => {
+    const identityKey = `${slugIdentifier(variant.displayName)}-${variant.digest.slice(0, 16)}`;
+    if (seen.has(identityKey)) {
+      if (seen.get(identityKey) !== variant.digest) {
+        fail(
+          "IDENTIFIER_COLLISION",
+          "Two imported variants produced the same identifier.",
+        );
+      }
+      duplicateWarnings.push(
+        `Skipped duplicate variant ${safeText(variant.displayName, identityKey)}.`,
+      );
+      return;
+    }
+    seen.set(identityKey, variant.digest);
+    const written = await writeArtifact(
+      stagingRoot,
+      variant,
+      metadata.format,
+      metadata.warnings,
+      limits,
+      limits.maxGeneratedBytes - generatedBytes,
+    );
+    generatedBytes += written.generatedBytes;
+    artifacts.push(written.artifact);
+  };
   try {
     if (sourceStat.isDirectory()) {
       discovered = await discoverVariants(
         await scanDirectory(sourceRealPath, limits),
         "xcursor-directory",
         limits,
+        consumeVariant,
       );
     } else if (archiveKind) {
       if (sourceStat.size > limits.maxArchiveBytes) {
@@ -2869,33 +2974,38 @@ export async function importCursorSource({
         await scanDirectory(extractionRoot, limits),
         "xcursor-archive",
         limits,
+        consumeVariant,
       );
     } else if (sourceStat.isFile() && extension === ".cursor") {
       discovered = {
         format: "native-cursor",
-        variants: [
-          {
-            ...(await directPlistVariant(
-              sourceRealPath,
-              "native-cursor",
-              limits,
-            )),
-            format: "native-cursor",
-          },
-        ],
+        variants: [],
         warnings: [],
       };
+      await consumeVariant(
+        {
+          ...(await directPlistVariant(
+            sourceRealPath,
+            "native-cursor",
+            limits,
+          )),
+          format: "native-cursor",
+        },
+        discovered,
+      );
     } else if (sourceStat.isFile() && extension === ".cape") {
       discovered = {
         format: "mousecape",
-        variants: [
-          {
-            ...(await directPlistVariant(sourceRealPath, "mousecape", limits)),
-            format: "mousecape",
-          },
-        ],
+        variants: [],
         warnings: [],
       };
+      await consumeVariant(
+        {
+          ...(await directPlistVariant(sourceRealPath, "mousecape", limits)),
+          format: "mousecape",
+        },
+        discovered,
+      );
     } else {
       fail(
         "UNSUPPORTED_SOURCE",
@@ -2903,34 +3013,6 @@ export async function importCursorSource({
       );
     }
 
-    const artifacts = [];
-    const seen = new Map();
-    const duplicateWarnings = [];
-    for (const variant of discovered.variants) {
-      const identityKey = `${slugIdentifier(variant.displayName)}-${variant.digest.slice(0, 16)}`;
-      if (seen.has(identityKey)) {
-        if (seen.get(identityKey) !== variant.digest) {
-          fail(
-            "IDENTIFIER_COLLISION",
-            "Two imported variants produced the same identifier.",
-          );
-        }
-        duplicateWarnings.push(
-          `Skipped duplicate variant ${safeText(variant.displayName, identityKey)}.`,
-        );
-        continue;
-      }
-      seen.set(identityKey, variant.digest);
-      artifacts.push(
-        await writeArtifact(
-          stagingRoot,
-          variant,
-          discovered.format,
-          discovered.warnings,
-          limits,
-        ),
-      );
-    }
     if (artifacts.length === 0) {
       fail(
         "UNSUPPORTED_SOURCE",
@@ -2978,6 +3060,7 @@ export const __testing = Object.freeze({
   preflightTar,
   preflightZip,
   previewPng,
+  safeText,
   scanDirectory,
   selectedFrameIndices,
   synthesizeProgressSource,

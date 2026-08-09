@@ -128,6 +128,94 @@ function firstBoolean(object, keys, fallback = false) {
   return fallback;
 }
 
+function requiredBooleanAlias(object, keys) {
+  let found = false;
+  let result = null;
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(object, key)) {
+      continue;
+    }
+    found = true;
+    const value = object[key];
+    const normalized =
+      typeof value === "boolean"
+        ? value
+        : value === 0 || value === 1
+          ? Boolean(value)
+          : null;
+    if (normalized === null || (result !== null && result !== normalized)) {
+      return null;
+    }
+    result = normalized;
+  }
+  return found ? result : null;
+}
+
+function requiredThemeIdentifierAlias(object, keys) {
+  let found = false;
+  let result = null;
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(object, key)) {
+      continue;
+    }
+    found = true;
+    const value = object[key];
+    if (
+      typeof value !== "string" ||
+      !IDENTIFIER_PATTERN.test(value) ||
+      (result !== null && result !== value)
+    ) {
+      return null;
+    }
+    result = value;
+  }
+  return found ? result : null;
+}
+
+function requiredNativeStatus(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const fields = {
+    supported: ["supported", "Supported"],
+    themeValid: ["themeValid", "ThemeValid"],
+    desiredEnabled: ["desiredEnabled", "DesiredEnabled"],
+    persistedEffectiveApplied: ["effectiveApplied", "EffectiveApplied"],
+    currentSentinelsMatchTheme: [
+      "currentSentinelsMatchTheme",
+      "CurrentSentinelsMatchTheme",
+    ],
+    launchAtLoginDesired: ["launchAtLoginDesired", "LaunchAtLoginDesired"],
+    loginApprovalRequired: ["loginApprovalRequired", "LoginApprovalRequired"],
+    loginItemRegistrationCurrent: [
+      "loginItemRegistrationCurrent",
+      "LoginItemRegistrationCurrent",
+    ],
+    transactionPending: ["transactionPending", "TransactionPending"],
+  };
+  const result = {};
+  for (const [field, keys] of Object.entries(fields)) {
+    const value = requiredBooleanAlias(raw, keys);
+    if (value === null) {
+      return null;
+    }
+    result[field] = value;
+  }
+  const selectedThemeIdentifier = requiredThemeIdentifierAlias(raw, [
+    "selectedThemeIdentifier",
+    "SelectedThemeIdentifier",
+    "themeIdentifier",
+    "ThemeIdentifier",
+    "nativeThemeId",
+    "NativeThemeID",
+  ]);
+  if (!selectedThemeIdentifier) {
+    return null;
+  }
+  result.selectedThemeIdentifier = selectedThemeIdentifier;
+  return result;
+}
+
 function isExecutableFile(candidate) {
   try {
     fs.accessSync(candidate, fs.constants.X_OK);
@@ -1432,56 +1520,47 @@ export function createCursorBridge({
     }
   };
 
+  const unavailableNativeStatus = (
+    reason = "The native cursor component returned incomplete status data.",
+  ) => {
+    fallbackState = {
+      ...fallbackState,
+      bridgeAvailable: Boolean(bridgePath),
+      statusAvailable: false,
+      previewMode: !bridgePath,
+      effectiveVariantId: null,
+      effectiveNativeThemeId: null,
+      effectiveApplied: false,
+      canApply: false,
+      reason,
+      lastError: reason,
+    };
+    return { ...fallbackState };
+  };
+
   const normalizeStatus = (raw) => {
-    if (!raw || typeof raw !== "object") {
-      return { ...fallbackState };
+    const nativeStatus = requiredNativeStatus(raw);
+    if (!nativeStatus) {
+      return unavailableNativeStatus();
     }
     ensureManifestIndex();
-    const selectedNativeThemeId = firstThemeValue(raw, [
-      "selectedThemeIdentifier",
-      "SelectedThemeIdentifier",
-      "themeIdentifier",
-      "ThemeIdentifier",
-      "nativeThemeId",
-      "NativeThemeID",
-    ]);
+    const selectedNativeThemeId = nativeStatus.selectedThemeIdentifier;
     const selectedVariantId = selectedNativeThemeId
       ? catalogIdentifier(selectedNativeThemeId)
       : fallbackState.selectedVariantId;
-    const desiredEnabled = firstBoolean(
-      raw,
-      ["desiredEnabled", "DesiredEnabled"],
-      false,
-    );
-    const persistedEffectiveApplied = firstBoolean(
-      raw,
-      ["effectiveApplied", "EffectiveApplied"],
-      false,
-    );
-    const currentSentinelsMatchTheme = firstBoolean(
-      raw,
-      ["currentSentinelsMatchTheme", "CurrentSentinelsMatchTheme"],
-      false,
-    );
+    const {
+      currentSentinelsMatchTheme,
+      desiredEnabled,
+      launchAtLoginDesired,
+      loginApprovalRequired,
+      loginItemRegistrationCurrent,
+      persistedEffectiveApplied,
+      supported,
+      themeValid,
+      transactionPending,
+    } = nativeStatus;
     const liveApplied = Boolean(
       desiredEnabled && persistedEffectiveApplied && currentSentinelsMatchTheme,
-    );
-    const supported = firstBoolean(raw, ["supported", "Supported"], true);
-    const themeValid = firstBoolean(raw, ["themeValid", "ThemeValid"], true);
-    const launchAtLoginDesired = firstBoolean(
-      raw,
-      ["launchAtLoginDesired", "LaunchAtLoginDesired"],
-      false,
-    );
-    const loginApprovalRequired = firstBoolean(
-      raw,
-      ["loginApprovalRequired", "LoginApprovalRequired"],
-      false,
-    );
-    const loginItemRegistrationCurrent = firstBoolean(
-      raw,
-      ["loginItemRegistrationCurrent", "LoginItemRegistrationCurrent"],
-      false,
     );
     const selectedTheme = selectedNativeThemeId
       ? (manifestTheme(selectedNativeThemeId) ??
@@ -1505,12 +1584,6 @@ export function createCursorBridge({
         selectedTheme?.displayName ??
         "",
     );
-    const transactionPending = firstBoolean(
-      raw,
-      ["transactionPending", "TransactionPending"],
-      false,
-    );
-
     fallbackState = {
       ...fallbackState,
       schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
@@ -1566,19 +1639,7 @@ export function createCursorBridge({
         };
         return { ...fallbackState };
       }
-      fallbackState = {
-        ...fallbackState,
-        bridgeAvailable: Boolean(bridgePath),
-        statusAvailable: false,
-        previewMode: !bridgePath,
-        effectiveVariantId: null,
-        effectiveNativeThemeId: null,
-        effectiveApplied: false,
-        canApply: false,
-        reason: error.message,
-        lastError: error.message,
-      };
-      return { ...fallbackState };
+      return unavailableNativeStatus(error.message);
     }
   };
 
@@ -2243,7 +2304,10 @@ export function createCursorBridge({
             "CurrentSentinelsMatchTheme",
           ].some((key) => result[key] !== undefined))
       ) {
-        return normalizeStatus(result);
+        const resultStatus = normalizeStatus(result);
+        if (resultStatus.statusAvailable) {
+          return resultStatus;
+        }
       }
     } catch (error) {
       if (error?.details) {
@@ -2254,7 +2318,16 @@ export function createCursorBridge({
       error.status = refreshed;
       throw error;
     }
-    return status();
+    const refreshed = await status();
+    if (!refreshed.statusAvailable) {
+      const error = new Error(
+        "The native cursor operation completed without verifiable status.",
+      );
+      error.code = "NATIVE_STATUS_UNAVAILABLE";
+      error.status = refreshed;
+      throw error;
+    }
+    return refreshed;
   };
 
   const applyTheme = (identifier, { shouldApply } = {}) =>

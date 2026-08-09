@@ -180,6 +180,17 @@ export function getAutomaticSelectionId(packs, selectedId) {
   return packs.some((pack) => pack.id === selectedId) ? null : packs[0].id;
 }
 
+export function getPackScopedFeedback(feedback, packId) {
+  if (!feedback?.targetPackId || feedback.targetPackId === packId) {
+    return feedback ?? null;
+  }
+  return null;
+}
+
+export function getPackScopedOperation(operation, targetPackId, packId) {
+  return !targetPackId || targetPackId === packId ? operation : "idle";
+}
+
 export function isRestoreAvailable(status) {
   if (!status || typeof status !== "object") {
     return false;

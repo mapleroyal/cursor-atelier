@@ -9,6 +9,7 @@ import unittest
 
 CONTROLLER = pathlib.Path(__file__).parent / "Sources" / "OreoAppController.m"
 ENGINE = CONTROLLER.parent / "OreoCursorEngine.m"
+APP_DELEGATE = CONTROLLER.parent / "OreoAppDelegate.m"
 HELPER = CONTROLLER.parent.parent / "HelperSources" / "OreoLoginHelperMain.m"
 BUILD_SCRIPT = CONTROLLER.parent.parent / "build.sh"
 
@@ -506,6 +507,44 @@ class AppControllerContractTests(unittest.TestCase):
         self.assertIn(
             "self.engine.themeSizePercentage != expectedSize", bring_current
         )
+
+    def test_native_window_reloads_same_theme_when_its_size_changes(self) -> None:
+        delegate = APP_DELEGATE.read_text(encoding="utf-8")
+        refresh = self._function(
+            delegate,
+            "- (void)refreshExternalState {",
+            "- (void)settingsDidChange:(NSNotification *)notification {",
+        )
+        self.assertIn("[OreoCursorEngine effectiveSizePercentage]", refresh)
+        self.assertIn(
+            "[OreoCursorEngine sizePercentageForThemeIdentifier:selected]",
+            refresh,
+        )
+        self.assertIn(
+            "self.engine.themeSizePercentage == expectedSize", refresh
+        )
+
+    def test_graphical_theme_previews_use_cached_staged_assets(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        delegate = APP_DELEGATE.read_text(encoding="utf-8")
+        preview = self._function(
+            delegate,
+            "- (NSImage *)previewImageForTheme:",
+            "- (void)populateThemePopup",
+        )
+        self.assertIn("themePreviewURLForTheme", preview)
+        self.assertIn("initByReferencingURL", preview)
+        self.assertNotIn("themeResourceDataForIdentifier", preview)
+        self.assertNotIn("NSPropertyListSerialization", preview)
+
+        self.assertIn("OreoBundledThemeCatalogForBundle", engine)
+        self.assertIn(
+            "static NSMutableDictionary<NSString *, NSDictionary *> *cache;",
+            engine,
+        )
+        self.assertIn('catalog[@"ByIdentifier"][identifier]', engine)
+        self.assertIn("OreoThemePreviewSpecKey", engine)
+        self.assertIn("+ (NSURL *)themePreviewURLForTheme:", engine)
 
     def test_theme_size_map_has_a_dedicated_full_catalogue_bound(self) -> None:
         engine = ENGINE.read_text(encoding="utf-8")

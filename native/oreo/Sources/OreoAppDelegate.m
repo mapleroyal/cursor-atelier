@@ -134,19 +134,11 @@
 }
 
 - (NSImage *)previewImageForTheme:
-                 (NSDictionary<NSString *, NSString *> *)theme {
-    NSData *data = [OreoCursorEngine
-        themeResourceDataForIdentifier:theme[@"Identifier"] error:NULL];
-    NSDictionary *root = data ?
-        [NSPropertyListSerialization propertyListWithData:data
-                                                  options:NSPropertyListImmutable
-                                                   format:NULL
-                                                    error:NULL] : nil;
-    NSArray *representations =
-        root[@"Cursors"][@"com.apple.coregraphics.Arrow"][@"Representations"];
-    NSData *png = representations.count > 1 ? representations[1] :
-                  representations.firstObject;
-    NSImage *image = png ? [[NSImage alloc] initWithData:png] : nil;
+                 (NSDictionary<NSString *, id> *)theme {
+    NSURL *previewURL = [OreoCursorEngine
+        themePreviewURLForTheme:theme];
+    NSImage *image = previewURL
+        ? [[NSImage alloc] initByReferencingURL:previewURL] : nil;
     image.size = NSMakeSize(22, 22);
     return image;
 }
@@ -154,7 +146,7 @@
 - (void)populateThemePopup {
     [self.themePopup removeAllItems];
     NSString *previousGroup = nil;
-    for (NSDictionary<NSString *, NSString *> *theme in
+    for (NSDictionary<NSString *, id> *theme in
              [OreoCursorEngine availableThemes]) {
         NSString *group = theme[@"Group"];
         if (previousGroup && ![previousGroup isEqualToString:group]) {
@@ -541,9 +533,15 @@
     }
 
     NSString *selected = [OreoCursorEngine selectedThemeIdentifier];
+    BOOL effective =
+        [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
+    NSInteger expectedSize = effective
+        ? [OreoCursorEngine effectiveSizePercentage]
+        : [OreoCursorEngine sizePercentageForThemeIdentifier:selected];
     if (self.engine.supported &&
         self.engine.themeValid &&
         [self.engine.themeIdentifier isEqualToString:selected] &&
+        self.engine.themeSizePercentage == expectedSize &&
         !(self.engine.lastErrorMessage.length > 0 &&
           !self.statusIsError)) {
         return;

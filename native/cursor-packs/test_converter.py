@@ -836,6 +836,120 @@ png = 'wait-*.png'
             self.assertEqual(report["Cursors"], len(converter.MAC_CURSOR_IDENTIFIERS))
             self.assertEqual(report["Identifier"], "Synthetic")
 
+    def test_validator_matches_native_cursor_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            valid_path = root / "valid.cursor"
+            converter.convert_frames(
+                {
+                    "default": [
+                        converter.Frame(
+                            Image.new("RGBA", (32, 32), (255, 255, 255, 255)),
+                            3,
+                            4,
+                        )
+                    ]
+                },
+                valid_path,
+                "Synthetic",
+                "Synthetic",
+            )
+            valid_theme = plistlib.loads(valid_path.read_bytes())
+            arrow = "com.apple.coregraphics.Arrow"
+
+            def replace_arrow(theme: dict[str, object]) -> dict[str, object]:
+                cursors = theme["Cursors"]
+                self.assertIsInstance(cursors, dict)
+                record = dict(cursors[arrow])  # type: ignore[index]
+                record["Representations"] = list(record["Representations"])
+                cursors[arrow] = record  # type: ignore[index]
+                return record
+
+            def extra_identifier(theme: dict[str, object]) -> None:
+                cursors = theme["Cursors"]
+                self.assertIsInstance(cursors, dict)
+                cursors["unexpected.cursor"] = dict(cursors[arrow])
+
+            def edge_hotspot(theme: dict[str, object]) -> None:
+                record = replace_arrow(theme)
+                record["HotSpotX"] = record["PointsWide"]
+
+            def zero_duration(theme: dict[str, object]) -> None:
+                replace_arrow(theme)["FrameDuration"] = 0.0
+
+            def boolean_frame_count(theme: dict[str, object]) -> None:
+                replace_arrow(theme)["FrameCount"] = True
+
+            def missing_three_x(theme: dict[str, object]) -> None:
+                record = replace_arrow(theme)
+                record["Representations"][-1] = png_bytes(
+                    Image.new("RGBA", (128, 128), (255, 255, 255, 255))
+                )
+
+            def mismatched_sheet_geometry(theme: dict[str, object]) -> None:
+                record = replace_arrow(theme)
+                record["Representations"][-1] = png_bytes(
+                    Image.new("RGBA", (96, 95), (255, 255, 255, 255))
+                )
+
+            cases = (
+                ("extra-identifier", extra_identifier, "identifier"),
+                ("edge-hotspot", edge_hotspot, "HotSpotX"),
+                ("zero-duration", zero_duration, "FrameDuration"),
+                ("boolean-frame-count", boolean_frame_count, "FrameCount"),
+                ("missing-three-x", missing_three_x, "1x, 2x, or 3x"),
+                (
+                    "mismatched-sheet-geometry",
+                    mismatched_sheet_geometry,
+                    "sprite-sheet dimensions",
+                ),
+            )
+            for name, mutate, error_pattern in cases:
+                with self.subTest(name=name):
+                    theme = plistlib.loads(plistlib.dumps(valid_theme))
+                    mutate(theme)
+                    candidate = root / f"{name}.cursor"
+                    candidate.write_bytes(plistlib.dumps(theme))
+                    with self.assertRaisesRegex(ValueError, error_pattern):
+                        converter.validate_theme(candidate)
+
+    def test_validator_uses_declared_point_geometry_not_fixed_pixels(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "scaled.cursor"
+            theme = converter._build_theme(
+                {
+                    "default": [
+                        converter.Frame(Image.new("RGBA", (32, 32)), 3, 4)
+                    ]
+                },
+                "Synthetic",
+                "Synthetic",
+            )
+            arrow = "com.apple.coregraphics.Arrow"
+            record = dict(theme["Cursors"][arrow])
+            record.update(
+                {
+                    "HotSpotX": 2.0,
+                    "HotSpotY": 3.0,
+                    "PointsWide": 16.0,
+                    "PointsHigh": 16.0,
+                    "Representations": [
+                        png_bytes(Image.new("RGBA", (size, size)))
+                        for size in (16, 32, 48)
+                    ],
+                }
+            )
+            theme["Cursors"][arrow] = record
+            path.write_bytes(plistlib.dumps(theme))
+
+            converter.validate_theme(path)
+
+    def test_converter_rejects_hotspot_on_canvas_edge(self) -> None:
+        with self.assertRaisesRegex(ValueError, "outside its 32px canvas"):
+            converter.build_cursor(
+                [converter.Frame(Image.new("RGBA", (32, 32)), 32, 4)]
+            )
+
     def test_cape_animation_sprite_sheet_is_downsampled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             # Build a tiny Cape with 25 frames; conversion must cap at 24.

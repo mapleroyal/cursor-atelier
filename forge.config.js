@@ -526,6 +526,11 @@ module.exports = {
             target: "main",
           },
           {
+            entry: "src/main/cursor-import-worker.js",
+            config: "vite.main.config.mjs",
+            target: "main",
+          },
+          {
             entry: "src/preload.js",
             config: "vite.preload.config.mjs",
             target: "preload",

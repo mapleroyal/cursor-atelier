@@ -1,4 +1,8 @@
-export function createRendererNavigation({ canSend = () => true } = {}) {
+export function createRendererNavigation({
+  canSend = () => true,
+  onSendError = (error) =>
+    console.error("Could not send renderer navigation.", error),
+} = {}) {
   const pendingByWebContents = new Map();
   const readyWebContents = new Set();
 
@@ -14,9 +18,22 @@ export function createRendererNavigation({ canSend = () => true } = {}) {
     }
 
     const destination = pendingByWebContents.get(identifier);
-    pendingByWebContents.delete(identifier);
-    webContents.send("app:navigate", destination);
-    return true;
+    try {
+      webContents.send("app:navigate", destination);
+      pendingByWebContents.delete(identifier);
+      return true;
+    } catch (error) {
+      readyWebContents.delete(identifier);
+      try {
+        onSendError(error, { webContents, destination });
+      } catch (reportingError) {
+        console.error(
+          "Renderer navigation error reporter failed.",
+          reportingError,
+        );
+      }
+      return false;
+    }
   };
 
   return {

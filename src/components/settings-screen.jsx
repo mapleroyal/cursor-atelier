@@ -70,6 +70,20 @@ export function getNextTime(times) {
   return null;
 }
 
+export function reconcileTimeRows(rows, times, createRow) {
+  const rowsByValue = new Map();
+  for (const row of rows) {
+    const matchingRows = rowsByValue.get(row.value) ?? [];
+    matchingRows.push(row);
+    rowsByValue.set(row.value, matchingRows);
+  }
+
+  return times.map((time) => {
+    const matchingRows = rowsByValue.get(time);
+    return matchingRows?.shift() ?? createRow(time);
+  });
+}
+
 function SettingsSection({ title, children }) {
   return (
     <section className="grid gap-5 py-6 first:pt-0 last:pb-0">
@@ -237,7 +251,7 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
     })),
   );
   const [validationMessage, setValidationMessage] = useState(null);
-  const [focusIndex, setFocusIndex] = useState(null);
+  const [focusRowId, setFocusRowId] = useState(null);
   const canceledBlurRef = useRef(new Set());
   const inputRefs = useRef(new Map());
   const rowValues = rows.map((row) => row.value);
@@ -252,7 +266,7 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
       ) {
         return current;
       }
-      return authoritativeTimes.map((time) => ({
+      return reconcileTimeRows(current, authoritativeTimes, (time) => ({
         id: `time-${nextRowIdRef.current++}`,
         value: time,
       }));
@@ -261,15 +275,15 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
   }, [authoritativeTimes]);
 
   useEffect(() => {
-    if (focusIndex === null) {
+    if (focusRowId === null) {
       return;
     }
-    const input = inputRefs.current.get(rows[focusIndex]?.id);
+    const input = inputRefs.current.get(focusRowId);
     if (input) {
       input.focus();
-      setFocusIndex(null);
+      setFocusRowId(null);
     }
-  }, [focusIndex, rows]);
+  }, [focusRowId, rows]);
 
   const restoreRows = () => {
     setRows(
@@ -279,7 +293,7 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
       })),
     );
     setValidationMessage(null);
-    setFocusIndex(null);
+    setFocusRowId(null);
   };
 
   const updateRow = (id, value) => {
@@ -384,13 +398,14 @@ function SpecificTimesInput({ times, disabled, onValueChange }) {
           if (!nextTime) {
             return;
           }
-          const nextRows = [
-            ...rows,
-            { id: `time-${nextRowIdRef.current++}`, value: nextTime },
-          ];
+          const nextRow = {
+            id: `time-${nextRowIdRef.current++}`,
+            value: nextTime,
+          };
+          const nextRows = [...rows, nextRow];
           const nextTimes = nextRows.map((row) => row.value);
           setRows(nextRows);
-          setFocusIndex(nextRows.length - 1);
+          setFocusRowId(nextRow.id);
           saveDraft(() => onValueChange(nextTimes), restoreRows);
         }}
       >

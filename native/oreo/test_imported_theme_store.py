@@ -114,6 +114,26 @@ class ImportedThemeStoreTests(unittest.TestCase):
                             });
                             return data ? 0 : 2;
                         }
+                        if (argc == 3 && strcmp(argv[1], "preview") == 0) {
+                            NSString *identifier =
+                                [NSString stringWithUTF8String:argv[2]];
+                            NSDictionary *selected = nil;
+                            for (NSDictionary *theme in
+                                     [OreoCursorEngine availableThemes]) {
+                                if ([theme[@"Identifier"]
+                                        isEqualToString:identifier]) {
+                                    selected = theme;
+                                    break;
+                                }
+                            }
+                            NSURL *preview = [OreoCursorEngine
+                                themePreviewURLForTheme:selected ?: @{}];
+                            PrintJSON(@{
+                                @"found": @(preview != nil),
+                                @"path": preview.path ?: @"",
+                            });
+                            return preview ? 0 : 2;
+                        }
                     }
                     return 64;
                 }
@@ -218,6 +238,7 @@ class ImportedThemeStoreTests(unittest.TestCase):
         theme_identifier: str = "ImportedFixture",
         *,
         write_resource: bool = True,
+        write_preview: bool = False,
     ) -> tuple[pathlib.Path, bytes, dict[str, str]]:
         pack = self.imported_root / pack_identifier
         pack.mkdir(mode=0o700)
@@ -226,6 +247,15 @@ class ImportedThemeStoreTests(unittest.TestCase):
             resource = pack / entry["Resource"]
             resource.write_bytes(data)
             resource.chmod(0o600)
+        if write_preview:
+            preview_name = f"previews/{theme_identifier}/default.png"
+            preview = pack / preview_name
+            preview.parent.mkdir(parents=True, mode=0o700)
+            (pack / "previews").chmod(0o700)
+            preview.parent.chmod(0o700)
+            preview.write_bytes(self._transparent_png(32, 32))
+            preview.chmod(0o600)
+            entry["preview"] = preview_name
         manifest = pack / "manifest.json"
         manifest.write_text(
             json.dumps({"schemaVersion": 2, "themes": [entry]}),
@@ -304,6 +334,52 @@ class ImportedThemeStoreTests(unittest.TestCase):
                 "OreoThemeSpecifications(resourceBundle).firstObject",
                 selection,
             )
+
+    def test_bundled_preview_resolves_to_staged_asset_without_theme_decode(self) -> None:
+        source_root = NATIVE_ROOT / "Resources" / "Themes"
+        generated_root = NATIVE_ROOT.parent / "cursor-packs" / "generated"
+        with tempfile.TemporaryDirectory() as directory:
+            theme_root = pathlib.Path(directory)
+            for resource in source_root.iterdir():
+                if resource.is_file():
+                    shutil.copy2(resource, theme_root / resource.name)
+            shutil.copy2(generated_root / "manifest.json", theme_root)
+            preview_source = generated_root / "previews" / "OreoWhite" / "default.png"
+            preview_target = theme_root / "previews" / "OreoWhite" / "default.png"
+            preview_target.parent.mkdir(parents=True)
+            shutil.copy2(preview_source, preview_target)
+
+            result = json.loads(
+                self._run("preview", "OreoWhite", theme_root=theme_root).stdout
+            )
+
+            self.assertTrue(result["found"])
+            self.assertEqual(pathlib.Path(result["path"]), preview_target)
+
+    def test_imported_preview_resolves_lazily_and_rejects_a_symlink(self) -> None:
+        identifier = "ImportedPreviewFixture"
+        pack, _, entry = self._install(
+            "preview-pack", identifier, write_preview=True
+        )
+        preview = pack / entry["preview"]
+
+        result = json.loads(self._run("preview", identifier).stdout)
+
+        self.assertTrue(result["found"])
+        self.assertEqual(pathlib.Path(result["path"]).resolve(), preview.resolve())
+
+        outside = self.home / "outside-preview.png"
+        outside.write_bytes(preview.read_bytes())
+        preview.unlink()
+        preview.symlink_to(outside)
+        rejected = self._run("preview", identifier, check=False)
+
+        self.assertEqual(rejected.returncode, 2)
+        self.assertFalse(json.loads(rejected.stdout)["found"])
+        self.assertIn(
+            identifier,
+            {theme["Identifier"] for theme in self._themes()},
+        )
 
     def test_discovers_and_integrity_checks_an_imported_resource(self) -> None:
         pack, data, entry = self._install("fixture-pack")

@@ -11,7 +11,6 @@ import {
   CommandIcon,
   Cursor01Icon,
   Delete01Icon,
-  Delete02Icon,
   FavouriteIcon,
   FolderEditIcon,
   FolderFavouriteIcon,
@@ -104,6 +103,8 @@ import {
   getAutomaticSelectionId,
   getAuthoritativeStatus,
   getCursorErrorMessage,
+  getPackScopedFeedback,
+  getPackScopedOperation,
   getPackRailNavigationIndex,
   getSelectedStatusVariant,
   getStatusVariant,
@@ -1016,7 +1017,7 @@ function PackRail({
               className="absolute top-1/2 right-1 -translate-y-1/2 text-muted-foreground"
             >
               <HugeiconsIcon
-                icon={Delete02Icon}
+                icon={Cancel01Icon}
                 strokeWidth={2}
                 aria-hidden="true"
               />
@@ -1299,6 +1300,41 @@ function PackRail({
                   verifiedActive && matchesCursorPack(pack, effectiveId),
               );
               const familyFavorite = favoriteFamilies.has(family);
+              const familyHeading = (
+                <>
+                  {!searchActive ? (
+                    <HugeiconsIcon
+                      icon={ArrowRight01Icon}
+                      strokeWidth={2}
+                      className={cn(
+                        "size-3.5 shrink-0 transition-transform",
+                        expanded && "rotate-90",
+                      )}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate">{family}</span>
+                  {familyFavorite ? (
+                    <HugeiconsIcon
+                      icon={FavouriteIcon}
+                      strokeWidth={2}
+                      className="size-3.5 shrink-0"
+                      aria-label="Favorite family"
+                    />
+                  ) : null}
+                  {familyActive && !expanded ? (
+                    <HugeiconsIcon
+                      icon={CheckmarkCircle02Icon}
+                      strokeWidth={2.2}
+                      className="size-4 shrink-0 text-primary"
+                      aria-label="Contains current cursor"
+                    />
+                  ) : null}
+                  <span className="type-numeric text-[0.65rem] font-normal text-muted-foreground/75">
+                    {familyPacks.length}
+                  </span>
+                </>
+              );
               return (
                 <Collapsible
                   key={family}
@@ -1329,44 +1365,20 @@ function PackRail({
                       onDelete={libraryActions.onDeleteFamily}
                       onToggleFavorite={onToggleFamilyFavorite}
                     >
-                      <CollapsibleTrigger asChild>
-                        <button
-                          type="button"
-                          className="group flex w-full min-w-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
-                        >
-                          <HugeiconsIcon
-                            icon={ArrowRight01Icon}
-                            strokeWidth={2}
-                            className={cn(
-                              "size-3.5 shrink-0 transition-transform",
-                              expanded && "rotate-90",
-                            )}
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0 flex-1 truncate">
-                            {family}
-                          </span>
-                          {familyFavorite ? (
-                            <HugeiconsIcon
-                              icon={FavouriteIcon}
-                              strokeWidth={2}
-                              className="size-3.5 shrink-0"
-                              aria-label="Favorite family"
-                            />
-                          ) : null}
-                          {familyActive && !expanded ? (
-                            <HugeiconsIcon
-                              icon={CheckmarkCircle02Icon}
-                              strokeWidth={2.2}
-                              className="size-4 shrink-0 text-primary"
-                              aria-label="Contains current cursor"
-                            />
-                          ) : null}
-                          <span className="type-numeric text-[0.65rem] font-normal text-muted-foreground/75">
-                            {familyPacks.length}
-                          </span>
-                        </button>
-                      </CollapsibleTrigger>
+                      {searchActive ? (
+                        <div className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground">
+                          {familyHeading}
+                        </div>
+                      ) : (
+                        <CollapsibleTrigger asChild>
+                          <button
+                            type="button"
+                            className="group flex w-full min-w-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                          >
+                            {familyHeading}
+                          </button>
+                        </CollapsibleTrigger>
+                      )}
                     </FamilyContextActions>
                     <CollapsibleContent>
                       <div className="min-w-0 space-y-0.5 pb-1">
@@ -1505,6 +1517,7 @@ function PackDetails({
   randomizationPoolSizes = {},
   selectedBySystem,
   operation,
+  operationTargetPackId,
   preferencesSaving,
   onApply,
   onSizeCommit,
@@ -1527,6 +1540,11 @@ function PackDetails({
   libraryActions = {},
 }) {
   const cursorBusy = operation !== "idle";
+  const packOperation = getPackScopedOperation(
+    operation,
+    operationTargetPackId,
+    pack.id,
+  );
   const canApply = engineAvailable && pack.canApply === true;
   const [sizeDraft, setSizeDraft] = useState(null);
   const previewSize = sizeDraft ?? pack.sizePercentage;
@@ -1542,15 +1560,16 @@ function PackDetails({
     ? "Clear the default dark mode cursor"
     : `Set ${pack.variant} as the default dark mode cursor`;
   const pendingDetailMessage =
-    operation === "sizing"
+    packOperation === "sizing"
       ? "Saving size…"
-      : operation === "assigning-light"
+      : packOperation === "assigning-light"
         ? "Saving light mode cursor…"
-        : operation === "assigning-dark"
+        : packOperation === "assigning-dark"
           ? "Saving dark mode cursor…"
           : null;
+  const packFeedback = getPackScopedFeedback(feedback, pack.id);
   const detailFeedback =
-    feedback ??
+    packFeedback ??
     (pendingDetailMessage
       ? { type: "pending", message: pendingDetailMessage }
       : null);
@@ -1613,7 +1632,7 @@ function PackDetails({
                   disabled={cursorBusy || !canApply}
                   onClick={onApply}
                 >
-                  {operation === "applying"
+                  {packOperation === "applying"
                     ? "Applying…"
                     : active
                       ? "Reapply"
@@ -1846,7 +1865,7 @@ function PackDetails({
                 onClick={onOpenLoginSettings}
                 disabled={cursorBusy}
               >
-                {operation === "opening-settings"
+                {packOperation === "opening-settings"
                   ? "Opening…"
                   : "Open Settings"}
               </Button>
@@ -2019,6 +2038,7 @@ export function HomeRoute() {
   );
   const [search, setSearch] = useState("");
   const [operation, setOperation] = useState("idle");
+  const [operationTargetPackId, setOperationTargetPackId] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [railOpen, setRailOpen] = useState(false);
   const [familyEditor, setFamilyEditor] = useState(null);
@@ -2048,12 +2068,13 @@ export function HomeRoute() {
     );
   }, []);
 
-  const beginOperation = useCallback((kind) => {
+  const beginOperation = useCallback((kind, targetPackId = null) => {
     if (operationRef.current) {
       return null;
     }
-    const token = { kind };
+    const token = { kind, targetPackId };
     operationRef.current = token;
+    setOperationTargetPackId(targetPackId);
     setOperation(kind);
     return token;
   }, []);
@@ -2063,6 +2084,7 @@ export function HomeRoute() {
       return;
     }
     operationRef.current = null;
+    setOperationTargetPackId(null);
     setOperation("idle");
   }, []);
 
@@ -2584,18 +2606,21 @@ export function HomeRoute() {
       ) {
         return;
       }
-      const pack = packs.find((candidate) =>
+      const targetPack = packs.find((candidate) =>
         matchesCursorPack(candidate, preferenceId),
       );
+      if (!targetPack) {
+        return;
+      }
       const current = normalizeCursorPreferences(
         queryClient.getQueryData(["cursor-preferences"]),
       );
       const appearanceKey = `${appearance}CursorId`;
       const isClearing = current.appearance[appearanceKey] === preferenceId;
-      if (!isClearing && (!engineAvailable || pack?.canApply !== true)) {
+      if (!isClearing && (!engineAvailable || targetPack.canApply !== true)) {
         return;
       }
-      const token = beginOperation(`assigning-${appearance}`);
+      const token = beginOperation(`assigning-${appearance}`, targetPack.id);
       if (!token) {
         return;
       }
@@ -2632,6 +2657,7 @@ export function HomeRoute() {
         ]);
         setFeedback({
           scope: "catalog",
+          targetPackId: targetPack.id,
           type: "error",
           message,
         });
@@ -2740,23 +2766,25 @@ export function HomeRoute() {
     if (!engineAvailable || !selectedPack || selectedPack.canApply !== true) {
       return;
     }
-    const token = beginOperation("applying");
+    const targetPack = selectedPack;
+    const token = beginOperation("applying", targetPack.id);
     if (!token) {
       return;
     }
     setFeedback(null);
     try {
       const nextStatus = await applyCursorTheme(
-        selectedPack.nativeThemeId ?? selectedPack.id,
+        targetPack.nativeThemeId ?? targetPack.id,
       );
-      if (!isPackVerifiedActive(nextStatus, selectedPack)) {
-        throw new Error(`${selectedPack.variant} could not be verified.`);
+      if (!isPackVerifiedActive(nextStatus, targetPack)) {
+        throw new Error(`${targetPack.variant} could not be verified.`);
       }
       queryClient.setQueryData(["cursor-status"], nextStatus);
       setFeedback({
         scope: "catalog",
+        targetPackId: targetPack.id,
         type: "success",
-        message: `${selectedPack.variant} is active.`,
+        message: `${targetPack.variant} is active.`,
       });
     } catch (error) {
       try {
@@ -2766,6 +2794,7 @@ export function HomeRoute() {
       }
       setFeedback({
         scope: "catalog",
+        targetPackId: targetPack.id,
         type: "error",
         message: getCursorErrorMessage(error),
       });
@@ -2786,17 +2815,18 @@ export function HomeRoute() {
       if (!engineAvailable || !selectedPack || selectedPack.canApply !== true) {
         throw new Error("Cursor size customization is unavailable.");
       }
-      const token = beginOperation("sizing");
+      const targetPack = selectedPack;
+      const token = beginOperation("sizing", targetPack.id);
       if (!token) {
         throw new Error("Another cursor operation is already in progress.");
       }
       setFeedback(null);
       try {
         const activeSizeTarget = Boolean(
-          verifiedActive && matchesCursorPack(selectedPack, effectiveId),
+          verifiedActive && matchesCursorPack(targetPack, effectiveId),
         );
         const result = await setCursorThemeSize(
-          selectedPack.nativeThemeId ?? selectedPack.id,
+          targetPack.nativeThemeId ?? targetPack.id,
           sizePercentage,
         );
         queryClient.setQueryData(["cursor-themes"], (themes) =>
@@ -2813,6 +2843,7 @@ export function HomeRoute() {
         );
         setFeedback({
           scope: "catalog",
+          targetPackId: targetPack.id,
           type: "success",
           message: activeSizeTarget
             ? "Size saved. Reapply to update the active cursor."
@@ -2826,6 +2857,7 @@ export function HomeRoute() {
         ]);
         setFeedback({
           scope: "catalog",
+          targetPackId: targetPack.id,
           type: "error",
           message,
         });
@@ -3418,6 +3450,7 @@ export function HomeRoute() {
               }}
               selectedBySystem={selectedBySystem}
               operation={operation}
+              operationTargetPackId={operationTargetPackId}
               preferencesSaving={pendingPreferenceCount > 0}
               onApply={() => void handleApply()}
               onSizeCommit={handleSizeCommit}

@@ -294,14 +294,19 @@ function createWindow({ showWhenReady = true } = {}) {
     }
     showingFailure = true;
     failedWindows.add(mainWindow);
-    void mainWindow.loadURL(failurePage(description)).finally(() => {
-      if (
-        !mainWindow.isDestroyed() &&
-        requestedWindowPresentation.has(mainWindow)
-      ) {
-        mainWindow.show();
-      }
-    });
+    void mainWindow
+      .loadURL(failurePage(description))
+      .finally(() => {
+        if (
+          !mainWindow.isDestroyed() &&
+          requestedWindowPresentation.has(mainWindow)
+        ) {
+          mainWindow.show();
+        }
+      })
+      .catch((error) => {
+        console.error("Could not load the renderer failure page.", error);
+      });
   };
   const loadRenderer = async () => {
     if (mainWindow.isDestroyed()) {
@@ -586,17 +591,17 @@ async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
 
   const [installModule, importerModule] = await Promise.all([
     import("./main/cursor-import-install.js"),
-    import("./main/cursor-importer.js"),
+    import("./main/cursor-import-worker-client.js"),
   ]);
   const {
     createCursorImportStaging,
     installImportedArtifacts,
     removeCursorImportStaging,
   } = installModule;
-  const { importCursorSource } = importerModule;
+  const { importCursorSourceInWorker } = importerModule;
   const stagingDirectory = await createCursorImportStaging(importedPacksRoot);
   try {
-    const converted = await importCursorSource({
+    const converted = await importCursorSourceInWorker({
       sourcePath: selection.filePaths[0],
       stagingDirectory,
     });

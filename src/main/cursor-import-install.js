@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { isBoundedCursorManifestText } from "./cursor-manifest-text.js";
+
+export { isBoundedCursorManifestText } from "./cursor-manifest-text.js";
+
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -15,7 +19,6 @@ const MAX_IMPORTED_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_IMPORTED_CURSOR_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORTED_CURSOR_BYTES_TOTAL = 512 * 1024 * 1024;
 const MAX_IMPORTED_PREVIEW_BYTES = 16 * 1024 * 1024;
-const CONTROL_CHARACTER_PATTERN = /[\p{Cc}\p{Cf}]/u;
 export const CURSOR_IMPORT_TRANSACTION_PREFIXES = Object.freeze([
   ".import-",
   ".metadata-",
@@ -409,15 +412,6 @@ async function digestTree(tree, manifest = null) {
     hash.update("\0");
   }
   return hash.digest("hex");
-}
-
-export function isBoundedCursorManifestText(value, maximum) {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= maximum &&
-    !CONTROL_CHARACTER_PATTERN.test(value)
-  );
 }
 
 export function normalizeImportedCursorFamily(value) {

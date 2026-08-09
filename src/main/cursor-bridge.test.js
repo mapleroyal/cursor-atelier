@@ -19,6 +19,22 @@ function temporaryDirectory() {
   return root;
 }
 
+function completeNativeStatus(overrides = {}) {
+  return {
+    supported: true,
+    themeValid: true,
+    selectedThemeIdentifier: "OreoWhite",
+    desiredEnabled: false,
+    effectiveApplied: false,
+    currentSentinelsMatchTheme: false,
+    launchAtLoginDesired: false,
+    loginApprovalRequired: false,
+    loginItemRegistrationCurrent: false,
+    transactionPending: false,
+    ...overrides,
+  };
+}
+
 function writeImportedPack(
   importedPacksRoot,
   {
@@ -327,11 +343,9 @@ describe("cursor bridge imported manifests", () => {
           { Identifier: "ImportedAurora", DisplayName: "Imported Aurora" },
         ];
       }
-      return {
-        supported: true,
-        themeValid: true,
+      return completeNativeStatus({
         selectedThemeIdentifier: "ImportedAurora",
-      };
+      });
     });
     const bridge = createCursorBridge({
       nativePath: "injected",
@@ -397,16 +411,14 @@ describe("cursor bridge imported manifests", () => {
   it("tears down a selected active import and persists a bundled fallback before trashing it", async () => {
     const importedPacksRoot = temporaryDirectory();
     const pack = writeImportedPack(importedPacksRoot);
-    let rawStatus = {
-      supported: true,
-      themeValid: true,
+    let rawStatus = completeNativeStatus({
       selectedThemeIdentifier: "ImportedAurora",
       desiredEnabled: true,
       effectiveApplied: true,
       currentSentinelsMatchTheme: true,
       launchAtLoginDesired: true,
       loginItemRegistrationCurrent: true,
-    };
+    });
     const calls = [];
     const trashed = [];
     let artifactPresentDuringTeardown = null;
@@ -482,9 +494,7 @@ describe("cursor bridge imported manifests", () => {
       commandRunner: async ({ command, arguments: args }) => {
         calls.push([command, ...args]);
         if (command === "--status") {
-          return {
-            supported: true,
-            themeValid: true,
+          return completeNativeStatus({
             selectedThemeIdentifier: "ImportedAurora",
             effectiveNativeThemeId: "ImportedAurora",
             desiredEnabled: true,
@@ -492,7 +502,7 @@ describe("cursor bridge imported manifests", () => {
             currentSentinelsMatchTheme: true,
             launchAtLoginDesired: true,
             loginItemRegistrationCurrent: true,
-          };
+          });
         }
         if (command === "--teardown") {
           throw new Error("teardown failed");
@@ -526,14 +536,12 @@ describe("cursor bridge imported manifests", () => {
       commandRunner: async ({ command, arguments: args }) => {
         calls.push([command, ...args]);
         if (command === "--status") {
-          return {
-            supported: true,
-            themeValid: true,
+          return completeNativeStatus({
             selectedThemeIdentifier: "ImportedAurora",
             desiredEnabled: false,
             effectiveApplied: false,
             currentSentinelsMatchTheme: false,
-          };
+          });
         }
         if (command === "--select-theme" && args[0] === "OreoWhite") {
           throw new Error("selection failed");
@@ -578,16 +586,9 @@ describe("cursor bridge imported manifests", () => {
     async ({ launchDesired, priorRegistrationCurrent, expectedCommands }) => {
       const importedPacksRoot = temporaryDirectory();
       writeImportedPack(importedPacksRoot);
-      let rawStatus = {
-        supported: true,
-        themeValid: true,
+      let rawStatus = completeNativeStatus({
         selectedThemeIdentifier: "OreoWhite",
-        desiredEnabled: false,
-        effectiveApplied: false,
-        currentSentinelsMatchTheme: false,
-        launchAtLoginDesired: false,
-        loginItemRegistrationCurrent: false,
-      };
+      });
       const calls = [];
       const bridge = createCursorBridge({
         nativePath: "injected",
@@ -640,16 +641,14 @@ describe("cursor bridge imported manifests", () => {
   it("refuses desired-but-inactive deletion before fallback selection can apply it", async () => {
     const importedPacksRoot = temporaryDirectory();
     const pack = writeImportedPack(importedPacksRoot);
-    const rawStatus = {
-      supported: true,
-      themeValid: true,
+    const rawStatus = completeNativeStatus({
       selectedThemeIdentifier: "ImportedAurora",
       desiredEnabled: true,
       effectiveApplied: false,
       currentSentinelsMatchTheme: false,
       launchAtLoginDesired: true,
       loginItemRegistrationCurrent: true,
-    };
+    });
     const calls = [];
     const bridge = createCursorBridge({
       nativePath: "injected",
@@ -697,16 +696,12 @@ describe("cursor bridge imported manifests", () => {
         importedPacksRoot,
         commandRunner: async ({ command, arguments: args }) => {
           calls.push([command, ...args]);
-          return {
-            supported: true,
-            themeValid: true,
+          return completeNativeStatus({
             selectedThemeIdentifier: "ImportedAurora",
             desiredEnabled: false,
             effectiveApplied: persistedEffectiveApplied,
             currentSentinelsMatchTheme,
-            launchAtLoginDesired: false,
-            loginItemRegistrationCurrent: false,
-          };
+          });
         },
         trashImportedArtifact: vi.fn(),
       });
@@ -728,16 +723,14 @@ describe("cursor bridge imported manifests", () => {
   it("refuses deletion while the persisted live cursor cannot be identified", async () => {
     const importedPacksRoot = temporaryDirectory();
     writeImportedPack(importedPacksRoot);
-    let rawStatus = {
-      supported: true,
-      themeValid: true,
+    let rawStatus = completeNativeStatus({
       selectedThemeIdentifier: "OreoWhite",
       desiredEnabled: true,
       effectiveApplied: true,
       currentSentinelsMatchTheme: false,
       launchAtLoginDesired: true,
       loginItemRegistrationCurrent: true,
-    };
+    });
     const calls = [];
     const bridge = createCursorBridge({
       nativePath: "injected",
@@ -813,14 +806,9 @@ describe("cursor bridge imported manifests", () => {
         ) {
           throw new Error("preferences unavailable");
         }
-        return {
-          supported: true,
-          themeValid: true,
+        return completeNativeStatus({
           selectedThemeIdentifier: "OreoWhite",
-          desiredEnabled: false,
-          effectiveApplied: false,
-          currentSentinelsMatchTheme: false,
-        };
+        });
       },
       trashImportedArtifact: (artifactPath) =>
         fs.promises.rm(artifactPath, { recursive: true }),
@@ -1265,11 +1253,9 @@ describe("cursor bridge imported manifests", () => {
           releaseApply = resolve;
         });
       }
-      return {
-        supported: true,
-        themeValid: true,
+      return completeNativeStatus({
         selectedThemeIdentifier: "ImportedAurora",
-      };
+      });
     });
     const bridge = createCursorBridge({
       nativePath: "injected",
@@ -1315,13 +1301,11 @@ describe("cursor bridge imported manifests", () => {
           });
         }
       }
-      return {
-        supported: true,
-        themeValid: true,
+      return completeNativeStatus({
         effectiveApplied: true,
         currentSentinelsMatchTheme: true,
         selectedThemeIdentifier: "ImportedAurora",
-      };
+      });
     });
     const bridge = createCursorBridge({
       nativePath: "injected",
@@ -1365,6 +1349,7 @@ describe("cursor bridge live native state", () => {
       launchAtLoginDesired: 1,
       loginApprovalRequired: approvalRequired ? 1 : 0,
       loginItemRegistrationCurrent: 0,
+      transactionPending: 0,
     };
     const calls = [];
     const bridge = createCursorBridge({
@@ -1544,6 +1529,81 @@ describe("cursor bridge live native state", () => {
     expect(unnecessary.calls).toEqual([["--status"]]);
   });
 
+  it.each([
+    ["omits required diagnostics", {}],
+    [
+      "uses a non-boolean diagnostic",
+      completeNativeStatus({ transactionPending: "false" }),
+    ],
+    [
+      "uses a malformed diagnostic alongside a valid alias",
+      completeNativeStatus({
+        transactionPending: "false",
+        TransactionPending: false,
+      }),
+    ],
+    [
+      "uses conflicting duplicate diagnostics",
+      completeNativeStatus({
+        transactionPending: false,
+        TransactionPending: true,
+      }),
+    ],
+    [
+      "uses a malformed selected theme alongside a valid alias",
+      completeNativeStatus({
+        selectedThemeIdentifier: 7,
+        SelectedThemeIdentifier: "OreoWhite",
+      }),
+    ],
+    [
+      "uses conflicting duplicate selected themes",
+      completeNativeStatus({
+        selectedThemeIdentifier: "OreoWhite",
+        SelectedThemeIdentifier: "OreoBlue",
+      }),
+    ],
+    [
+      "omits the selected native theme",
+      completeNativeStatus({ selectedThemeIdentifier: null }),
+    ],
+  ])("fails closed when native status %s", async (_label, nativeStatus) => {
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      commandRunner: async () => nativeStatus,
+    });
+
+    await expect(bridge.status()).resolves.toMatchObject({
+      bridgeAvailable: true,
+      statusAvailable: false,
+      canApply: false,
+      effectiveApplied: false,
+      effectiveVariantId: null,
+    });
+  });
+
+  it("rejects a mutation when neither response provides complete status", async () => {
+    const commandRunner = vi.fn(async () => ({}));
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      commandRunner,
+    });
+
+    await expect(bridge.restore()).rejects.toMatchObject({
+      code: "NATIVE_STATUS_UNAVAILABLE",
+      status: {
+        statusAvailable: false,
+        canApply: false,
+        effectiveApplied: false,
+      },
+    });
+    expect(
+      commandRunner.mock.calls.map(([request]) => request.command),
+    ).toEqual(["--teardown", "--status"]);
+  });
+
   it("surfaces authoritative native inventory failures", async () => {
     const bridge = createCursorBridge({
       nativePath: "injected",
@@ -1587,14 +1647,9 @@ describe("cursor bridge live native state", () => {
         });
         throw error;
       }
-      return {
-        supported: true,
-        themeValid: true,
+      return completeNativeStatus({
         selectedThemeIdentifier: "OreoBlue",
-        desiredEnabled: false,
-        effectiveApplied: false,
-        currentSentinelsMatchTheme: false,
-      };
+      });
     });
     const bridge = createCursorBridge({
       nativePath: "injected",

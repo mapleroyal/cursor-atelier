@@ -45,6 +45,12 @@ NS_ASSUME_NONNULL_BEGIN
                                                error:
     (NSError * _Nullable * _Nullable)error;
 
+/// Returns a validated preview asset staged for an available theme. The
+/// graphical selector references this URL lazily and never decodes a full
+/// cursor resource merely to populate its menu.
++ (nullable NSURL *)themePreviewURLForTheme:
+    (NSDictionary<NSString *, id> *)theme;
+
 /// Returns the saved allowlisted theme, defaulting to the catalog's declared
 /// theme in the main bundle.
 + (NSString *)selectedThemeIdentifier;

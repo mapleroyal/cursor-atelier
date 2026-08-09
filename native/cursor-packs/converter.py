@@ -108,6 +108,12 @@ VECTOR_REPRESENTATION_SIZES = (*BASE_REPRESENTATION_SIZES, 128)
 MAX_REPRESENTATION_SIZE = 320
 DEFAULT_ANIMATION_DELAY_MS = 50.0
 MAX_HOTSPOT_ALIGNMENT_FRACTION = 0.25
+MAX_NATIVE_REPRESENTATIONS = 16
+MAX_NATIVE_SCALE = 10.0
+MAX_NATIVE_DECODED_DIMENSION = 8192
+MAX_NATIVE_ENCODED_CURSOR_BYTES = 16 * 1024 * 1024
+MAX_NATIVE_DECODED_CURSOR_BYTES = 64 * 1024 * 1024
+MAX_NATIVE_DECODED_THEME_BYTES = 128 * 1024 * 1024
 
 
 # Xcursor aliases and the spelling used by the requested sources differ.  We
@@ -351,10 +357,15 @@ def _normalized_hotspot(frame: Frame) -> tuple[float, float]:
     canvas_size = max(1, *frame.image.size)
 
     def coordinate(value: float) -> float:
-        normalized = float(value) / canvas_size
-        if not math.isfinite(normalized):
-            return 0.0
-        return min(1.0, max(0.0, normalized))
+        coordinate_value = float(value)
+        if not math.isfinite(coordinate_value) or not (
+            0.0 <= coordinate_value < canvas_size
+        ):
+            raise ValueError(
+                f"cursor hotspot {coordinate_value!r} is outside its "
+                f"{canvas_size}px canvas"
+            )
+        return coordinate_value / canvas_size
 
     return coordinate(frame.hotspot_x), coordinate(frame.hotspot_y)
 
@@ -2110,61 +2121,179 @@ def validate_theme(
     required_animated_roles: Sequence[str] = (),
     forbidden_rgb: Sequence[tuple[int, int, int]] = (),
 ) -> dict[str, Any]:
-    """Validate structure plus optional high-signal cursor semantics."""
+    """Validate the exact cursor contract consumed by the native engine."""
 
     theme = plistlib.loads(path.read_bytes())
-    if not isinstance(theme.get("Cursors"), Mapping):
+    cursors = theme.get("Cursors")
+    if not isinstance(cursors, Mapping):
         raise ValueError(f"{path}: missing Cursors dictionary")
-    missing = [identifier for identifier in MAC_CURSOR_IDENTIFIERS if identifier not in theme["Cursors"]]
-    if missing:
-        raise ValueError(f"{path}: missing cursor identifiers: {', '.join(missing)}")
-    for identifier, record in theme["Cursors"].items():
+    expected_identifiers = set(MAC_CURSOR_IDENTIFIERS)
+    actual_identifiers = set(cursors)
+    if actual_identifiers != expected_identifiers:
+        missing = sorted(expected_identifiers - actual_identifiers)
+        unexpected = sorted(
+            (str(identifier) for identifier in actual_identifiers - expected_identifiers)
+        )
+        details = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected {', '.join(unexpected)}")
+        raise ValueError(
+            f"{path}: cursor identifiers do not match the native contract "
+            f"({'; '.join(details)})"
+        )
+
+    def finite_number(
+        record: Mapping[str, Any],
+        identifier: str,
+        key: str,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        value = record.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < minimum
+            or float(value) > maximum
+        ):
+            raise ValueError(
+                f"{path}: {identifier} has invalid {key} value {value!r}"
+            )
+        return float(value)
+
+    forbidden = set(forbidden_rgb)
+    total_decoded_bytes = 0
+    for identifier in sorted(MAC_CURSOR_IDENTIFIERS):
+        record = cursors[identifier]
         if not isinstance(record, Mapping):
             raise ValueError(f"{path}: {identifier} is not a cursor record")
-        count = int(record.get("FrameCount", 0))
-        if count < 1 or count > MAX_MACOS_FRAMES:
-            raise ValueError(f"{path}: {identifier} invalid frame count {count}")
-        representations = record.get("Representations", [])
-        if not (len(BASE_REPRESENTATION_SIZES) <= len(representations) <= 16):
+        frame_value = finite_number(
+            record, identifier, "FrameCount", 1, MAX_MACOS_FRAMES
+        )
+        if not frame_value.is_integer():
+            raise ValueError(
+                f"{path}: {identifier} has non-integral FrameCount {frame_value}"
+            )
+        count = int(frame_value)
+        finite_number(record, identifier, "FrameDuration", 0.001, 10.0)
+        points_wide = finite_number(
+            record, identifier, "PointsWide", 1.0, 256.0
+        )
+        points_high = finite_number(
+            record, identifier, "PointsHigh", 1.0, 256.0
+        )
+        finite_number(
+            record,
+            identifier,
+            "HotSpotX",
+            0.0,
+            points_wide - 0.000001,
+        )
+        finite_number(
+            record,
+            identifier,
+            "HotSpotY",
+            0.0,
+            points_high - 0.000001,
+        )
+
+        representations = record.get("Representations")
+        if not isinstance(representations, list) or not (
+            len(BASE_REPRESENTATION_SIZES)
+            <= len(representations)
+            <= MAX_NATIVE_REPRESENTATIONS
+        ):
             raise ValueError(
                 f"{path}: {identifier} must have between "
-                f"{len(BASE_REPRESENTATION_SIZES)} and 16 representations"
+                f"{len(BASE_REPRESENTATION_SIZES)} and "
+                f"{MAX_NATIVE_REPRESENTATIONS} representations"
             )
-        widths: list[int] = []
+
+        encoded_bytes = 0
+        decoded_bytes = 0
+        previous_scale = 0.0
+        required_scales: set[float] = set()
         for representation in representations:
-            with Image.open(io.BytesIO(representation)) as image:
-                width = image.width
-                if not (32 <= width <= MAX_REPRESENTATION_SIZE):
-                    raise ValueError(
-                        f"{path}: {identifier} has unsupported representation width {width}"
-                    )
-                if image.size != (width, width * count):
-                    raise ValueError(
-                        f"{path}: {identifier} has invalid {width}px sheet {image.size}"
-                    )
-                widths.append(width)
-                if forbidden_rgb:
-                    forbidden = set(forbidden_rgb)
-                    if any(pixel[3] and pixel[:3] in forbidden for pixel in image.convert("RGBA").getdata()):
-                        raise ValueError(f"{path}: {identifier} retains an upstream placeholder color")
-        if widths != sorted(set(widths)) or not set(
-            BASE_REPRESENTATION_SIZES
-        ).issubset(widths):
+            if not isinstance(representation, bytes):
+                raise ValueError(
+                    f"{path}: {identifier} contains a non-data representation"
+                )
+            encoded_bytes += len(representation)
+            if encoded_bytes > MAX_NATIVE_ENCODED_CURSOR_BYTES:
+                raise ValueError(
+                    f"{path}: {identifier} exceeds the encoded PNG budget"
+                )
+            try:
+                with Image.open(io.BytesIO(representation)) as image:
+                    if image.format != "PNG" or image.n_frames != 1:
+                        raise ValueError(
+                            f"{path}: {identifier} contains a non-canonical PNG"
+                        )
+                    image.load()
+                    pixel_width, pixel_height = image.size
+                    if (
+                        pixel_width <= 0
+                        or pixel_height <= 0
+                        or pixel_width > MAX_NATIVE_DECODED_DIMENSION
+                        or pixel_height > MAX_NATIVE_DECODED_DIMENSION
+                    ):
+                        raise ValueError(
+                            f"{path}: {identifier} has invalid decoded dimensions "
+                            f"{image.size}"
+                        )
+                    image_bytes = pixel_width * pixel_height * 4
+                    decoded_bytes += image_bytes
+                    if decoded_bytes > MAX_NATIVE_DECODED_CURSOR_BYTES:
+                        raise ValueError(
+                            f"{path}: {identifier} exceeds the decoded image budget"
+                        )
+                    scale = pixel_width / points_wide
+                    height_scale = pixel_height / (points_high * count)
+                    if (
+                        scale < 1.0
+                        or scale > MAX_NATIVE_SCALE
+                        or scale <= previous_scale
+                        or abs(scale - height_scale) > 0.01
+                    ):
+                        raise ValueError(
+                            f"{path}: {identifier} has invalid sprite-sheet "
+                            f"dimensions {image.size}"
+                        )
+                    previous_scale = scale
+                    if scale in (1.0, 2.0, 3.0):
+                        required_scales.add(scale)
+                    if forbidden and any(
+                        pixel[3] and pixel[:3] in forbidden
+                        for pixel in image.convert("RGBA").getdata()
+                    ):
+                        raise ValueError(
+                            f"{path}: {identifier} retains an upstream "
+                            "placeholder color"
+                        )
+            except OSError as exc:
+                raise ValueError(
+                    f"{path}: {identifier} contains an undecodable PNG"
+                ) from exc
+        if required_scales != {1.0, 2.0, 3.0}:
             raise ValueError(
-                f"{path}: {identifier} representations must be unique, ascending, "
-                f"and include {'/'.join(map(str, BASE_REPRESENTATION_SIZES))}px: {widths}"
+                f"{path}: {identifier} is missing an exact 1x, 2x, or 3x image"
             )
-        hot_x = float(record.get("HotSpotX", -1.0))
-        hot_y = float(record.get("HotSpotY", -1.0))
-        if not (0.0 <= hot_x <= 32.0 and 0.0 <= hot_y <= 32.0):
-            raise ValueError(f"{path}: {identifier} hotspot is outside the 32-point cursor: {(hot_x, hot_y)}")
+        total_decoded_bytes += decoded_bytes
+        if total_decoded_bytes > MAX_NATIVE_DECODED_THEME_BYTES:
+            raise ValueError(f"{path}: theme exceeds the decoded image budget")
     for role in required_animated_roles:
         identifiers = [identifier for identifier, mapped in MAC_TO_ROLE.items() if mapped == role]
-        if not identifiers or all(int(theme["Cursors"][identifier].get("FrameCount", 1)) <= 1 for identifier in identifiers):
+        if not identifiers or all(
+            int(cursors[identifier].get("FrameCount", 1)) <= 1
+            for identifier in identifiers
+        ):
             raise ValueError(f"{path}: required {role} cursor is not animated")
     return {
         "Identifier": theme.get("Identifier"),
-        "Cursors": len(theme["Cursors"]),
+        "Cursors": len(cursors),
         "SHA256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
 

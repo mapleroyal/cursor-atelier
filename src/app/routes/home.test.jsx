@@ -10,6 +10,8 @@ import {
   getAuthoritativeStatus,
   getCursorErrorMessage,
   getPackRailNavigationIndex,
+  getPackScopedFeedback,
+  getPackScopedOperation,
   getSelectedStatusVariant,
   getStatusEnabled,
   getStatusVariant,
@@ -320,6 +322,30 @@ describe("cursor status presentation", () => {
 });
 
 describe("cursor rail behavior", () => {
+  it("shows targeted operation feedback only on its pack", () => {
+    const feedback = {
+      targetPackId: "white",
+      type: "success",
+      message: "White is active.",
+    };
+
+    expect(getPackScopedFeedback(feedback, "white")).toBe(feedback);
+    expect(getPackScopedFeedback(feedback, "gray")).toBeNull();
+    expect(getPackScopedFeedback({ type: "error" }, "gray")).toEqual({
+      type: "error",
+    });
+  });
+
+  it("shows targeted pack-operation labels only on their pack", () => {
+    for (const operation of ["applying", "sizing", "assigning-light"]) {
+      expect(getPackScopedOperation(operation, "white", "white")).toBe(
+        operation,
+      );
+      expect(getPackScopedOperation(operation, "white", "gray")).toBe("idle");
+    }
+    expect(getPackScopedOperation("restoring", null, "gray")).toBe("restoring");
+  });
+
   it("resolves randomization pools in preference order without duplicate or stale rows", () => {
     const packs = [
       {

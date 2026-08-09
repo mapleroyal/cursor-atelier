@@ -2,7 +2,7 @@ import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 
 import { cn } from "@/lib/utils";
 
-function TooltipProvider({ delay = 0, ...props }) {
+function TooltipProvider({ delay = 500, ...props }) {
   return (
     <TooltipPrimitive.Provider
       data-slot="tooltip-provider"
@@ -22,12 +22,12 @@ function Tooltip({ disableHoverablePopup = true, ...props }) {
   );
 }
 
-function TooltipTrigger({ delay = 0, closeDelay = 0, ...props }) {
+function TooltipTrigger({ delay, closeDelay = 0, ...props }) {
   return (
     <TooltipPrimitive.Trigger
       data-slot="tooltip-trigger"
-      delay={delay}
       closeDelay={closeDelay}
+      {...(delay === undefined ? {} : { delay })}
       {...props}
     />
   );

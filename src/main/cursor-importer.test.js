@@ -17,6 +17,7 @@ import {
   DEFAULT_IMPORT_LIMITS,
   importCursorSource,
 } from "./cursor-importer";
+import { isBoundedCursorManifestText } from "./cursor-import-install.js";
 
 const temporaryDirectories = [];
 const corpusRoot = path.resolve("native/cursor-packs/sources");
@@ -711,7 +712,7 @@ describe("cursor importer source safety and packaging", () => {
     expect(Math.min(...frameCounts("openhand"))).toBeGreaterThan(1);
   });
 
-  it("discovers a conventional 132-variant Xcursor tree above the old cap", async () => {
+  it("streams a conventional 132-variant Xcursor tree without retaining decoded variants", async () => {
     const root = temporaryDirectory();
     const source = path.join(root, "Nordzy-style download");
     const cursorBytes = fs.readFileSync(path.join(remusDirectory, "default"));
@@ -725,15 +726,20 @@ describe("cursor importer source safety and packaging", () => {
       fs.writeFileSync(path.join(cursorRoot, "left_ptr"), cursorBytes);
     }
 
+    const displayNames = [];
     const discovered = await __testing.discoverVariants(
       await __testing.scanDirectory(source, DEFAULT_IMPORT_LIMITS),
       "xcursor-directory",
       DEFAULT_IMPORT_LIMITS,
+      async (variant, metadata) => {
+        expect(metadata.variants).toHaveLength(0);
+        displayNames.push(variant.displayName);
+      },
     );
 
     expect(discovered.format).toBe("xcursor-directory");
-    expect(discovered.variants).toHaveLength(132);
-    expect(discovered.variants.map((variant) => variant.displayName)).toEqual(
+    expect(discovered.variants).toHaveLength(0);
+    expect(displayNames).toEqual(
       Array.from(
         { length: 132 },
         (_, index) => `Theme ${String(index).padStart(3, "0")}`,
@@ -1122,6 +1128,54 @@ describe("cursor importer source safety and packaging", () => {
     expect(parsed.Cursors["com.apple.coregraphics.Arrow"].FrameCount).toBe(1);
   });
 
+  it("enforces the cumulative generated-artifact budget while streaming", async () => {
+    const root = temporaryDirectory();
+    const themeRoot = path.join(root, "Bounded Theme");
+    const cursorRoot = path.join(themeRoot, "cursors");
+    const staging = path.join(root, "staging");
+    fs.mkdirSync(cursorRoot, { recursive: true });
+    fs.copyFileSync(
+      path.join(remusDirectory, "default"),
+      path.join(cursorRoot, "left_ptr"),
+    );
+
+    await expect(
+      importCursorSource({
+        sourcePath: themeRoot,
+        stagingDirectory: staging,
+        limits: { maxGeneratedBytes: 1 },
+      }),
+    ).rejects.toMatchObject({
+      code: "LIMIT_EXCEEDED",
+      message: expect.stringContaining("import output limit"),
+    });
+    expect(fs.readdirSync(staging)).toHaveLength(0);
+  });
+
+  it("bounds cumulative decoded Xcursor artwork within one variant", async () => {
+    const root = temporaryDirectory();
+    const themeRoot = path.join(root, "Decoded Bound Theme");
+    const cursorRoot = path.join(themeRoot, "cursors");
+    const staging = path.join(root, "staging");
+    fs.mkdirSync(cursorRoot, { recursive: true });
+    fs.copyFileSync(
+      path.join(remusDirectory, "default"),
+      path.join(cursorRoot, "left_ptr"),
+    );
+
+    await expect(
+      importCursorSource({
+        sourcePath: themeRoot,
+        stagingDirectory: staging,
+        limits: { maxDecodedSourceBytesPerVariant: 1 },
+      }),
+    ).rejects.toMatchObject({
+      code: "LIMIT_EXCEEDED",
+      message: expect.stringContaining("decoded artwork limit"),
+    });
+    expect(fs.readdirSync(staging)).toHaveLength(0);
+  });
+
   it("rejects symlink aliases that escape their cursors directory", async () => {
     const root = temporaryDirectory();
     const cursorRoot = path.join(root, "Theme", "cursors");
@@ -1284,6 +1338,28 @@ describe("cursor importer source safety and packaging", () => {
     expect(alphaAt(16, 26)).toBe(0);
   });
 
+  it("bounds cumulative decoded plist artwork within one variant", async () => {
+    const root = temporaryDirectory();
+    const capePath = path.join(root, "decoded-bound.cape");
+    writeCape(capePath, {
+      "com.apple.coregraphics.Arrow": plistCursorRecord({
+        pointsWide: 32,
+        representations: [await solidPng(32, 32, [80, 140, 220, 255])],
+      }),
+    });
+
+    await expect(
+      importCursorSource({
+        sourcePath: capePath,
+        stagingDirectory: path.join(root, "staging"),
+        limits: { maxDecodedSourceBytesPerVariant: 1 },
+      }),
+    ).rejects.toMatchObject({
+      code: "LIMIT_EXCEEDED",
+      message: expect.stringContaining("decoded artwork limit"),
+    });
+  });
+
   it("accepts coherent 64-point Cape roles with meaningful hotspots", async () => {
     const root = temporaryDirectory();
     const capePath = path.join(root, "coherent-64.cape");
@@ -1436,5 +1512,15 @@ describe("cursor importer source safety and packaging", () => {
   it("uses typed errors for callers", () => {
     const error = new CursorImportError("EXAMPLE", "example");
     expect(error).toMatchObject({ name: "CursorImportError", code: "EXAMPLE" });
+  });
+
+  it("sanitizes every control character rejected by installed manifests", () => {
+    const displayName = __testing.safeText(
+      "Studio\u0085Cursor\u200bPack\u202e",
+      "Imported Cursor",
+    );
+
+    expect(displayName).toBe("Studio Cursor Pack");
+    expect(isBoundedCursorManifestText(displayName, 256)).toBe(true);
   });
 });

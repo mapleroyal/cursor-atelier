@@ -49,4 +49,27 @@ describe("renderer navigation", () => {
     expect(navigation.markReady(target)).toBe(false);
     expect(target.send).not.toHaveBeenCalled();
   });
+
+  it("retains pending navigation until a renderer send succeeds", () => {
+    const error = new Error("renderer unavailable");
+    const onSendError = vi.fn();
+    const target = webContents();
+    target.send
+      .mockImplementationOnce(() => {
+        throw error;
+      })
+      .mockImplementationOnce(() => undefined);
+    const navigation = createRendererNavigation({ onSendError });
+
+    navigation.queue(target, "settings");
+    expect(navigation.markReady(target)).toBe(false);
+    expect(onSendError).toHaveBeenCalledWith(error, {
+      webContents: target,
+      destination: "settings",
+    });
+
+    expect(navigation.markReady(target)).toBe(true);
+    expect(target.send).toHaveBeenCalledTimes(2);
+    expect(target.send).toHaveBeenLastCalledWith("app:navigate", "settings");
+  });
 });
