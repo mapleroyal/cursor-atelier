@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
 
 export default defineConfig([
   {
@@ -35,6 +36,10 @@ export default defineConfig([
       "object-shorthand": ["error", "always"],
       "no-console": ["warn", { allow: ["warn", "error"] }],
     },
+  },
+  {
+    ...reactHooks.configs.flat.recommended,
+    files: ["src/**/*.{js,jsx}"],
   },
   {
     files: ["src/main.js"],

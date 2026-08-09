@@ -1,22 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
-  ArrowDown01Icon,
   ArrowLeft01Icon,
   Cancel01Icon,
   InformationCircleIcon,
-  Settings02Icon,
-  ShuffleIcon,
 } from "@hugeicons/core-free-icons";
 
 import { AppearanceModeSelector } from "@/components/appearance-mode-selector";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -43,6 +35,14 @@ const SCHEDULE_OPTIONS = [
   ["daily", "Daily"],
   ["times", "Specific times"],
 ];
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function areValidTimes(times) {
+  return (
+    times.every((time) => TIME_PATTERN.test(time)) &&
+    new Set(times).size === times.length
+  );
+}
 
 function getNextTime(times) {
   const occupied = new Set(times);
@@ -57,41 +57,40 @@ function getNextTime(times) {
   return null;
 }
 
-function SettingsSection({ icon, title, children }) {
+function SettingsSection({ title, children }) {
   return (
-    <Collapsible className="rounded-3xl border border-border/70">
-      <CollapsibleTrigger className="group flex w-full items-center justify-between rounded-3xl px-4 py-3 text-left font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30">
-        <span className="inline-flex items-center gap-2">
-          <HugeiconsIcon
-            icon={icon}
-            strokeWidth={2}
-            className="size-4 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <span>{title}</span>
-        </span>
-        <HugeiconsIcon
-          icon={ArrowDown01Icon}
-          strokeWidth={2}
-          className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
-          aria-hidden="true"
-        />
-      </CollapsibleTrigger>
-      <CollapsibleContent animated className="grid gap-4 px-4 pb-4">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
+    <section className="grid gap-5 py-6 first:pt-0 last:pb-0">
+      <h2 className="text-title-md">{title}</h2>
+      {children}
+    </section>
   );
 }
 
-function IntervalHoursInput({ value, onValueChange }) {
-  const [draft, setDraft] = useState(String(value));
+function saveDraft(save, restore) {
+  try {
+    void Promise.resolve(save()).then((saved) => {
+      if (saved === false) {
+        restore();
+      }
+    }, restore);
+  } catch {
+    restore();
+  }
+}
 
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
+function IntervalHoursInput({ value, disabled, onValueChange }) {
+  const [draft, setDraft] = useState(String(value));
+  const cancelBlurRef = useRef(false);
 
   const commit = () => {
+    if (cancelBlurRef.current) {
+      cancelBlurRef.current = false;
+      return;
+    }
+    if (!draft.trim()) {
+      setDraft(String(value));
+      return;
+    }
     const parsed = Number(draft);
     if (!Number.isFinite(parsed)) {
       setDraft(String(value));
@@ -99,7 +98,12 @@ function IntervalHoursInput({ value, onValueChange }) {
     }
     const next = Math.min(720, Math.max(0.25, Math.round(parsed * 4) / 4));
     setDraft(String(next));
-    onValueChange(next);
+    if (next !== Number(value)) {
+      saveDraft(
+        () => onValueChange(next),
+        () => setDraft(String(value)),
+      );
+    }
   };
 
   return (
@@ -112,6 +116,7 @@ function IntervalHoursInput({ value, onValueChange }) {
         max="720"
         step="0.25"
         value={draft}
+        disabled={disabled}
         className="text-right type-numeric"
         onChange={(event) => setDraft(event.currentTarget.value)}
         onBlur={commit}
@@ -120,6 +125,7 @@ function IntervalHoursInput({ value, onValueChange }) {
             event.currentTarget.blur();
           }
           if (event.key === "Escape") {
+            cancelBlurRef.current = true;
             setDraft(String(value));
             event.currentTarget.blur();
           }
@@ -130,9 +136,157 @@ function IntervalHoursInput({ value, onValueChange }) {
   );
 }
 
-function ScheduleFields({ schedule, onChange }) {
+function DailyTimeInput({ value, disabled, onValueChange }) {
+  const [draft, setDraft] = useState(value);
+  const cancelBlurRef = useRef(false);
+
+  const commit = () => {
+    if (cancelBlurRef.current) {
+      cancelBlurRef.current = false;
+      return;
+    }
+    if (!TIME_PATTERN.test(draft)) {
+      setDraft(value);
+      return;
+    }
+    if (draft !== value) {
+      saveDraft(
+        () => onValueChange(draft),
+        () => setDraft(value),
+      );
+    }
+  };
+
+  return (
+    <Input
+      id="random-daily-time"
+      type="time"
+      value={draft}
+      className="type-numeric sm:w-52"
+      disabled={disabled}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          cancelBlurRef.current = true;
+          setDraft(value);
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+function SpecificTimesInput({ times, disabled, onValueChange }) {
+  const [rows, setRows] = useState(() =>
+    times.map((time, index) => ({ id: `${index}-${time}`, value: time })),
+  );
+  const canceledBlurRef = useRef(new Set());
+  const rowValues = rows.map((row) => row.value);
+  const rowsAreValid = areValidTimes(rowValues);
+  const nextTime = rowsAreValid ? getNextTime(rowValues) : null;
+
+  const restoreRows = () =>
+    setRows(
+      times.map((time, index) => ({ id: `${index}-${time}`, value: time })),
+    );
+
+  const updateRow = (id, value) => {
+    setRows((current) =>
+      current.map((row) => (row.id === id ? { ...row, value } : row)),
+    );
+  };
+
+  const commitRows = (rowId) => {
+    if (canceledBlurRef.current.delete(rowId)) {
+      return;
+    }
+    const nextTimes = rows.map((row) => row.value);
+    if (!areValidTimes(nextTimes)) {
+      restoreRows();
+      return;
+    }
+    if (nextTimes.some((time, index) => time !== times[index])) {
+      saveDraft(() => onValueChange(nextTimes), restoreRows);
+    }
+  };
+
+  return (
+    <div className="w-full min-w-0 space-y-2 sm:w-52">
+      {rows.map((row, index) => (
+        <div key={row.id} className="flex min-w-0 items-center gap-1.5">
+          <Input
+            type="time"
+            aria-label={`Random cursor time ${index + 1}`}
+            value={row.value}
+            className="type-numeric"
+            disabled={disabled}
+            onChange={(event) => updateRow(row.id, event.currentTarget.value)}
+            onBlur={() => commitRows(row.id)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                canceledBlurRef.current.add(row.id);
+                updateRow(row.id, times[index] ?? "");
+                event.currentTarget.blur();
+              }
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Remove ${row.value || `time ${index + 1}`}`}
+            disabled={
+              disabled ||
+              rows.length <= 1 ||
+              !areValidTimes(
+                rows
+                  .filter((candidate) => candidate.id !== row.id)
+                  .map((candidate) => candidate.value),
+              )
+            }
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              const nextTimes = rows
+                .filter((candidate) => candidate.id !== row.id)
+                .map((candidate) => candidate.value);
+              saveDraft(() => onValueChange(nextTimes), restoreRows);
+            }}
+          >
+            <HugeiconsIcon
+              icon={Cancel01Icon}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        disabled={disabled || !rowsAreValid || !nextTime}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          if (!nextTime) {
+            return;
+          }
+          saveDraft(() => onValueChange([...rowValues, nextTime]), restoreRows);
+        }}
+      >
+        <HugeiconsIcon icon={Add01Icon} strokeWidth={2} aria-hidden="true" />
+        Add Time
+      </Button>
+    </div>
+  );
+}
+
+function ScheduleFields({ schedule, disabled, onChange }) {
   const times = Array.isArray(schedule.times) ? schedule.times : [];
-  const nextTime = getNextTime(times);
 
   if (schedule.mode === "interval") {
     return (
@@ -141,7 +295,9 @@ function ScheduleFields({ schedule, onChange }) {
           <FieldLabel htmlFor="random-interval">Interval</FieldLabel>
         </FieldContent>
         <IntervalHoursInput
+          key={schedule.intervalHours}
           value={schedule.intervalHours}
+          disabled={disabled}
           onValueChange={(intervalHours) => onChange({ intervalHours })}
         />
       </Field>
@@ -154,14 +310,11 @@ function ScheduleFields({ schedule, onChange }) {
         <FieldContent>
           <FieldLabel htmlFor="random-daily-time">Time</FieldLabel>
         </FieldContent>
-        <Input
-          id="random-daily-time"
-          type="time"
+        <DailyTimeInput
+          key={schedule.dailyTime}
           value={schedule.dailyTime}
-          className="type-numeric sm:w-52"
-          onChange={(event) =>
-            onChange({ dailyTime: event.currentTarget.value })
-          }
+          disabled={disabled}
+          onValueChange={(dailyTime) => onChange({ dailyTime })}
         />
       </Field>
     );
@@ -176,51 +329,12 @@ function ScheduleFields({ schedule, onChange }) {
       <FieldContent>
         <FieldLabel>Times</FieldLabel>
       </FieldContent>
-      <div className="w-full min-w-0 space-y-2 sm:w-52">
-        {times.map((time, index) => (
-          <div key={index} className="flex min-w-0 items-center gap-1.5">
-            <Input
-              type="time"
-              aria-label={`Random cursor time ${index + 1}`}
-              value={time}
-              className="type-numeric"
-              onChange={(event) => {
-                const nextTimes = [...times];
-                nextTimes[index] = event.currentTarget.value;
-                onChange({ times: nextTimes });
-              }}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Remove ${time}`}
-              disabled={times.length <= 1}
-              onClick={() =>
-                onChange({
-                  times: times.filter((_, timeIndex) => timeIndex !== index),
-                })
-              }
-            >
-              <HugeiconsIcon
-                icon={Cancel01Icon}
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-            </Button>
-          </div>
-        ))}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={!nextTime}
-          onClick={() => nextTime && onChange({ times: [...times, nextTime] })}
-        >
-          <HugeiconsIcon icon={Add01Icon} strokeWidth={2} aria-hidden="true" />
-          Add Time
-        </Button>
-      </div>
+      <SpecificTimesInput
+        key={times.join("|")}
+        times={times}
+        disabled={disabled}
+        onValueChange={(nextTimes) => onChange({ times: nextTimes })}
+      />
     </Field>
   );
 }
@@ -233,6 +347,14 @@ export function SettingsScreen({
   onChange,
   onRandomize,
   randomizing,
+  busy,
+  canRandomize,
+  preferencesAvailable,
+  preferencesError,
+  preferencesErrorMessage,
+  preferencesRetrying,
+  onRetryPreferences,
+  themeError,
   feedback,
   onClose,
 }) {
@@ -261,20 +383,24 @@ export function SettingsScreen({
     typeof randomizationFeedback === "string"
       ? randomizationFeedback
       : randomizationFeedback?.message;
+  const settingsDisabled = busy || !preferencesAvailable;
+  const displayedPreferenceError = preferencesError
+    ? preferencesErrorMessage
+    : preferenceError?.message;
 
   return (
     <section
       aria-labelledby="settings-title"
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
     >
-      <header className="shrink-0 border-b border-border/60 px-4 sm:px-6 lg:px-8">
-        <div className="relative mx-auto flex h-14 max-w-3xl items-center gap-2">
+      <header className="titlebar-drag relative h-12 shrink-0 border-b border-border/60 pr-3 pl-[78px] sm:pr-4">
+        <div className="mx-auto flex h-full max-w-3xl items-center gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             aria-label="Back"
-            className="-ml-2 shrink-0"
+            className="titlebar-no-drag shrink-0"
             onClick={onClose}
           >
             <HugeiconsIcon
@@ -290,7 +416,7 @@ export function SettingsScreen({
             Settings
           </h1>
           <AppearanceModeSelector
-            className="ml-auto"
+            className="titlebar-no-drag ml-auto"
             value={appearanceMode}
             onValueChange={onAppearanceModeChange}
           />
@@ -298,200 +424,245 @@ export function SettingsScreen({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto grid w-full max-w-3xl gap-4 py-6">
-          {preferenceError ? (
-            <p role="alert" className="text-body-sm text-destructive">
-              {preferenceError.message}
-            </p>
-          ) : null}
-
-          <SettingsSection icon={Settings02Icon} title="General">
-            <Field orientation="horizontal">
-              <FieldContent>
-                <div className="flex items-center gap-1.5">
-                  <FieldLabel htmlFor="appearance-automatic-switching">
-                    Switch Cursors with System Appearance
-                  </FieldLabel>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label="About automatic cursor switching"
-                            className="-my-1 text-muted-foreground"
-                          />
-                        }
-                      >
-                        <HugeiconsIcon
-                          icon={InformationCircleIcon}
-                          strokeWidth={2}
-                          aria-hidden="true"
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-72">
-                        Runs after its window closes, even without the menu bar
-                        item. macOS Login Items controls launch at sign-in.
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              </FieldContent>
-              <Switch
-                id="appearance-automatic-switching"
-                checked={preferences?.appearance?.automaticSwitching === true}
-                onCheckedChange={(automaticSwitching) =>
-                  onChange({ appearance: { automaticSwitching } })
-                }
-              />
-            </Field>
-
-            <Field orientation="horizontal">
-              <FieldContent>
-                <FieldLabel htmlFor="menu-bar-visible">
-                  Show in Menu Bar
-                </FieldLabel>
-              </FieldContent>
-              <Switch
-                id="menu-bar-visible"
-                checked={preferences?.menuBar?.visible !== false}
-                onCheckedChange={(visible) =>
-                  onChange({ menuBar: { visible } })
-                }
-              />
-            </Field>
-          </SettingsSection>
-
-          <SettingsSection icon={ShuffleIcon} title="Randomization">
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-              {feedbackMessage ? (
-                <p
-                  role={
-                    randomizationFeedback?.type === "error" ? "alert" : "status"
-                  }
-                  className={cn(
-                    "mr-auto min-w-0 text-body-sm text-muted-foreground",
-                    randomizationFeedback?.type === "error" &&
-                      "text-destructive",
-                  )}
+        <div className="mx-auto w-full max-w-3xl py-6">
+          {displayedPreferenceError || themeError ? (
+            <div className="grid gap-2 pb-5">
+              {displayedPreferenceError ? (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 text-body-sm text-destructive"
                 >
-                  {feedbackMessage}
+                  <span>{displayedPreferenceError}</span>
+                  {preferencesError ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      className="-my-1"
+                      onClick={onRetryPreferences}
+                      disabled={preferencesRetrying}
+                    >
+                      {preferencesRetrying ? "Retrying…" : "Retry"}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {themeError ? (
+                <p role="alert" className="text-body-sm text-destructive">
+                  {themeError}
                 </p>
               ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={
-                  randomizing ||
-                  (randomization.source === "family" && !randomization.family)
-                }
-                onClick={onRandomize}
-              >
-                {randomizing ? "Randomizing…" : "Randomize Now"}
-              </Button>
             </div>
+          ) : null}
 
-            <Field orientation="responsive">
-              <FieldContent>
-                <FieldLabel htmlFor="random-source">Source</FieldLabel>
-              </FieldContent>
-              <Select
-                value={randomization.source ?? "all"}
-                onValueChange={(source) => {
-                  onChange({
-                    randomization: {
-                      source,
-                      ...(source === "family" && !randomization.family
-                        ? { family: families[0] ?? null }
-                        : {}),
-                    },
-                  });
-                }}
-              >
-                <SelectTrigger id="random-source" className="w-full sm:w-52">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="all">Light &amp; Dark Pools</SelectItem>
-                    <SelectItem value="favorites">Favorites</SelectItem>
-                    <SelectItem value="family">Family</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
+          <div className="divide-y divide-border/60">
+            <SettingsSection title="General">
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <div className="flex items-center gap-1.5">
+                    <FieldLabel htmlFor="appearance-automatic-switching">
+                      Switch Cursors with System Appearance
+                    </FieldLabel>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label="About automatic cursor switching"
+                              className="-my-1 text-muted-foreground"
+                            />
+                          }
+                        >
+                          <HugeiconsIcon
+                            icon={InformationCircleIcon}
+                            strokeWidth={2}
+                            aria-hidden="true"
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-72">
+                          Runs after its window closes, even without the menu
+                          bar item. macOS Login Items controls launch at
+                          sign-in.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                </FieldContent>
+                <Switch
+                  id="appearance-automatic-switching"
+                  checked={preferences?.appearance?.automaticSwitching === true}
+                  disabled={settingsDisabled}
+                  onCheckedChange={(automaticSwitching) =>
+                    onChange({ appearance: { automaticSwitching } })
+                  }
+                />
+              </Field>
 
-            {randomization.source === "family" ? (
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor="menu-bar-visible">
+                    Show in Menu Bar
+                  </FieldLabel>
+                </FieldContent>
+                <Switch
+                  id="menu-bar-visible"
+                  checked={preferences?.menuBar?.visible !== false}
+                  disabled={settingsDisabled}
+                  onCheckedChange={(visible) =>
+                    onChange({ menuBar: { visible } })
+                  }
+                />
+              </Field>
+            </SettingsSection>
+
+            <SettingsSection title="Randomization">
+              <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
+                {feedbackMessage ? (
+                  <p
+                    role={
+                      randomizationFeedback?.type === "error"
+                        ? "alert"
+                        : "status"
+                    }
+                    className={cn(
+                      "mr-auto min-w-0 text-body-sm text-muted-foreground",
+                      randomizationFeedback?.type === "error" &&
+                        "text-destructive",
+                    )}
+                  >
+                    {feedbackMessage}
+                  </p>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    settingsDisabled ||
+                    !canRandomize ||
+                    randomizing ||
+                    (randomization.source === "family" && !randomization.family)
+                  }
+                  onClick={onRandomize}
+                >
+                  {randomizing ? "Randomizing…" : "Randomize Now"}
+                </Button>
+              </div>
+
               <Field orientation="responsive">
                 <FieldContent>
-                  <FieldLabel htmlFor="random-family">Family</FieldLabel>
+                  <FieldLabel htmlFor="random-source">Source</FieldLabel>
                 </FieldContent>
                 <Select
-                  value={randomization.family || undefined}
-                  disabled={families.length === 0}
-                  onValueChange={(family) =>
+                  value={randomization.source ?? "all"}
+                  disabled={settingsDisabled}
+                  onValueChange={(source) => {
                     onChange({
                       randomization: {
-                        family: family || null,
+                        source,
+                        ...(source === "family" && !randomization.family
+                          ? { family: families[0] ?? null }
+                          : {}),
+                      },
+                    });
+                  }}
+                >
+                  <SelectTrigger id="random-source" className="w-full sm:w-52">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="all">
+                        Light &amp; Dark Pools
+                      </SelectItem>
+                      <SelectItem value="favorites">Favorites</SelectItem>
+                      <SelectItem value="family">Family</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              {randomization.source === "family" ? (
+                <Field orientation="responsive">
+                  <FieldContent>
+                    <FieldLabel htmlFor="random-family">Family</FieldLabel>
+                  </FieldContent>
+                  <Select
+                    value={randomization.family || undefined}
+                    disabled={settingsDisabled || families.length === 0}
+                    onValueChange={(family) =>
+                      onChange({
+                        randomization: {
+                          family: family || null,
+                        },
+                      })
+                    }
+                  >
+                    <SelectTrigger
+                      id="random-family"
+                      className="w-full sm:w-52"
+                    >
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {families.map((family) => (
+                          <SelectItem key={family} value={family}>
+                            {family}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              ) : null}
+
+              <Field orientation="responsive">
+                <FieldContent>
+                  <FieldLabel htmlFor="random-schedule">Schedule</FieldLabel>
+                </FieldContent>
+                <Select
+                  value={schedule.mode ?? "off"}
+                  disabled={settingsDisabled}
+                  onValueChange={(mode) =>
+                    onChange({
+                      randomization: {
+                        schedule: { mode },
                       },
                     })
                   }
                 >
-                  <SelectTrigger id="random-family" className="w-full sm:w-52">
-                    <SelectValue placeholder="None" />
+                  <SelectTrigger
+                    id="random-schedule"
+                    className="w-full sm:w-52"
+                  >
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      {families.map((family) => (
-                        <SelectItem key={family} value={family}>
-                          {family}
+                      {SCHEDULE_OPTIONS.map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
                         </SelectItem>
                       ))}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
-            ) : null}
-
-            <Field orientation="responsive">
-              <FieldContent>
-                <FieldLabel htmlFor="random-schedule">Schedule</FieldLabel>
-              </FieldContent>
-              <Select
-                value={schedule.mode ?? "off"}
-                onValueChange={(mode) =>
+              <ScheduleFields
+                schedule={schedule}
+                disabled={settingsDisabled}
+                onChange={(schedulePatch) =>
                   onChange({
-                    randomization: {
-                      schedule: { mode },
-                    },
+                    randomization: { schedule: schedulePatch },
                   })
                 }
-              >
-                <SelectTrigger id="random-schedule" className="w-full sm:w-52">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {SCHEDULE_OPTIONS.map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-            <ScheduleFields
-              schedule={schedule}
-              onChange={(schedulePatch) =>
-                onChange({
-                  randomization: { schedule: schedulePatch },
-                })
-              }
-            />
-          </SettingsSection>
+              />
+            </SettingsSection>
+          </div>
         </div>
       </div>
     </section>

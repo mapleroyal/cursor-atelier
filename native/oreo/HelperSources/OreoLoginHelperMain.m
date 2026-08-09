@@ -39,6 +39,16 @@ static NSString * const OreoStatusChangedNotification =
     if (status.length == 0) {
         return;
     }
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    NSString *priorStatus =
+        [defaults stringForKey:OreoCursorLastStatusDefaultsKey];
+    NSString *priorSource =
+        [defaults stringForKey:OreoCursorLastStatusSourceDefaultsKey];
+    if ([priorStatus isEqualToString:status] &&
+        [priorSource isEqualToString:OreoCursorStatusSourceLogin] &&
+        [defaults boolForKey:OreoCursorLastStatusIsErrorDefaultsKey] == isError) {
+        return;
+    }
     if (OreoCursorSaveStatus(status, isError,
                              OreoCursorStatusSourceLogin)) {
         [[NSDistributedNotificationCenter defaultCenter]
@@ -54,19 +64,18 @@ static NSString * const OreoStatusChangedNotification =
         initWithThemeIdentifier:[OreoCursorEngine selectedThemeIdentifier]
                  resourceBundle:self.hostBundle
                           error:error];
-    if (!candidate.supported || !candidate.themeValid) {
-        self.engine = candidate;
-        return NO;
-    }
     self.engine = candidate;
-    return YES;
+    // A supported engine can recover or restore stock state even when the
+    // selected theme resource itself is missing or invalid.
+    return candidate.supported;
 }
 
 - (BOOL)bringStateCurrent:(NSError **)error {
-    [OreoCursorDefaults() synchronize];
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    [defaults synchronize];
     NSString *selected = [OreoCursorEngine selectedThemeIdentifier];
     BOOL effective =
-        [OreoCursorDefaults() boolForKey:OreoCursorEffectiveDefaultsKey];
+        [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
     NSInteger expectedSize = effective
         ? [OreoCursorEngine effectiveSizePercentage]
         : [OreoCursorEngine sizePercentageForThemeIdentifier:selected];
@@ -76,7 +85,11 @@ static NSString * const OreoStatusChangedNotification =
         !self.engine.themeValid ||
         ![self.engine.themeIdentifier isEqualToString:selected] ||
         self.engine.themeSizePercentage != expectedSize) {
-        if (![self reloadEngine:error]) {
+        NSError *reloadError = nil;
+        if (![self reloadEngine:&reloadError]) {
+            if (error) {
+                *error = reloadError;
+            }
             return NO;
         }
         reloaded = YES;
@@ -98,7 +111,20 @@ static NSString * const OreoStatusChangedNotification =
     }
 
     BOOL desired =
-        [OreoCursorDefaults() boolForKey:OreoCursorEnabledDefaultsKey];
+        [defaults boolForKey:OreoCursorEnabledDefaultsKey];
+    effective = [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
+    if (!self.engine.themeValid) {
+        // Restore also handles an ActiveBoot marker when effective state was
+        // only partially persisted, and is a no-op for genuinely inactive
+        // state. Do not let invalid artwork gate recovery-capable cleanup.
+        if (![self.engine restore:error]) {
+            return NO;
+        }
+        [self setLastStatus:
+            @"The selected cursor theme is unavailable; Apple cursors are active."
+                    isError:YES];
+        return YES;
+    }
     if (desired) {
         BOOL success = reloaded || !effective
             ? [self.engine apply:error]

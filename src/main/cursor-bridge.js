@@ -12,8 +12,9 @@ import {
 import {
   assignImportedCursorFamily,
   isBoundedCursorManifestText,
+  isCursorImportTransactionEntry,
   normalizeImportedCursorFamily,
-  removeImportedCursorArtifacts,
+  prepareImportedCursorArtifactRemoval,
 } from "./cursor-import-install.js";
 
 const execFileAsync = promisify(execFile);
@@ -716,9 +717,11 @@ function scanImportedManifests(importedPacksRoot) {
     }
     const canonicalRoot = fs.realpathSync(importedPacksRoot);
     const packRoots = [];
-    const entries = fs.readdirSync(canonicalRoot, {
-      withFileTypes: true,
-    });
+    const entries = fs
+      .readdirSync(canonicalRoot, {
+        withFileTypes: true,
+      })
+      .filter((entry) => !isCursorImportTransactionEntry(entry.name));
     if (entries.length > MAX_IMPORTED_DIRECTORY_ENTRIES) {
       return [];
     }
@@ -887,7 +890,16 @@ export function createCursorBridge({
   verifySignature = isPackaged,
   commandRunner = null,
   trashImportedArtifact = null,
+  persistPendingThemeSizeCleanup = null,
 } = {}) {
+  if (
+    persistPendingThemeSizeCleanup !== null &&
+    typeof persistPendingThemeSizeCleanup !== "function"
+  ) {
+    throw new TypeError(
+      "A native size cleanup persistence handler is invalid.",
+    );
+  }
   const resolution = { isPackaged, resourcesPath, appPath, verifySignature };
   let bridgePath = null;
   if (nativePath && isExecutableFile(nativePath)) {
@@ -1527,17 +1539,147 @@ export function createCursorBridge({
     return themes;
   };
 
-  const hasRestorableCursorState = (currentStatus) =>
-    [
-      "desiredEnabled",
-      "persistedEffectiveApplied",
-      "effectiveApplied",
-      "launchAtLoginDesired",
-      "loginItemRegistrationCurrent",
-      "transactionPending",
-    ].some(
-      (key) => currentStatus?.[key] === true || currentStatus?.[key] === 1,
-    );
+  const forgetThemeSizePreferences = async (identifiers) => {
+    if (
+      !Array.isArray(identifiers) ||
+      identifiers.length > MAX_IMPORTED_PACKS ||
+      identifiers.some(
+        (identifier) =>
+          typeof identifier !== "string" ||
+          !IDENTIFIER_PATTERN.test(identifier),
+      )
+    ) {
+      throw new TypeError("Valid cursor identifiers are required for cleanup.");
+    }
+    const failedIdentifiers = [];
+    if (bridgePath) {
+      for (const identifier of [...new Set(identifiers)]) {
+        try {
+          await runNative("--forget-theme-size", [identifier]);
+        } catch {
+          failedIdentifiers.push(identifier);
+        }
+      }
+    }
+    return { failedIdentifiers };
+  };
+
+  const recoverDeletionNativeState = async (recovery) => {
+    const previousSelectedIdentifier =
+      recovery?.previousSelectedIdentifier ?? null;
+    const previousEffectiveIdentifier =
+      recovery?.previousEffectiveIdentifier ?? null;
+    const previousCursorWasLive = recovery?.previousCursorWasLive;
+    const previousDesiredEnabled = recovery?.previousDesiredEnabled;
+    const previousLaunchAtLoginDesired = recovery?.previousLaunchAtLoginDesired;
+    const previousLoginItemRegistrationCurrent =
+      recovery?.previousLoginItemRegistrationCurrent;
+    const previousTransactionPending = recovery?.previousTransactionPending;
+    const teardownPlanned = recovery?.teardownPlanned;
+    const booleanValues = [
+      previousCursorWasLive,
+      previousDesiredEnabled,
+      previousLaunchAtLoginDesired,
+      previousLoginItemRegistrationCurrent,
+      previousTransactionPending,
+      teardownPlanned,
+    ];
+    const shouldReapplyCursor = teardownPlanned && previousCursorWasLive;
+    if (
+      booleanValues.some((value) => typeof value !== "boolean") ||
+      (previousSelectedIdentifier !== null &&
+        (typeof previousSelectedIdentifier !== "string" ||
+          !IDENTIFIER_PATTERN.test(previousSelectedIdentifier))) ||
+      (previousEffectiveIdentifier !== null &&
+        (typeof previousEffectiveIdentifier !== "string" ||
+          !IDENTIFIER_PATTERN.test(previousEffectiveIdentifier))) ||
+      (previousCursorWasLive && !previousEffectiveIdentifier) ||
+      (shouldReapplyCursor &&
+        !previousSelectedIdentifier &&
+        !previousEffectiveIdentifier)
+    ) {
+      throw new TypeError("Valid cursor deletion recovery state is required.");
+    }
+    if (previousTransactionPending) {
+      const error = new Error(
+        "A pending native cursor transaction cannot be reconstructed safely.",
+      );
+      error.code = "NATIVE_RECOVERY_UNSUPPORTED";
+      throw error;
+    }
+    if (!bridgePath) {
+      const error = new Error(
+        "The native cursor bridge is unavailable for deletion recovery.",
+      );
+      error.code = "NATIVE_BRIDGE_UNAVAILABLE";
+      throw error;
+    }
+
+    const restoreEffectiveIdentifier =
+      previousEffectiveIdentifier ?? previousSelectedIdentifier;
+    let effectiveRestored = false;
+    if (shouldReapplyCursor && restoreEffectiveIdentifier) {
+      if (previousLaunchAtLoginDesired) {
+        await runNative("--apply-theme", [restoreEffectiveIdentifier], [5]);
+      } else {
+        await runNative("--select-theme", [restoreEffectiveIdentifier]);
+        await runNative("--enable");
+      }
+      effectiveRestored = true;
+    }
+    if (
+      previousSelectedIdentifier &&
+      (!effectiveRestored ||
+        previousSelectedIdentifier !== restoreEffectiveIdentifier)
+    ) {
+      await runNative("--select-theme", [previousSelectedIdentifier]);
+    }
+    const recoveredStatus = await status();
+    const identifiersMatch = (left, right) =>
+      String(left ?? "").toLowerCase() === String(right ?? "").toLowerCase();
+    const selectedRestored =
+      !previousSelectedIdentifier ||
+      identifiersMatch(
+        recoveredStatus.selectedNativeThemeId,
+        previousSelectedIdentifier,
+      );
+    const effectiveRestoredAndVerified =
+      !previousCursorWasLive ||
+      (recoveredStatus.effectiveApplied === true &&
+        recoveredStatus.currentSentinelsMatchTheme === true &&
+        identifiersMatch(
+          recoveredStatus.effectiveNativeThemeId,
+          restoreEffectiveIdentifier,
+        ));
+    const desiredRestored =
+      Boolean(recoveredStatus.desiredEnabled) === previousDesiredEnabled;
+    const launchIntentRestored =
+      Boolean(recoveredStatus.launchAtLoginDesired) ===
+      previousLaunchAtLoginDesired;
+    const registrationRestored = previousLaunchAtLoginDesired
+      ? recoveredStatus.loginItemRegistrationCurrent === true ||
+        recoveredStatus.loginApprovalRequired === true
+      : Boolean(recoveredStatus.loginItemRegistrationCurrent) ===
+        previousLoginItemRegistrationCurrent;
+    const inactiveStateRestored =
+      previousCursorWasLive || recoveredStatus.effectiveApplied !== true;
+    if (
+      !selectedRestored ||
+      !effectiveRestoredAndVerified ||
+      !desiredRestored ||
+      !launchIntentRestored ||
+      !registrationRestored ||
+      !inactiveStateRestored
+    ) {
+      const error = new Error(
+        "The prior native cursor state could not be verified after deletion recovery.",
+      );
+      error.code = "NATIVE_RECOVERY_UNVERIFIED";
+      error.status = recoveredStatus;
+      throw error;
+    }
+    return recoveredStatus;
+  };
 
   const deleteImportedThemeRecords = async (themes) => {
     const identifiers = themes.map((theme) => theme.nativeThemeId);
@@ -1548,6 +1690,15 @@ export function createCursorBridge({
     );
     let restoredToMacOS = false;
     let selectionReassigned = false;
+    let previousSelectedIdentifier = null;
+    let previousEffectiveIdentifier = null;
+    let previousCursorWasLive = false;
+    let previousDesiredEnabled = false;
+    let previousLaunchAtLoginDesired = false;
+    let previousLoginItemRegistrationCurrent = false;
+    let previousTransactionPending = false;
+    let shouldTeardown = false;
+    let shouldSelectFallback = false;
 
     if (bridgePath) {
       const currentStatus = await status();
@@ -1563,6 +1714,10 @@ export function createCursorBridge({
           currentStatus.themeIdentifier ??
           "",
       ).toLowerCase();
+      previousSelectedIdentifier =
+        currentStatus.selectedNativeThemeId ??
+        currentStatus.themeIdentifier ??
+        null;
       const selectedIsTarget =
         Boolean(selectedIdentifier) && targets.has(selectedIdentifier);
       const effectiveIdentifiers = [
@@ -1574,6 +1729,17 @@ export function createCursorBridge({
       const effectiveIsTarget = effectiveIdentifiers.some((identifier) =>
         targets.has(identifier),
       );
+      previousEffectiveIdentifier =
+        currentStatus.effectiveNativeThemeId ??
+        currentStatus.effectiveVariantId ??
+        null;
+      previousCursorWasLive = currentStatus.effectiveApplied === true;
+      previousDesiredEnabled = currentStatus.desiredEnabled === true;
+      previousLaunchAtLoginDesired =
+        currentStatus.launchAtLoginDesired === true;
+      previousLoginItemRegistrationCurrent =
+        currentStatus.loginItemRegistrationCurrent === true;
+      previousTransactionPending = currentStatus.transactionPending === true;
       // When a lower-level theme selection changes while a cursor remains
       // registered, native status can verify that the persisted cursor is
       // still applied without being able to name it. Treat a drifted live
@@ -1582,51 +1748,174 @@ export function createCursorBridge({
       const unidentifiedLiveCursor =
         currentStatus.persistedEffectiveApplied === true &&
         currentStatus.currentSentinelsMatchTheme !== true;
-      if (
-        hasRestorableCursorState(currentStatus) &&
-        (selectedIsTarget || effectiveIsTarget || unidentifiedLiveCursor)
-      ) {
-        await runNative("--teardown");
-        restoredToMacOS = true;
+      if (previousTransactionPending) {
+        const error = new Error(
+          "Finish the pending native cursor transaction before deleting a cursor.",
+        );
+        error.code = "NATIVE_TRANSACTION_PENDING";
+        throw error;
       }
-      if (selectedIsTarget) {
-        // Teardown intentionally leaves SelectedThemeIdentifier untouched. A
-        // valid bundled fallback must be persisted before the imported files
-        // disappear or every subsequent native status invocation would start
-        // from a missing theme.
-        await runNative("--select-theme", ["OreoWhite"]);
-        selectionReassigned = true;
+      if (
+        selectedIsTarget &&
+        !previousCursorWasLive &&
+        (currentStatus.persistedEffectiveApplied === true ||
+          currentStatus.currentSentinelsMatchTheme === true)
+      ) {
+        const error = new Error(
+          "The selected cursor has conflicting native application signals and cannot be reconstructed safely after deletion.",
+        );
+        error.code = "NATIVE_RECOVERY_UNSUPPORTED";
+        throw error;
+      }
+      if (unidentifiedLiveCursor && !previousEffectiveIdentifier) {
+        const error = new Error(
+          "The effective native cursor cannot be identified safely for deletion.",
+        );
+        error.code = "EFFECTIVE_CURSOR_UNIDENTIFIED";
+        throw error;
+      }
+      if (previousCursorWasLive && !previousEffectiveIdentifier) {
+        const error = new Error(
+          "The live native cursor cannot be identified safely for deletion.",
+        );
+        error.code = "EFFECTIVE_CURSOR_UNIDENTIFIED";
+        throw error;
+      }
+      if (
+        previousDesiredEnabled &&
+        !previousCursorWasLive &&
+        (selectedIsTarget || effectiveIsTarget)
+      ) {
+        const error = new Error(
+          "The desired cursor is not live, so selecting a fallback would change its effective native state.",
+        );
+        error.code = "NATIVE_RECOVERY_UNSUPPORTED";
+        throw error;
+      }
+      if (previousCursorWasLive && !previousDesiredEnabled) {
+        const error = new Error(
+          "The live and desired native cursor state cannot be reconstructed exactly after deletion.",
+        );
+        error.code = "NATIVE_RECOVERY_UNSUPPORTED";
+        throw error;
+      }
+      shouldTeardown = Boolean(
+        previousCursorWasLive && (selectedIsTarget || effectiveIsTarget),
+      );
+      shouldSelectFallback = selectedIsTarget;
+      if (
+        shouldTeardown &&
+        ((!previousDesiredEnabled && previousLaunchAtLoginDesired) ||
+          (previousLoginItemRegistrationCurrent &&
+            !previousLaunchAtLoginDesired))
+      ) {
+        const error = new Error(
+          "The current native cursor and login-item intent cannot be reconstructed safely.",
+        );
+        error.code = "NATIVE_RECOVERY_UNSUPPORTED";
+        throw error;
       }
     }
 
-    const removed = await removeImportedCursorArtifacts({
+    const nativeRecovery =
+      shouldTeardown || shouldSelectFallback
+        ? {
+            previousSelectedIdentifier,
+            previousEffectiveIdentifier,
+            previousCursorWasLive,
+            previousDesiredEnabled,
+            previousLaunchAtLoginDesired,
+            previousLoginItemRegistrationCurrent,
+            previousTransactionPending,
+            teardownPlanned: shouldTeardown,
+          }
+        : null;
+    const removal = await prepareImportedCursorArtifactRemoval({
       identifiers,
       importedPacksRoot,
       ...(typeof trashImportedArtifact === "function"
         ? { disposeArtifact: trashImportedArtifact }
         : {}),
+      ...(nativeRecovery ? { nativeRecovery } : {}),
+      ...(nativeRecovery
+        ? { recoverNativeState: recoverDeletionNativeState }
+        : {}),
     });
-    let sizePreferenceCleanupPending = false;
-    if (bridgePath) {
-      for (const identifier of identifiers) {
-        try {
-          await runNative("--forget-theme-size", [identifier]);
-        } catch {
-          // Artifact deletion is already complete (and may have moved the pack
-          // to Trash), so preference cleanup failure cannot honestly turn the
-          // deletion into a failed operation. Continue through family members
-          // and expose the remaining cleanup state to the caller.
-          sizePreferenceCleanupPending = true;
-        }
+    try {
+      if (shouldTeardown) {
+        await runNative("--teardown");
+        restoredToMacOS = true;
       }
+      if (shouldSelectFallback) {
+        // Teardown intentionally leaves SelectedThemeIdentifier untouched. A
+        // valid bundled fallback must be persisted before the quarantined files
+        // are disposed or later native status would target a missing theme.
+        await runNative("--select-theme", ["OreoWhite"]);
+        selectionReassigned = true;
+      }
+      await removal.markCommitted();
+    } catch (nativeError) {
+      const recoveryErrors = [];
+      try {
+        await removal.rollback();
+        resetManifestIndex();
+      } catch (rollbackError) {
+        recoveryErrors.push(rollbackError);
+      }
+
+      if (recoveryErrors.length) {
+        const error = new AggregateError(
+          [nativeError, ...recoveryErrors],
+          `${nativeError.message} The imported cursor deletion could not be fully rolled back.`,
+          { cause: nativeError },
+        );
+        error.code = "CURSOR_DELETE_ROLLBACK_FAILED";
+        throw error;
+      }
+      throw nativeError;
+    }
+
+    const removed = await removal.commit();
+    // Artifact deletion is already complete (and may have moved the pack to
+    // Trash), so native preference cleanup failure cannot honestly turn the
+    // deletion into a failed operation. Return the exact retry set instead.
+    const { failedIdentifiers: sizePreferenceCleanupIdentifiers } =
+      await forgetThemeSizePreferences(identifiers);
+    const sizePreferenceCleanupPending =
+      sizePreferenceCleanupIdentifiers.length > 0;
+    let sizePreferenceCleanupPersistencePending = false;
+    if (sizePreferenceCleanupIdentifiers.length) {
+      try {
+        if (typeof persistPendingThemeSizeCleanup !== "function") {
+          throw new Error(
+            "No durable native size cleanup persistence handler is available.",
+          );
+        }
+        await persistPendingThemeSizeCleanup(sizePreferenceCleanupIdentifiers);
+      } catch {
+        sizePreferenceCleanupPersistencePending = true;
+      }
+    }
+    let cleanupPending = removed.cleanupPending;
+    if (!cleanupPending && !sizePreferenceCleanupPersistencePending) {
+      try {
+        await removal.finalizeCommit();
+      } catch {
+        cleanupPending = true;
+      }
+    } else if (sizePreferenceCleanupPersistencePending) {
+      cleanupPending = true;
     }
     resetManifestIndex();
     const nextStatus = bridgePath ? await status() : { ...fallbackState };
     return {
       ...removed,
+      cleanupPending,
       restoredToMacOS,
       selectionReassigned,
       sizePreferenceCleanupPending,
+      sizePreferenceCleanupIdentifiers,
+      sizePreferenceCleanupPersistencePending,
       status: nextStatus,
     };
   };
@@ -1738,7 +2027,7 @@ export function createCursorBridge({
     return status();
   };
 
-  const applyTheme = (identifier) =>
+  const applyTheme = (identifier, { shouldApply } = {}) =>
     serializeMutation(async () => {
       if (
         typeof identifier !== "string" ||
@@ -1746,9 +2035,18 @@ export function createCursorBridge({
       ) {
         throw new TypeError("A valid cursor theme identifier is required.");
       }
+      if (shouldApply !== undefined && typeof shouldApply !== "function") {
+        throw new TypeError("A cursor apply guard must be a function.");
+      }
       const theme = resolveTheme(identifier);
       if (!theme?.nativeThemeId || !bridgePath) {
         throw new Error("That cursor theme is not available to apply.");
+      }
+      if (shouldApply && shouldApply() !== true) {
+        return {
+          applySkipped: true,
+          reason: "stale-request",
+        };
       }
       return refreshAfterMutation(() =>
         runNative("--apply-theme", [theme.nativeThemeId], [5]),
@@ -1818,6 +2116,10 @@ export function createCursorBridge({
     assignImportedFamily,
     deleteImportedThemes,
     deleteImportedFamily,
+    recoverImportedDeletionState: (recovery) =>
+      serializeMutation(() => recoverDeletionNativeState(recovery)),
+    forgetThemeSizes: (identifiers) =>
+      serializeMutation(() => forgetThemeSizePreferences(identifiers)),
     invalidateManifests,
     validateImportedThemes,
     resolvePreviewAsset(requestUrl) {
@@ -1869,7 +2171,7 @@ export function registerCursorIpc({ ipcMain, bridge, isTrustedSender } = {}) {
   register("cursor:set-theme-size", (identifier, sizePercentage) =>
     bridge.setThemeSize(identifier, sizePercentage),
   );
-  register("cursor:restore", () => bridge.restore());
+  register("cursor:restore-state", () => bridge.restoreState());
   register("cursor:open-login-settings", () => bridge.openLoginSettings());
 
   return bridge;

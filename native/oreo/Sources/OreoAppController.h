@@ -19,7 +19,10 @@ SMAppService *OreoLoginItemService(void);
 NSString *OreoLoginItemStatusString(void);
 NSString *OreoLegacyMainLoginItemStatusString(void);
 BOOL OreoLoginItemDesired(void);
-void OreoSetLoginItemDesired(BOOL desired);
+/// Durably saves login-helper intent and restores the prior preference if the
+/// write cannot be committed.
+BOOL OreoSetLoginItemDesired(BOOL desired,
+                             NSError * _Nullable * _Nullable error);
 BOOL OreoLoginItemRegistrationCurrent(void);
 
 BOOL OreoRegisterLoginItem(NSError * _Nullable * _Nullable error);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createDefaultCursorPreferences } from "../lib/cursor-preferences.js";
 import { createCursorPreferencesStore } from "./cursor-preferences-store.js";
@@ -90,5 +90,102 @@ describe("cursor preferences store", () => {
     });
 
     expect(store.get()).toEqual(createDefaultCursorPreferences());
+  });
+
+  it("publishes a preference change only after persistence succeeds", () => {
+    let failNextWrite = false;
+    class FailingStore extends memoryStore() {
+      set(key, value) {
+        if (failNextWrite && key === "preferences") {
+          throw new Error("disk full");
+        }
+        super.set(key, value);
+      }
+    }
+    const store = createCursorPreferencesStore({
+      directory: "/tmp/cursor-preferences-test",
+      Store: FailingStore,
+    });
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    failNextWrite = true;
+    expect(() => store.update({ menuBar: { visible: false } })).toThrow(
+      "disk full",
+    );
+
+    expect(store.get().menuBar.visible).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("isolates listener failures and gives each listener its own snapshot", () => {
+    const listenerErrors = [];
+    const store = createCursorPreferencesStore({
+      directory: "/tmp/cursor-preferences-test",
+      Store: memoryStore(),
+      onListenerError: (error) => listenerErrors.push(error),
+    });
+    store.subscribe((preferences) => {
+      preferences.menuBar.visible = true;
+      throw new Error("broken listener");
+    });
+    const laterListener = vi.fn();
+    store.subscribe(laterListener);
+
+    expect(store.update({ menuBar: { visible: false } }).menuBar.visible).toBe(
+      false,
+    );
+    expect(listenerErrors).toHaveLength(1);
+    expect(laterListener).toHaveBeenCalledWith(
+      expect.objectContaining({ menuBar: { visible: false } }),
+    );
+  });
+
+  it("persists and validates the app appearance mode", () => {
+    const store = createCursorPreferencesStore({
+      directory: "/tmp/cursor-preferences-test",
+      Store: memoryStore(),
+    });
+
+    expect(store.getAppAppearanceMode()).toBe("system");
+    expect(store.setAppAppearanceMode("dark")).toBe("dark");
+    expect(store.getAppAppearanceMode()).toBe("dark");
+    expect(() => store.setAppAppearanceMode("sepia")).toThrow(TypeError);
+    expect(store.getAppAppearanceMode()).toBe("dark");
+  });
+
+  it("persists pending native size cleanup IDs before publishing them", () => {
+    let failNextWrite = false;
+    class FailingStore extends memoryStore() {
+      set(key, value) {
+        if (failNextWrite && key === "pendingThemeSizeCleanupIds") {
+          throw new Error("disk full");
+        }
+        super.set(key, value);
+      }
+    }
+    const store = createCursorPreferencesStore({
+      directory: "/tmp/cursor-preferences-test",
+      Store: FailingStore,
+    });
+
+    expect(
+      store.setPendingThemeSizeCleanupIds([
+        "ImportedBlue",
+        "importedblue",
+        "ImportedRed",
+      ]),
+    ).toEqual(["ImportedBlue", "ImportedRed"]);
+    failNextWrite = true;
+    expect(() =>
+      store.setPendingThemeSizeCleanupIds(["ImportedGreen"]),
+    ).toThrow("disk full");
+    expect(store.getPendingThemeSizeCleanupIds()).toEqual([
+      "ImportedBlue",
+      "ImportedRed",
+    ]);
+    expect(() => store.setPendingThemeSizeCleanupIds(["bad/id"])).toThrow(
+      TypeError,
+    );
   });
 });

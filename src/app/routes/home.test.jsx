@@ -6,11 +6,14 @@ import {
   deleteImportedCursor,
   deleteImportedCursorFamily,
   getAutomaticSelectionId,
+  getAuthoritativeStatus,
+  getCursorErrorMessage,
   getPackRailNavigationIndex,
   getSelectedStatusVariant,
   getStatusEnabled,
   getStatusVariant,
   isPackVerifiedActive,
+  isRandomizationResultVerified,
   isRestoreAvailable,
   isStatusQueryUnavailable,
   isStatusVerifiedActive,
@@ -21,7 +24,7 @@ import {
   openLoginItemsSettings,
   resolveCursorPoolPacks,
   resolvePackQuerySource,
-  restoreCursors,
+  restoreCursorState,
   setCursorThemeSize,
 } from "@/lib/cursor-ui";
 
@@ -55,6 +58,7 @@ describe("cursor status presentation", () => {
   it("requires live sentinel verification before showing an active pack", () => {
     expect(
       isStatusVerifiedActive({
+        statusAvailable: true,
         effectiveVariantId: "oreo-blue",
         effectiveApplied: true,
         currentSentinelsMatchTheme: false,
@@ -63,11 +67,20 @@ describe("cursor status presentation", () => {
 
     expect(
       isStatusVerifiedActive({
+        statusAvailable: true,
         effectiveVariantId: "oreo-blue",
         effectiveApplied: true,
         currentSentinelsMatchTheme: true,
       }),
     ).toBe(true);
+
+    expect(
+      isStatusVerifiedActive({
+        effectiveVariantId: "oreo-blue",
+        effectiveApplied: true,
+        currentSentinelsMatchTheme: true,
+      }),
+    ).toBe(false);
   });
 
   it("never presents preview-mode selection as a live system cursor", () => {
@@ -146,8 +159,9 @@ describe("cursor status presentation", () => {
         applyCursorTheme: vi.fn(async (identifier) => {
           calls.push(["apply", identifier]);
         }),
-        restoreCursors: vi.fn(async () => {
+        restoreCursorState: vi.fn(async () => {
           calls.push(["restore"]);
+          return { status: {}, preferences: {} };
         }),
         openLoginItemsSettings: vi.fn(async () => {
           calls.push(["open-login-settings"]);
@@ -174,7 +188,7 @@ describe("cursor status presentation", () => {
     };
 
     await applyCursorTheme("OreoBlue");
-    await restoreCursors();
+    await restoreCursorState();
     await applyCursorTheme("OreoBlue");
     await openLoginItemsSettings();
     await importCursorPack();
@@ -203,6 +217,19 @@ describe("cursor status presentation", () => {
     expect(normalizeCursorSizePercentage(200)).toBe(200);
     expect(normalizeCursorSizePercentage(100.5)).toBe(100);
     expect(normalizeCursorSizePercentage(201, 125)).toBe(125);
+  });
+
+  it("removes Electron IPC boilerplate from user-facing errors", () => {
+    expect(
+      getCursorErrorMessage(
+        new Error(
+          "Error invoking remote method 'cursor:apply': Error: Cursor resources are missing.",
+        ),
+      ),
+    ).toBe("Cursor resources are missing.");
+    expect(getCursorErrorMessage(null)).toBe(
+      "The cursor engine could not complete that operation.",
+    );
   });
 });
 
@@ -277,6 +304,7 @@ describe("cursor rail behavior", () => {
   it("confirms apply success only for the live, sentinel-verified pack", () => {
     const pack = { id: "oreo-blue", nativeThemeId: "OreoBlue" };
     const activeStatus = {
+      statusAvailable: true,
       effectiveVariantId: "OreoBlue",
       effectiveApplied: true,
       currentSentinelsMatchTheme: true,
@@ -297,6 +325,27 @@ describe("cursor rail behavior", () => {
     ).toBe(false);
   });
 
+  it("requires randomization to return and verify its exact cursor", () => {
+    const cursor = { id: "oreo-blue", nativeThemeId: "OreoBlue" };
+    const verifiedStatus = {
+      statusAvailable: true,
+      effectiveNativeThemeId: "OreoBlue",
+      effectiveApplied: true,
+      currentSentinelsMatchTheme: true,
+    };
+
+    expect(isRandomizationResultVerified(null)).toBe(false);
+    expect(
+      isRandomizationResultVerified({
+        cursor,
+        status: { ...verifiedStatus, effectiveNativeThemeId: "OreoRed" },
+      }),
+    ).toBe(false);
+    expect(
+      isRandomizationResultVerified({ cursor, status: verifiedStatus }),
+    ).toBe(true);
+  });
+
   it("treats structured status failures as retryable query failures", () => {
     expect(isStatusQueryUnavailable({ isError: true })).toBe(true);
     expect(
@@ -311,5 +360,25 @@ describe("cursor rail behavior", () => {
         data: { statusAvailable: true },
       }),
     ).toBe(false);
+  });
+
+  it("does not expose stale status data after a failed refetch", () => {
+    const staleStatus = {
+      statusAvailable: true,
+      effectiveApplied: true,
+      currentSentinelsMatchTheme: true,
+      effectiveNativeThemeId: "OreoBlue",
+    };
+
+    expect(
+      getAuthoritativeStatus({
+        data: staleStatus,
+        isError: true,
+        error: new Error("status refresh failed"),
+      }),
+    ).toBeNull();
+    expect(getAuthoritativeStatus({ data: staleStatus, isError: false })).toBe(
+      staleStatus,
+    );
   });
 });

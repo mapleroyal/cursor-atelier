@@ -188,6 +188,9 @@ test.describe("packaged native integration", () => {
       expect(new Set(themes.map((theme) => theme.nativeThemeId)).size).toBe(
         themes.length,
       );
+      await expect(
+        page.getByRole("button", { name: /^(Apply|Reapply)$/ }),
+      ).toBeVisible();
 
       const bundledThemes = themes.filter((theme) =>
         bundledThemeIdSet.has(theme.nativeThemeId),

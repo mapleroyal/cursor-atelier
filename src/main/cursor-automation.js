@@ -10,6 +10,7 @@ import {
 const MAX_TIMER_DELAY_MS = 24 * 60 * 60 * 1000;
 const MIN_TIMER_DELAY_MS = 250;
 const DEFAULT_RETRY_DELAY_MS = 5 * 60 * 1000;
+const MAX_APPEARANCE_RETRY_ATTEMPTS = 3;
 
 function currentCursorIdentifier(status) {
   if (
@@ -44,15 +45,35 @@ function cursorSummary(cursor) {
   };
 }
 
-function appearanceForNativeTheme(nativeTheme) {
-  return nativeTheme?.shouldUseDarkColors ? "dark" : "light";
-}
-
 function automaticAppearancePreferences(preferences) {
   return {
     automaticSwitching: preferences?.appearance?.automaticSwitching === true,
     lightCursorId: preferences?.appearance?.lightCursorId ?? null,
     darkCursorId: preferences?.appearance?.darkCursorId ?? null,
+  };
+}
+
+function automaticRandomizationPreferences(preferences) {
+  const randomization = preferences?.randomization ?? {};
+  const schedule = randomization.schedule ?? {};
+  const scheduleConfiguration = { mode: schedule.mode ?? null };
+  if (schedule.mode === "interval") {
+    scheduleConfiguration.intervalHours = schedule.intervalHours ?? null;
+  } else if (schedule.mode === "daily") {
+    scheduleConfiguration.dailyTime = schedule.dailyTime ?? null;
+  } else if (schedule.mode === "times") {
+    scheduleConfiguration.times = schedule.times ?? null;
+  }
+  return {
+    source: randomization.source ?? null,
+    sourceSelection:
+      randomization.source === "favorites"
+        ? (preferences?.favorites ?? null)
+        : randomization.source === "family"
+          ? (randomization.family ?? null)
+          : null,
+    pools: randomization.pools ?? null,
+    schedule: scheduleConfiguration,
   };
 }
 
@@ -62,12 +83,18 @@ function plainError(message, code) {
   return error;
 }
 
+function isStaleApplyResult(status) {
+  return status?.applySkipped === true && status?.reason === "stale-request";
+}
+
 function requireVerifiedApplication(status, cursor) {
   if (!isCurrentCursorActive(status, cursor)) {
-    throw plainError(
+    const error = plainError(
       "The cursor change could not be verified.",
       "CURSOR_APPLY_UNVERIFIED",
     );
+    error.status = status;
+    throw error;
   }
   return status;
 }
@@ -75,7 +102,7 @@ function requireVerifiedApplication(status, cursor) {
 export function createCursorAutomation({
   bridge,
   preferencesStore,
-  nativeTheme,
+  getSystemAppearance,
   random = Math.random,
   now = () => new Date(),
   setTimer = setTimeout,
@@ -100,22 +127,35 @@ export function createCursorAutomation({
   ) {
     throw new TypeError("A cursor preferences store is required.");
   }
+  if (typeof getSystemAppearance !== "function") {
+    throw new TypeError("A system appearance reader is required.");
+  }
 
   let started = false;
   let timer = null;
+  let appearanceRetryTimer = null;
+  let appearanceRetryAttempts = 0;
+  let appearanceRetryIncident = null;
   let nextRunAt = null;
   let retryAt = null;
   let unsubscribePreferences = null;
   let observedPreferences = preferencesStore.get();
   let lastAppearance = null;
   let operationQueue = Promise.resolve();
+  let scheduleGeneration = 0;
 
   const getNow = () => {
     const value = new Date(now());
     return Number.isFinite(value.getTime()) ? value : new Date();
   };
 
-  const getSystemAppearance = () => appearanceForNativeTheme(nativeTheme);
+  const readSystemAppearance = () => {
+    const appearance = getSystemAppearance();
+    if (!CURSOR_APPEARANCES.includes(appearance)) {
+      throw new TypeError("The system appearance must be light or dark.");
+    }
+    return appearance;
+  };
 
   const reportError = (error, reason) => {
     try {
@@ -138,6 +178,13 @@ export function createCursorAutomation({
     }
   };
 
+  const clearAppearanceRetryTimer = () => {
+    if (appearanceRetryTimer !== null) {
+      clearTimer(appearanceRetryTimer);
+      appearanceRetryTimer = null;
+    }
+  };
+
   const notifyCursorChanged = (cursor, status, reason) => {
     try {
       onCursorChanged({
@@ -151,6 +198,75 @@ export function createCursorAutomation({
     }
   };
 
+  const recoverVerifiedUnverifiedApplication = async (error, cursor) => {
+    if (error?.code !== "CURSOR_APPLY_UNVERIFIED") {
+      return null;
+    }
+    try {
+      const refreshedStatus = await bridge.status();
+      return isCurrentCursorActive(refreshedStatus, cursor)
+        ? refreshedStatus
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const failAfterPreferenceRollback = async ({
+    error,
+    rollbackPatch,
+    rollbackCode,
+    rollbackMessage,
+    cursor,
+    reason,
+    rollbackPatchForCurrent = () => rollbackPatch,
+  }) => {
+    let rollbackError = null;
+    try {
+      const currentRollbackPatch = rollbackPatchForCurrent();
+      if (currentRollbackPatch) {
+        preferencesStore.update(currentRollbackPatch);
+      }
+    } catch (failure) {
+      rollbackError = failure;
+    }
+
+    let truthfulStatus = error?.status ?? null;
+    try {
+      truthfulStatus = await bridge.status();
+    } catch {
+      // A status captured from a failed verification is still preferable to
+      // inventing state when the follow-up status read is unavailable.
+    }
+
+    if (truthfulStatus && typeof truthfulStatus === "object") {
+      notifyCursorChanged(
+        isCurrentCursorActive(truthfulStatus, cursor) ? cursor : null,
+        truthfulStatus,
+        `${reason}:compensated`,
+      );
+    }
+
+    if (rollbackError) {
+      const aggregate = new AggregateError(
+        [error, rollbackError],
+        rollbackMessage,
+      );
+      aggregate.code = rollbackCode;
+      aggregate.status = truthfulStatus;
+      throw aggregate;
+    }
+
+    if (
+      truthfulStatus &&
+      error &&
+      (typeof error === "object" || typeof error === "function")
+    ) {
+      error.status = truthfulStatus;
+    }
+    throw error;
+  };
+
   const authoritativeThemes = async () => {
     const themes = await bridge.listThemes();
     if (!Array.isArray(themes)) {
@@ -162,11 +278,23 @@ export function createCursorAutomation({
     return themes;
   };
 
-  const applyRandomCursor = async (reason) => {
-    const preferences = preferencesStore.get();
+  const applyRandomCursor = async (
+    reason,
+    { expectedMode = null, expectedScheduleGeneration = null } = {},
+  ) => {
     const themes = await authoritativeThemes();
     const status = await bridge.status();
-    const appearance = getSystemAppearance();
+    const preferences = preferencesStore.get();
+    if (
+      (expectedMode !== null &&
+        (!started ||
+          preferences.randomization.schedule.mode !== expectedMode)) ||
+      (expectedScheduleGeneration !== null &&
+        expectedScheduleGeneration !== scheduleGeneration)
+    ) {
+      return null;
+    }
+    const appearance = readSystemAppearance();
     const pool = resolveRandomCursorPool(themes, preferences, appearance);
     const cursor = chooseRandomCursor(
       pool,
@@ -188,31 +316,119 @@ export function createCursorAutomation({
       );
     }
 
-    const nextStatus = requireVerifiedApplication(
-      await bridge.applyTheme(identifier),
-      cursor,
-    );
-    preferencesStore.update({
+    const appearancePreference = `${appearance}CursorId`;
+    const lastRunAt = getNow().toISOString();
+    const rollbackPatch = {
       appearance: {
-        [`${appearance}CursorId`]: identifier,
+        [appearancePreference]: preferences.appearance[appearancePreference],
       },
-      randomization: { lastRunAt: getNow().toISOString() },
+      randomization: {
+        lastRunAt: preferences.randomization.lastRunAt,
+      },
+    };
+    preferencesStore.update({
+      appearance: { [appearancePreference]: identifier },
+      randomization: { lastRunAt },
     });
+
+    const transactionIsCurrent = () => {
+      const latestPreferences = preferencesStore.get();
+      return (
+        latestPreferences.appearance[appearancePreference] === identifier &&
+        latestPreferences.randomization.lastRunAt === lastRunAt
+      );
+    };
+    const rollbackPatchForCurrent = () => {
+      const latestPreferences = preferencesStore.get();
+      const currentRollbackPatch = {};
+      if (latestPreferences.appearance[appearancePreference] === identifier) {
+        currentRollbackPatch.appearance = rollbackPatch.appearance;
+      }
+      if (latestPreferences.randomization.lastRunAt === lastRunAt) {
+        currentRollbackPatch.randomization = rollbackPatch.randomization;
+      }
+      return Object.keys(currentRollbackPatch).length
+        ? currentRollbackPatch
+        : null;
+    };
+    const randomizationConfiguration = JSON.stringify(
+      automaticRandomizationPreferences(preferences),
+    );
+    const shouldApply = () => {
+      const latestPreferences = preferencesStore.get();
+      return (
+        transactionIsCurrent() &&
+        readSystemAppearance() === appearance &&
+        JSON.stringify(automaticRandomizationPreferences(latestPreferences)) ===
+          randomizationConfiguration &&
+        (expectedMode === null ||
+          (started &&
+            latestPreferences.randomization.schedule.mode === expectedMode)) &&
+        (expectedScheduleGeneration === null ||
+          expectedScheduleGeneration === scheduleGeneration)
+      );
+    };
+
+    let nextStatus;
+    try {
+      const appliedStatus = await bridge.applyTheme(identifier, {
+        shouldApply,
+      });
+      if (isStaleApplyResult(appliedStatus)) {
+        const currentRollbackPatch = rollbackPatchForCurrent();
+        if (currentRollbackPatch) {
+          try {
+            preferencesStore.update(currentRollbackPatch);
+          } catch (rollbackError) {
+            const aggregate = new AggregateError(
+              [rollbackError],
+              "The stale cursor change was skipped but its saved randomization state could not be restored.",
+            );
+            aggregate.code = "CURSOR_RANDOMIZATION_ROLLBACK_FAILED";
+            throw aggregate;
+          }
+        }
+        return null;
+      }
+      nextStatus = requireVerifiedApplication(appliedStatus, cursor);
+    } catch (error) {
+      if (error?.code === "CURSOR_RANDOMIZATION_ROLLBACK_FAILED") {
+        throw error;
+      }
+      const recoveredStatus = await recoverVerifiedUnverifiedApplication(
+        error,
+        cursor,
+      );
+      if (recoveredStatus) {
+        nextStatus = recoveredStatus;
+      } else {
+        return failAfterPreferenceRollback({
+          error,
+          rollbackPatch,
+          rollbackCode: "CURSOR_RANDOMIZATION_ROLLBACK_FAILED",
+          rollbackMessage:
+            "The cursor change failed and its saved randomization state could not be restored.",
+          cursor,
+          reason,
+          rollbackPatchForCurrent,
+        });
+      }
+    }
     retryAt = null;
     notifyCursorChanged(cursor, nextStatus, reason);
     return { cursor: cursorSummary(cursor), status: nextStatus };
   };
 
   const syncAppearance = async (reason, { force = false } = {}) => {
-    const appearance = getSystemAppearance();
+    const appearance = readSystemAppearance();
     const appearanceChanged = appearance !== lastAppearance;
-    lastAppearance = appearance;
     if (!force && !appearanceChanged) {
       return null;
     }
 
     const preferences = preferencesStore.get();
     if (preferences.appearance.automaticSwitching !== true) {
+      lastAppearance = appearance;
       return null;
     }
     const targetIdentifier =
@@ -220,6 +436,7 @@ export function createCursorAutomation({
         ? preferences.appearance.darkCursorId
         : preferences.appearance.lightCursorId;
     if (!targetIdentifier) {
+      lastAppearance = appearance;
       return null;
     }
 
@@ -238,11 +455,12 @@ export function createCursorAutomation({
 
     const status = await bridge.status();
     if (isCurrentCursorActive(status, cursor)) {
+      lastAppearance = appearance;
       return { cursor: cursorSummary(cursor), status };
     }
 
     const latestPreferences = preferencesStore.get();
-    const latestAppearance = getSystemAppearance();
+    const latestAppearance = readSystemAppearance();
     const latestTargetIdentifier =
       latestAppearance === "dark"
         ? latestPreferences.appearance.darkCursorId
@@ -256,12 +474,78 @@ export function createCursorAutomation({
     }
 
     const identifier = getCursorPreferenceId(cursor);
-    const nextStatus = requireVerifiedApplication(
-      await bridge.applyTheme(identifier),
-      cursor,
-    );
+    const appliedStatus = await bridge.applyTheme(identifier, {
+      shouldApply: () => {
+        const currentPreferences = preferencesStore.get();
+        const currentAppearance = readSystemAppearance();
+        const currentTargetIdentifier =
+          currentAppearance === "dark"
+            ? currentPreferences.appearance.darkCursorId
+            : currentPreferences.appearance.lightCursorId;
+        return (
+          currentPreferences.appearance.automaticSwitching === true &&
+          currentAppearance === appearance &&
+          currentTargetIdentifier === targetIdentifier
+        );
+      },
+    });
+    if (isStaleApplyResult(appliedStatus)) {
+      return null;
+    }
+    const nextStatus = requireVerifiedApplication(appliedStatus, cursor);
+    lastAppearance = appearance;
     notifyCursorChanged(cursor, nextStatus, reason);
     return { cursor: cursorSummary(cursor), status: nextStatus };
+  };
+
+  const scheduleAppearanceRetry = (reason) => {
+    clearAppearanceRetryTimer();
+    if (!started || appearanceRetryAttempts >= MAX_APPEARANCE_RETRY_ATTEMPTS) {
+      return;
+    }
+    appearanceRetryAttempts += 1;
+    appearanceRetryTimer = setTimer(
+      () => {
+        appearanceRetryTimer = null;
+        void enqueue(() =>
+          syncAppearanceWithRetry(`retry:${reason}`, { force: true }),
+        );
+      },
+      Math.max(retryDelayMs, 1_000),
+    );
+  };
+
+  const syncAppearanceWithRetry = async (
+    reason,
+    options,
+    failureReason = reason,
+  ) => {
+    try {
+      const preferences = preferencesStore.get();
+      const appearance = readSystemAppearance();
+      const incident = JSON.stringify({
+        appearance,
+        automaticSwitching: preferences.appearance.automaticSwitching === true,
+        targetIdentifier:
+          appearance === "dark"
+            ? preferences.appearance.darkCursorId
+            : preferences.appearance.lightCursorId,
+      });
+      if (incident !== appearanceRetryIncident) {
+        clearAppearanceRetryTimer();
+        appearanceRetryAttempts = 0;
+        appearanceRetryIncident = incident;
+      }
+      const result = await syncAppearance(reason, options);
+      clearAppearanceRetryTimer();
+      appearanceRetryAttempts = 0;
+      appearanceRetryIncident = null;
+      return result;
+    } catch (error) {
+      reportError(error, failureReason);
+      scheduleAppearanceRetry(failureReason);
+      return null;
+    }
   };
 
   const scheduleNext = () => {
@@ -277,12 +561,11 @@ export function createCursorAutomation({
       return;
     }
 
-    nextRunAt =
-      retryAt && retryAt > current
-        ? new Date(retryAt)
-        : scheduled
-          ? new Date(scheduled)
-          : null;
+    nextRunAt = retryAt
+      ? new Date(retryAt)
+      : scheduled
+        ? new Date(scheduled)
+        : null;
     if (!nextRunAt || !Number.isFinite(nextRunAt.getTime())) {
       nextRunAt = null;
       return;
@@ -292,10 +575,14 @@ export function createCursorAutomation({
       MAX_TIMER_DELAY_MS,
       Math.max(MIN_TIMER_DELAY_MS, nextRunAt.getTime() - current.getTime()),
     );
-    timer = setTimer(() => {
-      timer = null;
-      void enqueue(runScheduledIfDue);
+    const generation = scheduleGeneration;
+    const scheduledTimer = setTimer(() => {
+      if (timer === scheduledTimer) {
+        timer = null;
+      }
+      void enqueue(() => runScheduledIfDue(generation));
     }, delay);
+    timer = scheduledTimer;
   };
 
   const handleAutomaticFailure = (error, reason) => {
@@ -303,8 +590,8 @@ export function createCursorAutomation({
     reportError(error, reason);
   };
 
-  async function runScheduledIfDue() {
-    if (!started) {
+  async function runScheduledIfDue(expectedGeneration = scheduleGeneration) {
+    if (!started || expectedGeneration !== scheduleGeneration) {
       return null;
     }
 
@@ -321,10 +608,16 @@ export function createCursorAutomation({
 
     const reason = retryAt ? `retry:${mode}` : `schedule:${mode}`;
     try {
-      const result = await applyRandomCursor(reason);
+      const result = await applyRandomCursor(reason, {
+        expectedMode: mode,
+        expectedScheduleGeneration: expectedGeneration,
+      });
       retryAt = null;
       return result;
     } catch (error) {
+      if (expectedGeneration !== scheduleGeneration) {
+        return null;
+      }
       handleAutomaticFailure(error, reason);
       return null;
     } finally {
@@ -336,16 +629,19 @@ export function createCursorAutomation({
     const appearanceChanged =
       JSON.stringify(automaticAppearancePreferences(preferences)) !==
       JSON.stringify(automaticAppearancePreferences(observedPreferences));
+    const randomizationChanged =
+      JSON.stringify(automaticRandomizationPreferences(preferences)) !==
+      JSON.stringify(automaticRandomizationPreferences(observedPreferences));
     observedPreferences = preferences;
-    retryAt = null;
+    if (randomizationChanged) {
+      scheduleGeneration += 1;
+      nextRunAt = null;
+      retryAt = null;
+    }
     clearScheduledTimer();
     void enqueue(async () => {
       if (appearanceChanged) {
-        try {
-          await syncAppearance("preferences", { force: true });
-        } catch (error) {
-          reportError(error, "preferences");
-        }
+        await syncAppearanceWithRetry("preferences", { force: true });
       }
       scheduleNext();
     });
@@ -358,21 +654,26 @@ export function createCursorAutomation({
       }
 
       started = true;
+      scheduleGeneration += 1;
       observedPreferences = preferencesStore.get();
       unsubscribePreferences = preferencesStore.subscribe(preferencesChanged);
       return enqueue(async () => {
-        try {
-          await syncAppearance("startup", { force: true });
-        } catch (error) {
-          reportError(error, "startup-appearance");
-        }
+        await syncAppearanceWithRetry(
+          "startup",
+          { force: true },
+          "startup-appearance",
+        );
 
         if (
           runLaunch &&
           preferencesStore.get().randomization.schedule.mode === "launch"
         ) {
+          const launchGeneration = scheduleGeneration;
           try {
-            await applyRandomCursor("schedule:launch");
+            await applyRandomCursor("schedule:launch", {
+              expectedMode: "launch",
+              expectedScheduleGeneration: launchGeneration,
+            });
           } catch (error) {
             reportError(error, "schedule:launch");
           }
@@ -382,7 +683,11 @@ export function createCursorAutomation({
     },
     stop() {
       started = false;
+      scheduleGeneration += 1;
       clearScheduledTimer();
+      clearAppearanceRetryTimer();
+      appearanceRetryAttempts = 0;
+      appearanceRetryIncident = null;
       nextRunAt = null;
       retryAt = null;
       unsubscribePreferences?.();
@@ -430,52 +735,102 @@ export function createCursorAutomation({
             [`${appearance}CursorId`]: getCursorPreferenceId(cursor),
           },
         };
-        if (getSystemAppearance() !== appearance) {
+        if (readSystemAppearance() !== appearance) {
           const preferences = preferencesStore.update(preferencePatch);
           return { cursor: cursorSummary(cursor), preferences, status: null };
         }
 
-        const status = await bridge.status();
-        if (isCurrentCursorActive(status, cursor)) {
-          const preferences = preferencesStore.update(preferencePatch);
-          return { cursor: cursorSummary(cursor), preferences, status };
+        const appearancePreference = `${appearance}CursorId`;
+        const previousPreferences = preferencesStore.get();
+        const rollbackPatch = {
+          appearance: {
+            [appearancePreference]:
+              previousPreferences.appearance[appearancePreference],
+          },
+        };
+        const preferences = preferencesStore.update(preferencePatch);
+        if (readSystemAppearance() !== appearance) {
+          return { cursor: cursorSummary(cursor), preferences, status: null };
         }
 
-        const nextStatus = requireVerifiedApplication(
-          await bridge.applyTheme(getCursorPreferenceId(cursor)),
-          cursor,
-        );
-        const preferences = preferencesStore.update(preferencePatch);
+        let nextStatus;
+        const transactionIdentifier = getCursorPreferenceId(cursor);
+        const transactionIsCurrent = () =>
+          preferencesStore.get().appearance[appearancePreference] ===
+          transactionIdentifier;
+        const rollbackPatchForCurrent = () =>
+          transactionIsCurrent() ? rollbackPatch : null;
+        try {
+          const status = await bridge.status();
+          if (isCurrentCursorActive(status, cursor)) {
+            return {
+              cursor: cursorSummary(cursor),
+              preferences: preferencesStore.get(),
+              status,
+            };
+          }
+
+          const appliedStatus = await bridge.applyTheme(transactionIdentifier, {
+            shouldApply: () =>
+              readSystemAppearance() === appearance && transactionIsCurrent(),
+          });
+          if (isStaleApplyResult(appliedStatus)) {
+            return {
+              cursor: cursorSummary(cursor),
+              preferences: preferencesStore.get(),
+              status: null,
+            };
+          }
+          nextStatus = requireVerifiedApplication(appliedStatus, cursor);
+        } catch (error) {
+          const recoveredStatus = await recoverVerifiedUnverifiedApplication(
+            error,
+            cursor,
+          );
+          if (recoveredStatus) {
+            nextStatus = recoveredStatus;
+          } else {
+            return failAfterPreferenceRollback({
+              error,
+              rollbackPatch,
+              rollbackCode: "APPEARANCE_ASSIGNMENT_ROLLBACK_FAILED",
+              rollbackMessage:
+                "The cursor assignment failed and its saved appearance preference could not be restored.",
+              cursor,
+              reason: `assign:${appearance}`,
+              rollbackPatchForCurrent,
+            });
+          }
+        }
         notifyCursorChanged(cursor, nextStatus, `assign:${appearance}`);
         return {
           cursor: cursorSummary(cursor),
-          preferences,
+          preferences: preferencesStore.get(),
           status: nextStatus,
         };
       });
     },
     appearanceChanged() {
-      return enqueue(async () => {
-        try {
-          return await syncAppearance("appearance");
-        } catch (error) {
-          reportError(error, "appearance");
-          return null;
-        }
-      });
+      return enqueue(() => syncAppearanceWithRetry("appearance"));
     },
     wake() {
       return enqueue(async () => {
-        try {
-          await syncAppearance("wake", { force: true });
-        } catch (error) {
-          reportError(error, "wake-appearance");
-        }
+        await syncAppearanceWithRetry(
+          "wake",
+          { force: true },
+          "wake-appearance",
+        );
         return runScheduledIfDue();
       });
     },
     reschedule() {
       return enqueue(() => scheduleNext());
+    },
+    runExclusive(operation) {
+      if (typeof operation !== "function") {
+        throw new TypeError("A cursor operation is required.");
+      }
+      return enqueue(() => operation());
     },
     getNextRunAt() {
       return nextRunAt ? new Date(nextRunAt) : null;

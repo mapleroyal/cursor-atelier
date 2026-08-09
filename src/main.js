@@ -18,14 +18,24 @@ import {
 } from "electron";
 
 import { CURSOR_CATALOG } from "./lib/cursor-catalog";
-import { createCursorDeletionPreferencesPatch } from "./lib/cursor-preferences";
 import themeSeedColors from "./lib/theme-seed-colors";
+import {
+  registerAppAppearanceIpc,
+  syncWindowBackgroundColors,
+} from "./main/app-appearance-ipc";
 import { createCursorAutomation } from "./main/cursor-automation";
 import { createCursorBridge, registerCursorIpc } from "./main/cursor-bridge";
+import { reconcileCursorImportTransactions } from "./main/cursor-import-install";
+import { createCursorLibraryPreferencesReconciler } from "./main/cursor-library-preferences-reconciler";
 import { createCursorPreferencesStore } from "./main/cursor-preferences-store";
+import { restoreCursorState } from "./main/cursor-state-service";
+import { createCursorThemeSizeCleanupReconciler } from "./main/cursor-theme-size-cleanup-reconciler";
+import { createMainLoginItemReconciler } from "./main/main-login-item-reconciler";
+import { broadcastToRendererWindows } from "./main/renderer-broadcast";
 import { createRendererNavigation } from "./main/renderer-navigation";
 import {
   createWindowLifecycle,
+  shouldMainAppStayRunning,
   shouldRegisterMainAppLoginItem,
 } from "./main/window-lifecycle";
 
@@ -33,6 +43,8 @@ const PREVIEW_SCHEME = "cursor-preview";
 const trustedWebContents = new Set();
 const windows = new Set();
 const requestedWindowPresentation = new WeakSet();
+const failedWindows = new WeakSet();
+const rendererRecovery = new WeakMap();
 let importQueue = Promise.resolve();
 let applicationStarted = false;
 let backgroundLaunch = false;
@@ -41,9 +53,8 @@ let pendingNavigation = null;
 let tray = null;
 let trayRefreshGeneration = 0;
 let runtime = null;
-let lastMainLoginDesired = null;
-let backgroundRegistrationAvailable = false;
 let windowLifecycle = null;
+let lastSystemAppearance = "light";
 const rendererNavigation = createRendererNavigation({
   canSend: (webContents) =>
     trustedWebContents.has(webContents.id) &&
@@ -86,13 +97,36 @@ function getWindowBackgroundColor() {
     : themeSeedColors.light.windowBackground;
 }
 
-function syncWindowBackgrounds() {
-  const backgroundColor = getWindowBackgroundColor();
-  for (const window of windows) {
-    if (!window.isDestroyed()) {
-      window.setBackgroundColor(backgroundColor);
-    }
+function getSystemAppearance() {
+  if (process.platform !== "darwin") {
+    lastSystemAppearance = nativeTheme.shouldUseDarkColors ? "dark" : "light";
+    return lastSystemAppearance;
   }
+  try {
+    const appleInterfaceStyle = systemPreferences.getUserDefault(
+      "AppleInterfaceStyle",
+      "string",
+    );
+    lastSystemAppearance =
+      String(appleInterfaceStyle ?? "")
+        .trim()
+        .toLocaleLowerCase() === "dark"
+        ? "dark"
+        : "light";
+    return lastSystemAppearance;
+  } catch (error) {
+    console.error("Could not read the macOS interface appearance.", error);
+    return lastSystemAppearance;
+  }
+}
+
+function syncWindowBackgrounds() {
+  syncWindowBackgroundColors({
+    windows,
+    backgroundColor: getWindowBackgroundColor(),
+    onWindowError: (error) =>
+      console.error("Could not update a window background.", error),
+  });
 }
 
 function hasVisibleWindows(excludedWindow = null) {
@@ -103,19 +137,17 @@ function hasVisibleWindows(excludedWindow = null) {
 }
 
 function broadcastToRenderers(channel, payload) {
-  for (const window of windows) {
-    if (window.isDestroyed()) {
-      continue;
-    }
-    const webContents = window.webContents;
-    if (
+  broadcastToRendererWindows({
+    windows,
+    channel,
+    payload,
+    canSend: (webContents) =>
       trustedWebContents.has(webContents.id) &&
       !webContents.isDestroyed() &&
-      isExpectedRendererUrl(webContents.getURL())
-    ) {
-      webContents.send(channel, payload);
-    }
-  }
+      isExpectedRendererUrl(webContents.getURL()),
+    onSendError: (error) =>
+      console.error(`Could not broadcast ${channel} to a renderer.`, error),
+  });
 }
 
 function sendNavigation(window, destination) {
@@ -136,10 +168,13 @@ async function showOrCreateMainWindow({ navigate = null } = {}) {
   if (!mainWindow) {
     mainWindow = createWindow();
   }
+  requestedWindowPresentation.add(mainWindow);
+  if (failedWindows.has(mainWindow)) {
+    await rendererRecovery.get(mainWindow)?.();
+  }
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
   }
-  requestedWindowPresentation.add(mainWindow);
   mainWindow.show();
   mainWindow.focus();
   if (navigate) {
@@ -258,6 +293,7 @@ function createWindow({ showWhenReady = true } = {}) {
       return;
     }
     showingFailure = true;
+    failedWindows.add(mainWindow);
     void mainWindow.loadURL(failurePage(description)).finally(() => {
       if (
         !mainWindow.isDestroyed() &&
@@ -267,6 +303,28 @@ function createWindow({ showWhenReady = true } = {}) {
       }
     });
   };
+  const loadRenderer = async () => {
+    if (mainWindow.isDestroyed()) {
+      return;
+    }
+    showingFailure = false;
+    failedWindows.delete(mainWindow);
+    try {
+      if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+        await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+      } else {
+        await mainWindow.loadFile(
+          path.join(
+            __dirname,
+            `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`,
+          ),
+        );
+      }
+    } catch (error) {
+      showFailure(error.message);
+    }
+  };
+  rendererRecovery.set(mainWindow, loadRenderer);
 
   windowWebContents.on(
     "did-fail-load",
@@ -306,15 +364,12 @@ function createWindow({ showWhenReady = true } = {}) {
   mainWindow.on("closed", () => {
     rendererNavigation.dispose(webContentsId);
     trustedWebContents.delete(webContentsId);
+    failedWindows.delete(mainWindow);
+    rendererRecovery.delete(mainWindow);
     windows.delete(mainWindow);
   });
 
-  const loadPromise = MAIN_WINDOW_VITE_DEV_SERVER_URL
-    ? mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL)
-    : mainWindow.loadFile(
-        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-      );
-  void loadPromise.catch((error) => showFailure(error.message));
+  void loadRenderer();
 
   return mainWindow;
 }
@@ -326,6 +381,18 @@ function installApplicationMenu() {
     accelerator: "CommandOrControl+,",
     click: () => requestMainWindow({ navigate: "settings" }),
   };
+  const viewItem = app.isPackaged
+    ? {
+        label: "View",
+        submenu: [
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      }
+    : { role: "viewMenu" };
   const template =
     process.platform === "darwin"
       ? [
@@ -347,7 +414,7 @@ function installApplicationMenu() {
           },
           { role: "fileMenu" },
           { role: "editMenu" },
-          { role: "viewMenu" },
+          viewItem,
           { role: "windowMenu" },
         ]
       : [
@@ -356,50 +423,10 @@ function installApplicationMenu() {
             submenu: [settingsItem, { type: "separator" }, { role: "quit" }],
           },
           { role: "editMenu" },
-          { role: "viewMenu" },
+          viewItem,
           { role: "windowMenu" },
         ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
-function syncMainLoginItem(preferences) {
-  if (!backgroundRegistrationAvailable) {
-    return;
-  }
-
-  const desired = shouldRegisterMainAppLoginItem(preferences);
-  if (desired === lastMainLoginDesired) {
-    return;
-  }
-  try {
-    app.setLoginItemSettings({
-      openAtLogin: desired,
-      type: "mainAppService",
-    });
-    const status = app.getLoginItemSettings({
-      type: "mainAppService",
-    }).status;
-    if (desired && status === "requires-approval") {
-      console.warn(
-        "Cursor Atelier’s background launch requires approval in macOS Login Items.",
-      );
-    } else if (desired && status !== "enabled") {
-      console.error(
-        `Cursor Atelier’s background launch registration has status: ${status}.`,
-      );
-    } else if (
-      !desired &&
-      status !== "not-registered" &&
-      status !== "not-found"
-    ) {
-      console.error(
-        `Cursor Atelier’s background launch removal has status: ${status}.`,
-      );
-    }
-    lastMainLoginDesired = desired;
-  } catch (error) {
-    console.error("Could not update Cursor Atelier’s login item.", error);
-  }
 }
 
 function createMenuBarIcon() {
@@ -526,6 +553,14 @@ function notifyCursorChanged(payload) {
   void refreshTrayMenu();
 }
 
+function notifyLibraryChanged(payload) {
+  broadcastToRenderers("cursor:library-changed", {
+    ...payload,
+    changedAt: new Date().toISOString(),
+  });
+  void refreshTrayMenu();
+}
+
 async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);
   const options = {
@@ -614,18 +649,70 @@ async function startApplication() {
   const preferencesStore = createCursorPreferencesStore({
     directory: app.getPath("userData"),
   });
+  getSystemAppearance();
+  nativeTheme.themeSource = preferencesStore.getAppAppearanceMode();
   const initialPreferences = preferencesStore.get();
+  const persistPendingThemeSizeCleanup = (identifiers) => {
+    const pending = preferencesStore.getPendingThemeSizeCleanupIds();
+    const seen = new Set(pending.map((identifier) => identifier.toLowerCase()));
+    for (const identifier of identifiers) {
+      if (!seen.has(identifier.toLowerCase())) {
+        seen.add(identifier.toLowerCase());
+        pending.push(identifier);
+      }
+    }
+    return preferencesStore.setPendingThemeSizeCleanupIds(pending);
+  };
   const bridge = createCursorBridge({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
     importedPacksRoot,
     trashImportedArtifact: (artifactPath) => shell.trashItem(artifactPath),
+    persistPendingThemeSizeCleanup,
+  });
+  try {
+    const reconciliation = await reconcileCursorImportTransactions({
+      importedPacksRoot,
+      disposeArtifact: (artifactPath) => shell.trashItem(artifactPath),
+      recoverDeletionNativeState: (recovery) =>
+        bridge.recoverImportedDeletionState(recovery),
+      persistPendingThemeSizeCleanup,
+    });
+    if (reconciliation.cleanupPending) {
+      console.error(
+        "Some interrupted cursor import transactions still require cleanup.",
+      );
+    }
+  } catch (error) {
+    console.error("Could not reconcile interrupted cursor imports.", error);
+  }
+  const libraryPreferencesReconciler = createCursorLibraryPreferencesReconciler(
+    {
+      bridge,
+      preferencesStore,
+      onRetryError: (error, { attempt }) => {
+        console.error(
+          `Cursor library preference reconciliation retry ${attempt} failed.`,
+          error,
+        );
+      },
+    },
+  );
+  const themeSizeCleanupReconciler = createCursorThemeSizeCleanupReconciler({
+    bridge,
+    preferencesStore,
+    onRetryError: (error, { attempt }) => {
+      console.error(
+        `Deleted cursor size cleanup retry ${attempt} failed.`,
+        error,
+      );
+    },
   });
   // Launching app.asar directly (including the Playwright preview) can still
   // report app.isPackaged. Requiring the verified packaged native component
   // keeps that read-only preview from registering a system login item.
-  backgroundRegistrationAvailable = Boolean(
+  const backgroundRegistrationAvailable = Boolean(
     app.isPackaged &&
     process.platform === "darwin" &&
     bridge.nativePath &&
@@ -641,13 +728,32 @@ async function startApplication() {
       console.error("Could not inspect Cursor Atelier’s login item.", error);
     }
   }
+  const mainLoginItemReconciler = createMainLoginItemReconciler({
+    available: backgroundRegistrationAvailable,
+    setLoginItemSettings: (settings) => app.setLoginItemSettings(settings),
+    getLoginItemSettings: (settings) => app.getLoginItemSettings(settings),
+    onUnsatisfied: ({ desired, status }) => {
+      if (desired && status === "requires-approval") {
+        console.warn(
+          "Cursor Atelier’s background launch requires approval in macOS Login Items.",
+        );
+      } else {
+        console.error(
+          `Cursor Atelier’s background launch reconciliation has status: ${status}.`,
+        );
+      }
+    },
+    onError: (error) => {
+      console.error("Could not update Cursor Atelier’s login item.", error);
+    },
+  });
   windowLifecycle = createWindowLifecycle({
     isMacOS: process.platform === "darwin",
     setActivationPolicy: (policy) => app.setActivationPolicy(policy),
     quit: () => app.quit(),
     getMenuBarVisible: () => preferencesStore.get().menuBar.visible === true,
     getShouldStayRunning: () =>
-      shouldRegisterMainAppLoginItem(preferencesStore.get()),
+      shouldMainAppStayRunning(preferencesStore.get()),
     hasVisibleWindows,
     hideWindow: (window) => {
       requestedWindowPresentation.delete(window);
@@ -663,10 +769,15 @@ async function startApplication() {
   // Reconcile the Electron login item before handling a stale background
   // launch so an app with no resident feature does not relaunch headlessly at
   // the next login. The native cursor helper has its own lifecycle.
-  syncMainLoginItem(initialPreferences);
+  mainLoginItemReconciler.sync(
+    shouldRegisterMainAppLoginItem(initialPreferences),
+  );
   if (backgroundLaunch) {
     windowLifecycle.enterBackground();
     if (!shouldRegisterMainAppLoginItem(initialPreferences)) {
+      mainLoginItemReconciler.stop();
+      libraryPreferencesReconciler.stop();
+      themeSizeCleanupReconciler.stop();
       windowLifecycle.handleBackgroundPreferenceChanged(false);
       return;
     }
@@ -725,6 +836,13 @@ async function startApplication() {
       throw new Error("Cursor IPC is unavailable to this page.");
     }
   };
+  const disposeAppAppearanceIpc = registerAppAppearanceIpc({
+    ipcMain,
+    preferencesStore,
+    nativeTheme,
+    isTrustedSender,
+    onAppearanceChanged: syncWindowBackgrounds,
+  });
   const rendererBridge = {
     status: () => bridge.status(),
     listThemes: () => bridge.listThemes(),
@@ -737,23 +855,37 @@ async function startApplication() {
       });
       return result;
     },
-    applyTheme: async (identifier) => {
-      const status = await bridge.applyTheme(identifier);
-      notifyCursorChanged({
-        reason: "renderer-apply",
-        status,
-        changedAt: new Date().toISOString(),
-      });
-      return status;
-    },
-    restore: async () => {
-      const status = await bridge.restore();
-      notifyCursorChanged({
-        reason: "renderer-restore",
-        status,
-        changedAt: new Date().toISOString(),
-      });
-      return status;
+    applyTheme: (identifier) =>
+      automation.runExclusive(async () => {
+        const status = await bridge.applyTheme(identifier);
+        notifyCursorChanged({
+          reason: "renderer-apply",
+          status,
+          changedAt: new Date().toISOString(),
+        });
+        return status;
+      }),
+    restoreState: async () => {
+      return automation.runExclusive(() =>
+        restoreCursorState({
+          bridge,
+          preferencesStore,
+          onRestored: (status) => {
+            notifyCursorChanged({
+              reason: "renderer-restore",
+              status,
+              changedAt: new Date().toISOString(),
+            });
+          },
+          onRestoreFailed: (status) => {
+            notifyCursorChanged({
+              reason: "renderer-restore-failed",
+              status,
+              changedAt: new Date().toISOString(),
+            });
+          },
+        }),
+      );
     },
     openLoginSettings: () => bridge.openLoginSettings(),
   };
@@ -764,9 +896,20 @@ async function startApplication() {
   });
   ipcMain.handle("cursor:import-pack", (event) => {
     requireTrustedSender(event);
-    const operation = importQueue.then(() =>
-      chooseAndImportCursorPack(event, bridge, importedPacksRoot),
-    );
+    const operation = importQueue.then(async () => {
+      const result = await chooseAndImportCursorPack(
+        event,
+        bridge,
+        importedPacksRoot,
+      );
+      if (!result.canceled) {
+        notifyLibraryChanged({
+          reason: "renderer-import",
+          identifiers: result.identifiers,
+        });
+      }
+      return result;
+    });
     importQueue = operation.catch(() => undefined);
     return operation;
   });
@@ -775,19 +918,22 @@ async function startApplication() {
     importQueue = result.catch(() => undefined);
     return result;
   };
-  const pruneLibraryPreferences = async (identifiers = []) => {
-    const themes = await bridge.listThemes();
-    const patch = createCursorDeletionPreferencesPatch(
-      preferencesStore.get(),
-      identifiers,
-      [...new Set(themes.map((theme) => theme.family).filter(Boolean))],
-    );
-    return preferencesStore.update(patch);
-  };
   const completeImportedDeletion = async (result, reason) => {
+    if (result.sizePreferenceCleanupIdentifiers?.length) {
+      try {
+        await themeSizeCleanupReconciler.recordPending(
+          result.sizePreferenceCleanupIdentifiers,
+        );
+      } catch (error) {
+        console.error(
+          "The imported cursor was removed, but its pending native size cleanup could not be persisted.",
+          error,
+        );
+      }
+    }
     let preferenceCleanupPending = false;
     try {
-      await pruneLibraryPreferences(result.identifiers);
+      await libraryPreferencesReconciler.reconcile();
     } catch (error) {
       preferenceCleanupPending = true;
       console.error(
@@ -805,6 +951,7 @@ async function startApplication() {
       status: result.status,
       changedAt: new Date().toISOString(),
     });
+    notifyLibraryChanged({ reason, identifiers: result.identifiers });
     return { ...result, preferenceCleanupPending };
   };
   ipcMain.handle(
@@ -813,8 +960,21 @@ async function startApplication() {
       requireTrustedSender(event);
       return enqueueImportedLibraryMutation(async () => {
         const result = await bridge.assignImportedFamily(identifiers, family);
-        await pruneLibraryPreferences();
-        return result;
+        let preferenceCleanupPending = false;
+        try {
+          await libraryPreferencesReconciler.reconcile();
+        } catch (error) {
+          preferenceCleanupPending = true;
+          console.error(
+            "The imported cursor family changed, but saved preferences could not be reconciled.",
+            error,
+          );
+        }
+        notifyLibraryChanged({
+          reason: "renderer-assign-imported-family",
+          identifiers: result.identifiers,
+        });
+        return { ...result, preferenceCleanupPending };
       });
     },
   );
@@ -840,7 +1000,7 @@ async function startApplication() {
   const automation = createCursorAutomation({
     bridge,
     preferencesStore,
-    nativeTheme,
+    getSystemAppearance,
     onCursorChanged: notifyCursorChanged,
     onError: (error, { reason }) => {
       console.error(`Cursor automation failed (${reason}).`, error);
@@ -879,17 +1039,17 @@ async function startApplication() {
   });
 
   let menuBarVisible = initialPreferences.menuBar.visible === true;
-  let shouldStayRunning = shouldRegisterMainAppLoginItem(initialPreferences);
+  let shouldStayRunning = shouldMainAppStayRunning(initialPreferences);
   const unsubscribePreferences = preferencesStore.subscribe((preferences) => {
     const nextMenuBarVisible = preferences.menuBar.visible === true;
     const menuBarVisibilityChanged = nextMenuBarVisible !== menuBarVisible;
-    const nextShouldStayRunning = shouldRegisterMainAppLoginItem(preferences);
+    const nextShouldStayRunning = shouldMainAppStayRunning(preferences);
     const backgroundPreferenceChanged =
       nextShouldStayRunning !== shouldStayRunning;
     menuBarVisible = nextMenuBarVisible;
     shouldStayRunning = nextShouldStayRunning;
     broadcastToRenderers("preferences:changed", preferences);
-    syncMainLoginItem(preferences);
+    mainLoginItemReconciler.sync(shouldRegisterMainAppLoginItem(preferences));
     syncTray(preferences);
     if (backgroundPreferenceChanged) {
       windowLifecycle?.handleBackgroundPreferenceChanged(nextShouldStayRunning);
@@ -912,15 +1072,21 @@ async function startApplication() {
 
   const handleNativeThemeUpdated = () => {
     syncWindowBackgrounds();
-    void automation.appearanceChanged();
   };
+  const handleSystemAppearanceUpdated = () =>
+    void automation.appearanceChanged();
   const handleWake = () => void automation.wake();
   nativeTheme.on("updated", handleNativeThemeUpdated);
   powerMonitor.on("resume", handleWake);
   powerMonitor.on("unlock-screen", handleWake);
 
   const localNotificationIds = [];
+  let appearanceNotificationId = null;
   if (process.platform === "darwin") {
+    appearanceNotificationId = systemPreferences.subscribeNotification(
+      "AppleInterfaceThemeChangedNotification",
+      handleSystemAppearanceUpdated,
+    );
     for (const notification of [
       "NSSystemClockDidChangeNotification",
       "NSSystemTimeZoneDidChangeNotification",
@@ -936,12 +1102,20 @@ async function startApplication() {
     stopping = true;
     windowLifecycle?.beginQuit();
     automation.stop();
+    libraryPreferencesReconciler.stop();
+    themeSizeCleanupReconciler.stop();
+    mainLoginItemReconciler.stop();
+    disposeAppAppearanceIpc();
     unsubscribePreferences();
     nativeTheme.off("updated", handleNativeThemeUpdated);
     powerMonitor.off("resume", handleWake);
     powerMonitor.off("unlock-screen", handleWake);
     for (const identifier of localNotificationIds) {
       systemPreferences.unsubscribeLocalNotification(identifier);
+    }
+    if (appearanceNotificationId !== null) {
+      systemPreferences.unsubscribeNotification(appearanceNotificationId);
+      appearanceNotificationId = null;
     }
     tray?.destroy();
     tray = null;
@@ -967,9 +1141,38 @@ async function startApplication() {
   }
   await loginItemReconciliation;
   if (!stopping) {
-    void automation.start().catch((error) => {
+    try {
+      await themeSizeCleanupReconciler.reconcile();
+    } catch (error) {
+      console.error(
+        "Deleted cursor size preferences could not be reconciled at startup.",
+        error,
+      );
+    }
+  }
+  if (!stopping) {
+    try {
+      await libraryPreferencesReconciler.reconcile();
+    } catch (error) {
+      console.error(
+        "Cursor library preferences could not be reconciled at startup.",
+        error,
+      );
+    }
+    const automationStart = automation.start().catch((error) => {
       console.error("Could not start cursor automation.", error);
     });
+    if (backgroundLaunch) {
+      void automationStart.finally(() => {
+        if (
+          !stopping &&
+          !shouldMainAppStayRunning(preferencesStore.get()) &&
+          !hasVisibleWindows()
+        ) {
+          windowLifecycle?.handleBackgroundPreferenceChanged(false);
+        }
+      });
+    }
   }
 }
 

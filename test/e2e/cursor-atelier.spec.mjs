@@ -425,6 +425,20 @@ test.describe("Cursor Atelier packaged app", () => {
     });
   });
 
+  test("labels configured defaults separately from the live cursor", async ({
+    cursorPage: page,
+  }) => {
+    await page.evaluate(() =>
+      window.electronAPI.updateCursorPreferences({
+        appearance: { lightCursorId: "OreoBlue" },
+      }),
+    );
+
+    await expect(page.getByText("Defaults", { exact: true })).toBeVisible();
+    await expect(page.getByText("Current", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Light · Oreo", { exact: true })).toBeVisible();
+  });
+
   test("persists a cursor favorite and exposes the focused settings screen", async ({
     cursorApp,
     cursorPage: page,
@@ -461,7 +475,6 @@ test.describe("Cursor Atelier packaged app", () => {
     await expect(
       page.getByRole("heading", { name: "Settings", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "General", exact: true }).click();
     const appearanceSwitch = page.getByRole("switch", {
       name: "Switch Cursors with System Appearance",
     });
@@ -487,9 +500,6 @@ test.describe("Cursor Atelier packaged app", () => {
     await expect(
       page.getByRole("switch", { name: "Show in Dock" }),
     ).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Randomization", exact: true })
-      .click();
     await expect(
       page.getByRole("button", { name: "Randomize Now", exact: true }),
     ).toBeVisible();
@@ -500,7 +510,60 @@ test.describe("Cursor Atelier packaged app", () => {
     await page
       .getByRole("option", { name: "Every x hours", exact: true })
       .click();
-    await expect(page.locator("#random-interval")).toHaveValue("1");
+    const interval = page.locator("#random-interval");
+    await expect(interval).toHaveValue("1");
+    await interval.fill("5");
+    await interval.press("Escape");
+    await expect(interval).toHaveValue("1");
+    await interval.fill("");
+    await interval.blur();
+    await expect(interval).toHaveValue("1");
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const preferences = await window.electronAPI.getCursorPreferences();
+          return preferences.randomization.schedule.intervalHours;
+        }),
+      )
+      .toBe(1);
+
+    await page.locator("#random-schedule").click();
+    await page.getByRole("option", { name: "Daily", exact: true }).click();
+    const dailyTime = page.locator("#random-daily-time");
+    await expect(dailyTime).toHaveValue("09:00");
+    await dailyTime.fill("18:30");
+    await dailyTime.press("Escape");
+    await expect(dailyTime).toHaveValue("09:00");
+    await dailyTime.fill("");
+    await dailyTime.blur();
+    await expect(dailyTime).toHaveValue("09:00");
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const preferences = await window.electronAPI.getCursorPreferences();
+          return preferences.randomization.schedule.dailyTime;
+        }),
+      )
+      .toBe("09:00");
+
+    await page.locator("#random-schedule").click();
+    await page
+      .getByRole("option", { name: "Specific times", exact: true })
+      .click();
+    const firstTime = page.getByLabel("Random cursor time 1");
+    const secondTime = page.getByLabel("Random cursor time 2");
+    await firstTime.fill("20:00");
+    await expect(firstTime).toHaveValue("20:00");
+    await expect(secondTime).toHaveValue("17:00");
+    await page.getByRole("button", { name: "Add Time", exact: true }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const preferences = await window.electronAPI.getCursorPreferences();
+          return preferences.randomization.schedule.times;
+        }),
+      )
+      .toEqual(["00:00", "17:00", "20:00"]);
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
   });

@@ -350,6 +350,7 @@ describe("cursor bridge imported manifests", () => {
     };
     const calls = [];
     const trashed = [];
+    let artifactPresentDuringTeardown = null;
     let artifactPresentDuringSizeCleanup = null;
     const bridge = createCursorBridge({
       nativePath: "injected",
@@ -358,6 +359,7 @@ describe("cursor bridge imported manifests", () => {
       commandRunner: async ({ command, arguments: args }) => {
         calls.push([command, ...args]);
         if (command === "--teardown") {
+          artifactPresentDuringTeardown = fs.existsSync(pack.packRoot);
           rawStatus = {
             ...rawStatus,
             desiredEnabled: false,
@@ -405,11 +407,265 @@ describe("cursor bridge imported manifests", () => {
       ["--status"],
     ]);
     expect(artifactPresentDuringSizeCleanup).toBe(false);
+    expect(artifactPresentDuringTeardown).toBe(false);
     expect(trashed).toEqual(["imported-aurora"]);
     expect(fs.existsSync(pack.packRoot)).toBe(false);
   });
 
-  it("tears down an unidentified drifted live cursor without replacing an unrelated selection", async () => {
+  it("restores quarantined artifacts and reapplies the prior cursor when native deletion fails", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    const pack = writeImportedPack(importedPacksRoot);
+    const calls = [];
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner: async ({ command, arguments: args }) => {
+        calls.push([command, ...args]);
+        if (command === "--status") {
+          return {
+            supported: true,
+            themeValid: true,
+            selectedThemeIdentifier: "ImportedAurora",
+            effectiveNativeThemeId: "ImportedAurora",
+            desiredEnabled: true,
+            effectiveApplied: true,
+            currentSentinelsMatchTheme: true,
+            launchAtLoginDesired: true,
+            loginItemRegistrationCurrent: true,
+          };
+        }
+        if (command === "--teardown") {
+          throw new Error("teardown failed");
+        }
+        return {};
+      },
+      trashImportedArtifact: vi.fn(),
+    });
+
+    await expect(
+      bridge.deleteImportedThemes(["ImportedAurora"]),
+    ).rejects.toThrow("native cursor operation could not be completed");
+
+    expect(fs.existsSync(pack.packRoot)).toBe(true);
+    expect(calls).toEqual([
+      ["--status"],
+      ["--teardown"],
+      ["--apply-theme", "ImportedAurora"],
+      ["--status"],
+    ]);
+  });
+
+  it("restores an inactive imported selection when fallback selection fails", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    const pack = writeImportedPack(importedPacksRoot);
+    const calls = [];
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner: async ({ command, arguments: args }) => {
+        calls.push([command, ...args]);
+        if (command === "--status") {
+          return {
+            supported: true,
+            themeValid: true,
+            selectedThemeIdentifier: "ImportedAurora",
+            desiredEnabled: false,
+            effectiveApplied: false,
+            currentSentinelsMatchTheme: false,
+          };
+        }
+        if (command === "--select-theme" && args[0] === "OreoWhite") {
+          throw new Error("selection failed");
+        }
+        return {};
+      },
+      trashImportedArtifact: vi.fn(),
+    });
+
+    await expect(
+      bridge.deleteImportedThemes(["ImportedAurora"]),
+    ).rejects.toThrow("native cursor operation could not be completed");
+
+    expect(fs.existsSync(pack.packRoot)).toBe(true);
+    expect(calls).toEqual([
+      ["--status"],
+      ["--select-theme", "OreoWhite"],
+      ["--select-theme", "ImportedAurora"],
+      ["--status"],
+    ]);
+  });
+
+  it.each([
+    {
+      label: "without launch intent",
+      launchDesired: false,
+      priorRegistrationCurrent: false,
+      expectedCommands: [
+        ["--select-theme", "ImportedAurora"],
+        ["--enable"],
+        ["--status"],
+      ],
+    },
+    {
+      label: "with launch intent awaiting convergence",
+      launchDesired: true,
+      priorRegistrationCurrent: false,
+      expectedCommands: [["--apply-theme", "ImportedAurora"], ["--status"]],
+    },
+  ])(
+    "recovers exact live deletion state $label",
+    async ({ launchDesired, priorRegistrationCurrent, expectedCommands }) => {
+      const importedPacksRoot = temporaryDirectory();
+      writeImportedPack(importedPacksRoot);
+      let rawStatus = {
+        supported: true,
+        themeValid: true,
+        selectedThemeIdentifier: "OreoWhite",
+        desiredEnabled: false,
+        effectiveApplied: false,
+        currentSentinelsMatchTheme: false,
+        launchAtLoginDesired: false,
+        loginItemRegistrationCurrent: false,
+      };
+      const calls = [];
+      const bridge = createCursorBridge({
+        nativePath: "injected",
+        discover: false,
+        importedPacksRoot,
+        commandRunner: async ({ command, arguments: args }) => {
+          calls.push([command, ...args]);
+          if (command === "--select-theme") {
+            rawStatus = { ...rawStatus, selectedThemeIdentifier: args[0] };
+          }
+          if (command === "--enable" || command === "--apply-theme") {
+            rawStatus = {
+              ...rawStatus,
+              selectedThemeIdentifier:
+                command === "--apply-theme"
+                  ? args[0]
+                  : rawStatus.selectedThemeIdentifier,
+              desiredEnabled: true,
+              effectiveApplied: true,
+              currentSentinelsMatchTheme: true,
+              launchAtLoginDesired: launchDesired,
+              loginItemRegistrationCurrent: launchDesired,
+            };
+          }
+          return { ...rawStatus };
+        },
+      });
+
+      await expect(
+        bridge.recoverImportedDeletionState({
+          previousSelectedIdentifier: "ImportedAurora",
+          previousEffectiveIdentifier: "ImportedAurora",
+          previousCursorWasLive: true,
+          previousDesiredEnabled: true,
+          previousLaunchAtLoginDesired: launchDesired,
+          previousLoginItemRegistrationCurrent: priorRegistrationCurrent,
+          previousTransactionPending: false,
+          teardownPlanned: true,
+        }),
+      ).resolves.toMatchObject({
+        desiredEnabled: true,
+        effectiveApplied: true,
+        launchAtLoginDesired: launchDesired,
+      });
+      expect(calls).toEqual(expectedCommands);
+    },
+  );
+
+  it("refuses desired-but-inactive deletion before fallback selection can apply it", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    const pack = writeImportedPack(importedPacksRoot);
+    const rawStatus = {
+      supported: true,
+      themeValid: true,
+      selectedThemeIdentifier: "ImportedAurora",
+      desiredEnabled: true,
+      effectiveApplied: false,
+      currentSentinelsMatchTheme: false,
+      launchAtLoginDesired: true,
+      loginItemRegistrationCurrent: true,
+    };
+    const calls = [];
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner: async ({ command, arguments: args }) => {
+        calls.push([command, ...args]);
+        return { ...rawStatus };
+      },
+      trashImportedArtifact: vi.fn(),
+    });
+
+    await expect(
+      bridge.deleteImportedThemes(["ImportedAurora"]),
+    ).rejects.toMatchObject({ code: "NATIVE_RECOVERY_UNSUPPORTED" });
+
+    expect(fs.existsSync(pack.packRoot)).toBe(true);
+    expect(calls).toEqual([["--status"]]);
+    const recoveryDirectories = fs
+      .readdirSync(importedPacksRoot)
+      .filter((name) => name.startsWith(".delete-"));
+    expect(recoveryDirectories).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      label: "persisted application",
+      persistedEffectiveApplied: true,
+      currentSentinelsMatchTheme: false,
+    },
+    {
+      label: "live sentinels",
+      persistedEffectiveApplied: false,
+      currentSentinelsMatchTheme: true,
+    },
+  ])(
+    "refuses selected inactive deletion with contradictory $label state",
+    async ({ persistedEffectiveApplied, currentSentinelsMatchTheme }) => {
+      const importedPacksRoot = temporaryDirectory();
+      const pack = writeImportedPack(importedPacksRoot);
+      const calls = [];
+      const bridge = createCursorBridge({
+        nativePath: "injected",
+        discover: false,
+        importedPacksRoot,
+        commandRunner: async ({ command, arguments: args }) => {
+          calls.push([command, ...args]);
+          return {
+            supported: true,
+            themeValid: true,
+            selectedThemeIdentifier: "ImportedAurora",
+            desiredEnabled: false,
+            effectiveApplied: persistedEffectiveApplied,
+            currentSentinelsMatchTheme,
+            launchAtLoginDesired: false,
+            loginItemRegistrationCurrent: false,
+          };
+        },
+        trashImportedArtifact: vi.fn(),
+      });
+
+      await expect(
+        bridge.deleteImportedThemes(["ImportedAurora"]),
+      ).rejects.toMatchObject({ code: "NATIVE_RECOVERY_UNSUPPORTED" });
+
+      expect(fs.existsSync(pack.packRoot)).toBe(true);
+      expect(calls).toEqual([["--status"]]);
+      expect(
+        fs
+          .readdirSync(importedPacksRoot)
+          .some((name) => name.startsWith(".delete-")),
+      ).toBe(false);
+    },
+  );
+
+  it("refuses deletion while the persisted live cursor cannot be identified", async () => {
     const importedPacksRoot = temporaryDirectory();
     writeImportedPack(importedPacksRoot);
     let rawStatus = {
@@ -446,16 +702,11 @@ describe("cursor bridge imported manifests", () => {
 
     await expect(
       bridge.deleteImportedThemes(["ImportedAurora"]),
-    ).resolves.toMatchObject({
-      restoredToMacOS: true,
-      selectionReassigned: false,
-    });
-    expect(calls).toEqual([
-      ["--status"],
-      ["--teardown"],
-      ["--forget-theme-size", "ImportedAurora"],
-      ["--status"],
-    ]);
+    ).rejects.toMatchObject({ code: "EFFECTIVE_CURSOR_UNIDENTIFIED" });
+    expect(calls).toEqual([["--status"]]);
+    expect(fs.existsSync(path.join(importedPacksRoot, "imported-aurora"))).toBe(
+      true,
+    );
   });
 
   it("forgets every deleted family member after removal and reports cleanup failures without undoing deletion", async () => {
@@ -475,6 +726,7 @@ describe("cursor bridge imported manifests", () => {
       family: "Aurora",
     });
     const calls = [];
+    const persistPendingThemeSizeCleanup = vi.fn();
     const bridge = createCursorBridge({
       nativePath: "injected",
       discover: false,
@@ -512,17 +764,22 @@ describe("cursor bridge imported manifests", () => {
       },
       trashImportedArtifact: (artifactPath) =>
         fs.promises.rm(artifactPath, { recursive: true }),
+      persistPendingThemeSizeCleanup,
     });
 
     await expect(bridge.deleteImportedFamily("Aurora")).resolves.toMatchObject({
       removedCount: 2,
       sizePreferenceCleanupPending: true,
+      sizePreferenceCleanupIdentifiers: ["ImportedAuroraBlue"],
     });
     expect(
       calls.filter(([command]) => command === "--forget-theme-size"),
     ).toEqual([
       ["--forget-theme-size", "ImportedAuroraBlue"],
       ["--forget-theme-size", "ImportedAuroraRed"],
+    ]);
+    expect(persistPendingThemeSizeCleanup).toHaveBeenCalledWith([
+      "ImportedAuroraBlue",
     ]);
     expect(fs.existsSync(blue.packRoot)).toBe(false);
     expect(fs.existsSync(red.packRoot)).toBe(false);
@@ -975,6 +1232,65 @@ describe("cursor bridge imported manifests", () => {
     await invalidating;
     expect(invalidated).toBe(true);
   });
+
+  it("checks an apply guard after earlier native mutations leave the queue", async () => {
+    const importedPacksRoot = temporaryDirectory();
+    writeImportedPack(importedPacksRoot);
+    let releaseFirstApply;
+    let markFirstApplyStarted;
+    let applyCalls = 0;
+    const firstApplyStarted = new Promise((resolve) => {
+      markFirstApplyStarted = resolve;
+    });
+    const commandRunner = vi.fn(async ({ command }) => {
+      if (command === "--list-themes") {
+        return [{ Identifier: "ImportedAurora" }];
+      }
+      if (command === "--apply-theme") {
+        applyCalls += 1;
+        if (applyCalls === 1) {
+          markFirstApplyStarted();
+          await new Promise((resolve) => {
+            releaseFirstApply = resolve;
+          });
+        }
+      }
+      return {
+        supported: true,
+        themeValid: true,
+        effectiveApplied: true,
+        currentSentinelsMatchTheme: true,
+        selectedThemeIdentifier: "ImportedAurora",
+      };
+    });
+    const bridge = createCursorBridge({
+      nativePath: "injected",
+      discover: false,
+      importedPacksRoot,
+      commandRunner,
+    });
+    await bridge.listThemes();
+
+    const firstApply = bridge.applyTheme("imported-aurora");
+    await firstApplyStarted;
+    let current = true;
+    const shouldApply = vi.fn(() => current);
+    const staleApply = bridge.applyTheme("imported-aurora", { shouldApply });
+    current = false;
+    releaseFirstApply();
+
+    await firstApply;
+    await expect(staleApply).resolves.toEqual({
+      applySkipped: true,
+      reason: "stale-request",
+    });
+    expect(shouldApply).toHaveBeenCalledOnce();
+    expect(
+      commandRunner.mock.calls.filter(
+        ([request]) => request.command === "--apply-theme",
+      ),
+    ).toHaveLength(1);
+  });
 });
 
 describe("cursor bridge live native state", () => {
@@ -1256,7 +1572,7 @@ describe("cursor IPC", () => {
       listThemes: vi.fn(() => []),
       applyTheme: vi.fn(),
       setThemeSize: vi.fn(),
-      restore: vi.fn(),
+      restoreState: vi.fn(),
       openLoginSettings: vi.fn(),
     };
     registerCursorIpc({
@@ -1270,7 +1586,7 @@ describe("cursor IPC", () => {
       "cursor:list-themes",
       "cursor:apply-theme",
       "cursor:set-theme-size",
-      "cursor:restore",
+      "cursor:restore-state",
       "cursor:open-login-settings",
     ]);
     expect(() => handlers.get("cursor:status")({ trusted: false })).toThrow(

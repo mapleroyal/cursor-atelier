@@ -9,11 +9,13 @@ import pathlib
 import plistlib
 import pwd
 import shutil
+import struct
 import subprocess
 import tempfile
 import textwrap
 import unittest
 import uuid
+import zlib
 
 
 NATIVE_ROOT = pathlib.Path(__file__).parent
@@ -33,6 +35,11 @@ class ImportedThemeStoreTests(unittest.TestCase):
                 #import <Foundation/Foundation.h>
                 #import "OreoCursorEngine.h"
 
+                NSUInteger OreoCursorTestingSnapshotPreparation(
+                    BOOL snapshotExists, BOOL effective, BOOL activeBootCurrent);
+                NSUInteger OreoCursorTestingSnapshotRestore(
+                    BOOL snapshotExists, BOOL effective, BOOL activeBootCurrent);
+
                 static void PrintJSON(id object) {
                     NSData *data = [NSJSONSerialization
                         dataWithJSONObject:object options:0 error:NULL];
@@ -42,6 +49,39 @@ class ImportedThemeStoreTests(unittest.TestCase):
 
                 int main(int argc, const char **argv) {
                     @autoreleasepool {
+                        if (argc == 2 && strcmp(argv[1], "policy") == 0) {
+                            PrintJSON(@{
+                                @"preparation": @[
+                                    @(OreoCursorTestingSnapshotPreparation(
+                                        NO, NO, NO)),
+                                    @(OreoCursorTestingSnapshotPreparation(
+                                        YES, NO, NO)),
+                                    @(OreoCursorTestingSnapshotPreparation(
+                                        YES, YES, NO)),
+                                    @(OreoCursorTestingSnapshotPreparation(
+                                        YES, NO, YES)),
+                                    @(OreoCursorTestingSnapshotPreparation(
+                                        NO, YES, NO)),
+                                    @(OreoCursorTestingSnapshotPreparation(
+                                        NO, NO, YES)),
+                                ],
+                                @"restore": @[
+                                    @(OreoCursorTestingSnapshotRestore(
+                                        NO, NO, NO)),
+                                    @(OreoCursorTestingSnapshotRestore(
+                                        YES, NO, NO)),
+                                    @(OreoCursorTestingSnapshotRestore(
+                                        YES, YES, NO)),
+                                    @(OreoCursorTestingSnapshotRestore(
+                                        YES, NO, YES)),
+                                    @(OreoCursorTestingSnapshotRestore(
+                                        NO, YES, NO)),
+                                    @(OreoCursorTestingSnapshotRestore(
+                                        NO, NO, YES)),
+                                ],
+                            });
+                            return 0;
+                        }
                         if (argc == 2 && strcmp(argv[1], "list") == 0) {
                             PrintJSON([OreoCursorEngine availableThemes]);
                             return 0;
@@ -84,6 +124,7 @@ class ImportedThemeStoreTests(unittest.TestCase):
                 "-fobjc-arc",
                 "-fblocks",
                 "-fmodules",
+                "-DOREO_CURSOR_ENGINE_TESTING=1",
                 "-I",
                 str(ENGINE_HEADER.parent),
                 str(ENGINE_SOURCE),
@@ -137,6 +178,26 @@ class ImportedThemeStoreTests(unittest.TestCase):
             "Group": "Imported",
         }
 
+    @staticmethod
+    def _transparent_png(width: int, height: int) -> bytes:
+        def chunk(kind: bytes, payload: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(payload))
+                + kind
+                + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+            )
+
+        header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+        row = b"\0" + b"\0" * (width * 4)
+        pixels = zlib.compress(row * height, level=9)
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", header)
+            + chunk(b"IDAT", pixels)
+            + chunk(b"IEND", b"")
+        )
+
     def _install(
         self,
         pack_identifier: str,
@@ -173,6 +234,15 @@ class ImportedThemeStoreTests(unittest.TestCase):
 
     def _themes(self) -> list[dict[str, str]]:
         return json.loads(self._run("list").stdout)
+
+    def test_snapshot_ownership_policy_matrix_is_fail_closed(self) -> None:
+        policy = json.loads(self._run("policy").stdout)
+        # Preparation: create, discard orphan, reuse owned (effective/boot),
+        # then reject missing owned state (effective/boot).
+        self.assertEqual(policy["preparation"], [0, 1, 2, 2, 3, 3])
+        # Restore: inactive is always a no-op, owned state restores only with a
+        # snapshot, and missing owned state remains an explicit failure.
+        self.assertEqual(policy["restore"], [0, 0, 1, 1, 2, 2])
 
     def test_discovers_and_integrity_checks_an_imported_resource(self) -> None:
         pack, data, entry = self._install("fixture-pack")
@@ -264,6 +334,42 @@ class ImportedThemeStoreTests(unittest.TestCase):
             )
         finally:
             self.imported_root.parent.chmod(0o700)
+
+    def test_directory_quota_excludes_only_exact_transaction_entries(self) -> None:
+        _, _, entry = self._install("quota-fixture", "QuotaFixture")
+        prefixes = ("import", "metadata", "delete")
+        for prefix in prefixes:
+            for index in range(513):
+                transaction = self.imported_root / (
+                    f".{prefix}-Aa{index:04d}"
+                )
+                transaction.mkdir(mode=0o700)
+
+        self.assertIn(
+            entry["Identifier"],
+            {theme["Identifier"] for theme in self._themes()},
+        )
+
+        # Exactly 512 near-misses plus the pack exceed the quota. If even one
+        # near-miss is incorrectly exempted, the catalogue remains visible.
+        invalid_templates = (
+            ".metadata-{index:05d}",
+            ".metadata-{index:06d}-stale",
+            ".metadata-{index:05d}_",
+            ".metadatax-{index:06d}",
+            ".import-{index:05d}",
+            ".delete-{index:06d}x",
+            ".other-{index:06d}",
+        )
+        for index in range(512):
+            template = invalid_templates[index % len(invalid_templates)]
+            invalid = self.imported_root / template.format(index=index)
+            invalid.mkdir(mode=0o700)
+
+        self.assertNotIn(
+            entry["Identifier"],
+            {theme["Identifier"] for theme in self._themes()},
+        )
 
     def test_rejects_insecure_store_pack_manifest_and_resource_modes(self) -> None:
         scenarios = ("writable-data", "store", "pack", "manifest", "resource")
@@ -370,6 +476,58 @@ class ImportedThemeStoreTests(unittest.TestCase):
                     entry["Identifier"],
                     {theme["Identifier"] for theme in self._themes()},
                 )
+
+    def test_rejects_theme_exceeding_aggregate_decoded_image_budget(self) -> None:
+        identifier = "AggregateBudgetFixture"
+        pack, _, entry = self._install("aggregate-budget", identifier)
+        resource = pack / entry["Resource"]
+        with resource.open("rb") as handle:
+            root = plistlib.load(handle)
+
+        def install_with_points(points: int) -> bytes:
+            representations = [
+                self._transparent_png(scale * points, scale * points)
+                for scale in (1, 2, 3)
+            ]
+            for cursor in root["Cursors"].values():
+                cursor.update(
+                    {
+                        "FrameCount": 1,
+                        "FrameDuration": 1.0,
+                        "HotSpotX": 0.0,
+                        "HotSpotY": 0.0,
+                        "PointsHigh": float(points),
+                        "PointsWide": float(points),
+                        "Representations": representations,
+                    }
+                )
+            data = plistlib.dumps(
+                root, fmt=plistlib.FMT_BINARY, sort_keys=False
+            )
+            resource.write_bytes(data)
+            resource.chmod(0o600)
+            entry["SHA256"] = hashlib.sha256(data).hexdigest()
+            manifest = pack / "manifest.json"
+            manifest.write_text(
+                json.dumps({"schemaVersion": 2, "themes": [entry]}),
+                encoding="utf-8",
+            )
+            manifest.chmod(0o600)
+            return data
+
+        control = install_with_points(128)
+        self.assertLess(len(control), 32 * 1024 * 1024)
+        self.assertIn(
+            identifier,
+            {theme["Identifier"] for theme in self._themes()},
+        )
+
+        oversized = install_with_points(256)
+        self.assertLess(len(oversized), 32 * 1024 * 1024)
+        self.assertNotIn(
+            identifier,
+            {theme["Identifier"] for theme in self._themes()},
+        )
 
     def test_bundled_identifiers_take_precedence(self) -> None:
         pack = self.imported_root / "collision-pack"

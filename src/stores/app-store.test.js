@@ -3,28 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyThemeToDocument,
   createAppStore,
-  getElectronTheme,
+  getAppAppearanceMode,
   getInitialTheme,
   getInitialThemeMode,
-  getStoredThemeMode,
   resolveTheme,
   subscribeToSystemTheme,
 } from "./app-store";
 
-function createStorage(initialThemeMode = null) {
-  let value = initialThemeMode;
-
+function createElectronAPI(appearanceMode = "system") {
   return {
-    getItem: vi.fn(() => value),
-    setItem: vi.fn((_, nextThemeMode) => {
-      value = nextThemeMode;
-    }),
-  };
-}
-
-function createElectronAPI(theme = null) {
-  return {
-    getSystemTheme: vi.fn(() => theme),
+    getAppAppearanceMode: vi.fn(() => appearanceMode),
+    setAppAppearanceMode: vi.fn(async (mode) => mode),
   };
 }
 
@@ -65,26 +54,17 @@ describe("app store theme behavior", () => {
     expect(getInitialThemeMode()).toBe("system");
   });
 
-  it("prefers a persisted explicit theme over Electron and OS defaults", () => {
-    const storage = createStorage("dark");
-    const electronAPI = createElectronAPI("light");
+  it("prefers the main-process appearance mode over OS defaults", () => {
+    const electronAPI = createElectronAPI("dark");
     const matchMedia = vi.fn(() => ({ matches: false }));
 
-    expect(getStoredThemeMode(storage)).toBe("dark");
-    expect(getInitialThemeMode({ storage })).toBe("dark");
-    expect(getInitialTheme({ electronAPI, matchMedia, storage })).toBe("dark");
-    expect(electronAPI.getSystemTheme).not.toHaveBeenCalled();
+    expect(getAppAppearanceMode(electronAPI)).toBe("dark");
+    expect(getInitialThemeMode({ electronAPI })).toBe("dark");
+    expect(getInitialTheme({ electronAPI, matchMedia })).toBe("dark");
     expect(matchMedia).not.toHaveBeenCalled();
   });
 
-  it("reads the preload-provided system theme when available", () => {
-    const electronAPI = createElectronAPI("dark");
-
-    expect(getElectronTheme(electronAPI)).toBe("dark");
-    expect(electronAPI.getSystemTheme).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls back to OS preference when Electron theme is unavailable", () => {
+  it("reads the effective system theme from the renderer media query", () => {
     const matchMedia = vi.fn(() => ({ matches: true }));
 
     expect(getInitialTheme({ matchMedia })).toBe("dark");
@@ -92,44 +72,70 @@ describe("app store theme behavior", () => {
   });
 
   it("resolves system mode into the current effective theme", () => {
-    const electronAPI = createElectronAPI("light");
+    const matchMedia = vi.fn(() => ({ matches: false }));
 
-    expect(resolveTheme("system", { electronAPI })).toBe("light");
+    expect(resolveTheme("system", { matchMedia })).toBe("light");
   });
 
   it("store starts in system mode and resolves the current system theme", () => {
-    const electronAPI = createElectronAPI("dark");
+    const controller = createMatchMediaController("dark");
+    const store = createAppStore({ matchMedia: controller.matchMedia });
+
+    expect(store.getState().themeMode).toBe("system");
+    expect(store.getState().theme).toBe("dark");
+  });
+
+  it("setTheme updates optimistically and persists through Electron", async () => {
+    const electronAPI = createElectronAPI();
     const store = createAppStore({ electronAPI });
 
-    expect(store.getState().themeMode).toBe("system");
-    expect(store.getState().theme).toBe("dark");
-  });
-
-  it("setTheme updates and persists explicit theme values", () => {
-    const storage = createStorage();
-    const store = createAppStore({ storage });
-
-    store.getState().setTheme("dark");
+    await store.getState().setTheme("dark");
     expect(store.getState().themeMode).toBe("dark");
     expect(store.getState().theme).toBe("dark");
-    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "dark");
+    expect(electronAPI.setAppAppearanceMode).toHaveBeenLastCalledWith("dark");
 
-    store.getState().setTheme("light");
+    await store.getState().setTheme("light");
     expect(store.getState().themeMode).toBe("light");
     expect(store.getState().theme).toBe("light");
-    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "light");
+    expect(electronAPI.setAppAppearanceMode).toHaveBeenLastCalledWith("light");
   });
 
-  it("can switch back to following the current system theme", () => {
-    const electronAPI = createElectronAPI("dark");
-    const storage = createStorage("light");
-    const store = createAppStore({ electronAPI, storage });
+  it("can switch back to following the current system theme", async () => {
+    const controller = createMatchMediaController("dark");
+    const electronAPI = createElectronAPI("light");
+    const store = createAppStore({
+      electronAPI,
+      matchMedia: controller.matchMedia,
+    });
 
-    store.getState().followSystemTheme();
+    await store.getState().followSystemTheme();
 
     expect(store.getState().themeMode).toBe("system");
     expect(store.getState().theme).toBe("dark");
-    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "system");
+    expect(electronAPI.setAppAppearanceMode).toHaveBeenLastCalledWith("system");
+  });
+
+  it("re-resolves System after Electron removes the explicit override", async () => {
+    const controller = createMatchMediaController("light");
+    const electronAPI = createElectronAPI("light");
+    electronAPI.setAppAppearanceMode.mockImplementation(async (mode) => {
+      if (mode === "system") {
+        controller.setTheme("dark");
+      }
+      return mode;
+    });
+    const store = createAppStore({
+      electronAPI,
+      matchMedia: controller.matchMedia,
+    });
+
+    await store.getState().followSystemTheme();
+
+    expect(store.getState()).toMatchObject({
+      themeMode: "system",
+      theme: "dark",
+      themeError: null,
+    });
   });
 
   it("syncs with system theme changes while in system mode", () => {
@@ -168,23 +174,116 @@ describe("app store theme behavior", () => {
     unsubscribe();
   });
 
-  it("toggleTheme makes the effective theme explicit and persists it", () => {
-    const storage = createStorage("system");
+  it("toggleTheme makes the effective theme explicit and persists it", async () => {
     const controller = createMatchMediaController("light");
+    const electronAPI = createElectronAPI("system");
     const store = createAppStore({
+      electronAPI,
       matchMedia: controller.matchMedia,
-      storage,
     });
 
-    store.getState().toggleTheme();
+    await store.getState().toggleTheme();
     expect(store.getState().themeMode).toBe("dark");
     expect(store.getState().theme).toBe("dark");
-    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "dark");
+    expect(electronAPI.setAppAppearanceMode).toHaveBeenLastCalledWith("dark");
 
-    store.getState().toggleTheme();
+    await store.getState().toggleTheme();
     expect(store.getState().themeMode).toBe("light");
     expect(store.getState().theme).toBe("light");
-    expect(storage.setItem).toHaveBeenLastCalledWith("app-theme", "light");
+    expect(electronAPI.setAppAppearanceMode).toHaveBeenLastCalledWith("light");
+  });
+
+  it("rolls back and surfaces a persistence failure", async () => {
+    const electronAPI = createElectronAPI();
+    electronAPI.setAppAppearanceMode.mockRejectedValueOnce(
+      new Error("IPC failed"),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const store = createAppStore({ electronAPI });
+
+    const persistence = store.getState().setThemeMode("dark");
+    expect(store.getState().themeMode).toBe("dark");
+
+    await expect(persistence).resolves.toBe(false);
+    expect(store.getState()).toMatchObject({
+      themeMode: "system",
+      theme: "light",
+      themeError: "Couldn’t save the appearance preference.",
+    });
+    consoleError.mockRestore();
+  });
+
+  it("does not let an older failed save roll back a newer choice", async () => {
+    const electronAPI = createElectronAPI();
+    electronAPI.setAppAppearanceMode
+      .mockRejectedValueOnce(new Error("stale failure"))
+      .mockResolvedValueOnce("light");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const store = createAppStore({ electronAPI });
+
+    const darkSave = store.getState().setThemeMode("dark");
+    const lightSave = store.getState().setThemeMode("light");
+
+    await expect(darkSave).resolves.toBe(false);
+    expect(store.getState()).toMatchObject({
+      themeMode: "light",
+      theme: "light",
+      themeError: null,
+    });
+
+    await expect(lightSave).resolves.toBe(true);
+    consoleError.mockRestore();
+  });
+
+  it("rolls two failed rapid changes back to the last confirmed mode", async () => {
+    const electronAPI = createElectronAPI("system");
+    electronAPI.setAppAppearanceMode
+      .mockRejectedValueOnce(new Error("dark failed"))
+      .mockRejectedValueOnce(new Error("light failed"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const store = createAppStore({ electronAPI });
+
+    const darkSave = store.getState().setThemeMode("dark");
+    const lightSave = store.getState().setThemeMode("light");
+    expect(store.getState().themeMode).toBe("light");
+
+    await expect(darkSave).resolves.toBe(false);
+    await expect(lightSave).resolves.toBe(false);
+    expect(store.getState()).toMatchObject({
+      themeMode: "system",
+      theme: "light",
+      themeError: "Couldn’t save the appearance preference.",
+    });
+    consoleError.mockRestore();
+  });
+
+  it("rolls a failed latest change back to an earlier confirmed save", async () => {
+    const electronAPI = createElectronAPI("system");
+    electronAPI.setAppAppearanceMode
+      .mockResolvedValueOnce("dark")
+      .mockRejectedValueOnce(new Error("light failed"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const store = createAppStore({ electronAPI });
+
+    const darkSave = store.getState().setThemeMode("dark");
+    const lightSave = store.getState().setThemeMode("light");
+
+    await expect(darkSave).resolves.toBe(true);
+    await expect(lightSave).resolves.toBe(false);
+    expect(store.getState()).toMatchObject({
+      themeMode: "dark",
+      theme: "dark",
+      themeError: "Couldn’t save the appearance preference.",
+    });
+    consoleError.mockRestore();
   });
 
   it("applies the current theme to the document root", () => {

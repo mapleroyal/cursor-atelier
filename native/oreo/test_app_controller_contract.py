@@ -27,9 +27,9 @@ class AppControllerContractTests(unittest.TestCase):
         teardown = source[start:end]
 
         capture = "BOOL priorLoginDesired = OreoLoginItemDesired();"
-        disable = "OreoSetLoginItemDesired(NO);"
+        disable = "OreoSetLoginItemDesired(NO, &actionError);"
         restore = "success = [engine restore:&actionError];"
-        rollback = "OreoSetLoginItemDesired(priorLoginDesired);"
+        rollback = "OreoSetLoginItemDesired(priorLoginDesired,"
         self.assertLess(teardown.index(capture), teardown.index(disable))
         self.assertLess(teardown.index(disable), teardown.index(restore))
         self.assertIn("if (!success) {", teardown)
@@ -57,7 +57,8 @@ class AppControllerContractTests(unittest.TestCase):
             apply_theme,
         )
         self.assertIn(
-            "OreoSetLoginItemDesired(priorThemeUsable ? priorLoginDesired : NO);",
+            "OreoSetLoginItemDesired(\n"
+            "            priorThemeUsable ? priorLoginDesired : NO,",
             apply_theme,
         )
         self.assertIn(
@@ -198,6 +199,140 @@ class AppControllerContractTests(unittest.TestCase):
         recovered_branch = bring_current.index("if (recovered) {", recovery)
         self.assertIn("return YES;", bring_current[recovered_branch:desired])
 
+    def test_invalid_selected_theme_still_recovers_and_restores(self) -> None:
+        helper = HELPER.read_text(encoding="utf-8")
+        reload_engine = self._function(
+            helper,
+            "- (BOOL)reloadEngine:(NSError **)error",
+            "- (BOOL)bringStateCurrent:(NSError **)error",
+        )
+        bring_current = self._function(
+            helper,
+            "- (BOOL)bringStateCurrent:(NSError **)error",
+            "- (void)applicationDidFinishLaunching:",
+        )
+
+        self.assertIn("return candidate.supported;", reload_engine)
+        self.assertNotIn("!candidate.themeValid", reload_engine)
+        recovery = bring_current.index("recoverInterruptedTransaction:")
+        invalid = bring_current.index("if (!self.engine.themeValid)")
+        restore = bring_current.index("[self.engine restore:error]", invalid)
+        self.assertLess(recovery, invalid)
+        self.assertLess(invalid, restore)
+
+    def test_inactive_snapshot_is_neither_reused_nor_restored(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        ensure = self._function(
+            engine,
+            "- (BOOL)ensureSnapshot:(NSError **)error",
+            "- (BOOL)registerRecord:",
+        )
+        policy = ensure.index("OreoSnapshotPreparationForState(")
+        orphan = ensure.index(
+            "if (preparation == OreoSnapshotPreparationDiscardOrphan)",
+            policy,
+        )
+        remove = ensure.index("removeItemIfPresentAtURL:_snapshotURL", orphan)
+        validate = ensure.index("loadValidSnapshot:", remove)
+        create = ensure.index("[self createSnapshot:error]", validate)
+        self.assertLess(orphan, remove)
+        self.assertLess(remove, validate)
+        self.assertLess(validate, create)
+
+        restore = self._function(
+            engine,
+            "- (BOOL)restoreLocked:(NSError **)error",
+            "- (BOOL)refreshIfNeeded:(NSError **)error",
+        )
+        inactive = restore.index(
+            "if (disposition == OreoSnapshotRestoreInactive)"
+        )
+        missing = restore.index(
+            "if (disposition == OreoSnapshotRestoreMissingOwned)", inactive
+        )
+        load = restore.index("loadValidSnapshot:", missing)
+        inactive_branch = restore[inactive:missing]
+        self.assertIn("removeItemIfPresentAtURL:_snapshotURL", inactive_branch)
+        self.assertIn("return YES;", inactive_branch)
+        self.assertNotIn("bestEffortSystemReset", inactive_branch)
+        self.assertIn("[self bestEffortSystemReset];", restore[missing:load])
+        self.assertIn("return NO;", restore[missing:load])
+
+    def test_snapshot_validation_cache_is_bound_to_file_identity(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        identity = self._function(
+            engine,
+            "- (NSString * _Nullable)snapshotFileIdentity:",
+            "- (BOOL)persistDesiredState:",
+        )
+        self.assertIn("lstat(_snapshotURL.fileSystemRepresentation", identity)
+        self.assertIn("state.st_ino", identity)
+        self.assertIn("state.st_size", identity)
+        self.assertIn("state.st_mtimespec", identity)
+        self.assertIn("state.st_ctimespec", identity)
+        self.assertIn("state.st_nlink != 1", identity)
+
+        load = self._function(
+            engine,
+            "- (NSDictionary * _Nullable)loadValidSnapshot:",
+            "- (BOOL)hasDurableSnapshotOwnershipInDefaults:",
+        )
+        cache = load.index("_validatedSnapshotIdentity")
+        read = load.index("readPropertyListAtURL:", cache)
+        recheck = load.rindex("snapshotFileIdentity:")
+        self.assertLess(cache, read)
+        self.assertGreater(recheck, read)
+
+        refresh = self._function(
+            engine,
+            "- (BOOL)refreshIfNeededLocked:(NSError **)error",
+            "- (BOOL)validateSystemFallbackResources:",
+        )
+        sentinels = refresh.index("verifyThemeIdentifiers:sentinels")
+        snapshot = refresh.index("loadValidSnapshot:", sentinels)
+        self.assertLess(sentinels, snapshot)
+        matching_branch = refresh[sentinels:refresh.index("// Never reapply", snapshot)]
+        self.assertNotIn("persistDesiredState:", matching_branch)
+
+    def test_login_defaults_failures_participate_in_transactions(self) -> None:
+        controller = CONTROLLER.read_text(encoding="utf-8")
+        setter = self._function(
+            controller,
+            "BOOL OreoSetLoginItemDesired(BOOL desired, NSError **error)",
+            "BOOL OreoLoginItemDesired(void)",
+        )
+        self.assertIn("if ([defaults synchronize])", setter)
+        self.assertIn("return NO;", setter)
+
+        register = self._function(
+            controller,
+            "BOOL OreoRegisterLoginItem(NSError **error)",
+            "BOOL OreoUnregisterLoginItem(NSError **error)",
+        )
+        self.assertIn("if (!OreoPersistRegisteredHelperVersion", register)
+        self.assertIn("OreoWaitForLoginItemUnregister", register)
+        self.assertIn("return NO;", register)
+
+        unregister = self._function(
+            controller,
+            "BOOL OreoUnregisterLoginItem(NSError **error)",
+            "BOOL OreoUnregisterLegacyMainLoginItem(NSError **error)",
+        )
+        self.assertGreaterEqual(
+            unregister.count("OreoRestoreLoginItemAfterMarkerFailure"), 2
+        )
+
+    def test_helper_skips_unchanged_durable_status(self) -> None:
+        helper = HELPER.read_text(encoding="utf-8")
+        status = self._function(
+            helper,
+            "- (void)setLastStatus:(NSString *)status isError:(BOOL)isError",
+            "- (BOOL)reloadEngine:(NSError **)error",
+        )
+        unchanged = status.index("[priorStatus isEqualToString:status]")
+        save = status.index("OreoCursorSaveStatus", unchanged)
+        self.assertIn("return;", status[unchanged:save])
+
     def test_theme_validity_does_not_define_api_support(self) -> None:
         engine = ENGINE.read_text(encoding="utf-8")
         initialize = self._function(
@@ -251,6 +386,11 @@ class AppControllerContractTests(unittest.TestCase):
         self.assertIn(
             "static const double OreoMaximumThemeScale = 10;", engine
         )
+        self.assertIn(
+            "static const NSUInteger OreoMaximumDecodedThemeBytes = "
+            "128 * 1024 * 1024;",
+            engine,
+        )
         validation = self._function(
             engine,
             "static NSDictionary * _Nullable OreoValidatedThemeCursor(",
@@ -277,6 +417,17 @@ class AppControllerContractTests(unittest.TestCase):
         self.assertIn("hasThreeX = hasThreeX || scaleValue == 3", validation)
         self.assertIn("if (!hasOneX || !hasTwoX || !hasThreeX)", validation)
         self.assertNotIn("representations.count != 2", validation)
+
+        decoder = self._function(
+            engine,
+            "OreoDecodedThemeCursors(NSData *data,",
+            "- (BOOL)writePropertyList:",
+        )
+        self.assertIn("NSUInteger totalDecodedBytes = 0;", decoder)
+        self.assertIn(
+            "OreoMaximumDecodedThemeBytes - totalDecodedBytes", decoder
+        )
+        self.assertIn("totalDecodedBytes += cursorDecodedBytes;", decoder)
 
     def test_theme_size_scales_registration_geometry_without_resampling(self) -> None:
         engine = ENGINE.read_text(encoding="utf-8")

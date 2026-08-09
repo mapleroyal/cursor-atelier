@@ -85,8 +85,11 @@
     if (launchAtLoginDesired) {
         NSError *updateError = nil;
         if (OreoRegisterLoginItem(&updateError)) {
-            OreoSetLoginItemDesired(YES);
-            [self clearResolvedLoginError];
+            if (OreoSetLoginItemDesired(YES, &updateError)) {
+                [self clearResolvedLoginError];
+            } else {
+                [self setLoginErrorStatus:updateError.localizedDescription];
+            }
         } else {
             [self setLoginErrorStatus:updateError.localizedDescription];
         }
@@ -733,21 +736,26 @@
     NSError *error = nil;
     BOOL success = YES;
     if (anyRegistered || loginDesired) {
-        OreoSetLoginItemDesired(NO);
-        success = OreoUnregisterLoginItem(&error);
+        success = OreoSetLoginItemDesired(NO, &error);
+        if (success) {
+            success = OreoUnregisterLoginItem(&error);
+        }
         NSError *legacyError = nil;
-        BOOL removedLegacy =
-            OreoUnregisterLegacyMainLoginItem(&legacyError);
+        BOOL removedLegacy = success
+            ? OreoUnregisterLegacyMainLoginItem(&legacyError)
+            : NO;
         if (success && !removedLegacy) {
             error = legacyError;
             success = NO;
         }
     } else {
-        OreoSetLoginItemDesired(YES);
+        success = OreoSetLoginItemDesired(YES, &error);
         BOOL helperWasRegistered =
             status == SMAppServiceStatusEnabled ||
             status == SMAppServiceStatusRequiresApproval;
-        success = OreoRegisterLoginItem(&error);
+        if (success) {
+            success = OreoRegisterLoginItem(&error);
+        }
         if (success) {
             success = OreoUnregisterLegacyMainLoginItem(&error);
         }
@@ -770,6 +778,22 @@
                             @"unknown error"]
                 }];
             }
+        }
+    }
+    if (!success) {
+        NSError *rollbackError = nil;
+        if (!OreoSetLoginItemDesired(loginDesired, &rollbackError)) {
+            error = [NSError errorWithDomain:
+                error.domain ?:
+                    @"com.cursoratelier.CursorAtelier.NativeCursor"
+                                        code:error.code
+                                    userInfo:@{
+                NSLocalizedDescriptionKey: [NSString stringWithFormat:
+                    @"%@ The prior Launch at Login preference also could not be "
+                     "restored: %@",
+                    error.localizedDescription ?: @"Startup setup failed.",
+                    rollbackError.localizedDescription ?: @"unknown error"]
+            }];
         }
     }
     self.busy = NO;

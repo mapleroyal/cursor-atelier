@@ -8,6 +8,16 @@ export function shouldRegisterMainAppLoginItem(preferences) {
   );
 }
 
+export function shouldMainAppStayRunning(preferences) {
+  return (
+    preferences?.menuBar?.visible === true ||
+    preferences?.appearance?.automaticSwitching === true ||
+    ["interval", "daily", "times"].includes(
+      preferences?.randomization?.schedule?.mode,
+    )
+  );
+}
+
 export function createWindowLifecycle({
   isMacOS = process.platform === "darwin",
   setActivationPolicy,

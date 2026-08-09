@@ -21,6 +21,7 @@ export function getStatusVariant(status) {
 
   const value =
     status.effectiveVariantId ??
+    status.effectiveNativeThemeId ??
     status.activeVariantId ??
     status.currentVariantId ??
     status.currentThemeId ??
@@ -66,13 +67,11 @@ export function isStatusVerifiedActive(status) {
   if (getStatusEnabled(status) !== true || !getStatusVariant(status)) {
     return false;
   }
-  if (status?.previewMode) {
-    return false;
-  }
-  if (typeof status?.currentSentinelsMatchTheme === "boolean") {
-    return status.currentSentinelsMatchTheme;
-  }
-  return true;
+  return Boolean(
+    status?.statusAvailable === true &&
+    status?.previewMode !== true &&
+    status?.currentSentinelsMatchTheme === true,
+  );
 }
 
 export function matchesCursorPack(pack, identifier) {
@@ -132,8 +131,21 @@ export function isPackVerifiedActive(status, pack) {
   );
 }
 
+export function isRandomizationResultVerified(result) {
+  const cursor = result?.cursor;
+  return Boolean(
+    cursor &&
+    (cursor.id || cursor.nativeThemeId) &&
+    isPackVerifiedActive(result?.status, cursor),
+  );
+}
+
 export function isStatusQueryUnavailable(query) {
   return Boolean(query?.isError || query?.data?.statusAvailable === false);
+}
+
+export function getAuthoritativeStatus(query) {
+  return isStatusQueryUnavailable(query) ? null : (query?.data ?? null);
 }
 
 export function resolvePackQuerySource(query, fallback) {
@@ -194,8 +206,29 @@ export async function setCursorThemeSize(packId, sizePercentage) {
   return setSize(packId, sizePercentage);
 }
 
-export async function restoreCursors() {
-  const restore = window.electronAPI?.restoreCursors;
+export function getCursorErrorMessage(error) {
+  const rawMessage =
+    error instanceof Error && error.message
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : error && typeof error.message === "string"
+          ? error.message
+          : null;
+
+  if (!rawMessage) {
+    return "The cursor engine could not complete that operation.";
+  }
+
+  const sanitized = rawMessage
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+  return sanitized || "The cursor engine could not complete that operation.";
+}
+
+export async function restoreCursorState() {
+  const restore = window.electronAPI?.restoreCursorState;
   if (typeof restore !== "function") {
     throw new Error("Restoring the macOS cursor is unavailable in this build.");
   }

@@ -18,6 +18,8 @@ static NSString * const OreoRegisteredHelperVersionDefaultsKey =
 static NSString * const OreoLoginItemDesiredDefaultsKey =
     @"LaunchAtLoginDesired";
 
+static NSError *OreoSetupError(NSInteger code, NSString *message);
+
 static NSString *OreoServiceStatusString(SMAppServiceStatus status) {
     switch (status) {
         case SMAppServiceStatusNotRegistered:
@@ -45,10 +47,33 @@ NSString *OreoLegacyMainLoginItemStatusString(void) {
     return OreoServiceStatusString(SMAppService.mainAppService.status);
 }
 
-void OreoSetLoginItemDesired(BOOL desired) {
-    [OreoCursorDefaults() setBool:desired
-                          forKey:OreoLoginItemDesiredDefaultsKey];
-    [OreoCursorDefaults() synchronize];
+BOOL OreoSetLoginItemDesired(BOOL desired, NSError **error) {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    if (![defaults synchronize]) {
+        if (error) {
+            *error = OreoSetupError(
+                15, @"Could not read the durable Launch at Login preference.");
+        }
+        return NO;
+    }
+    id priorValue = [defaults objectForKey:OreoLoginItemDesiredDefaultsKey];
+    [defaults setBool:desired forKey:OreoLoginItemDesiredDefaultsKey];
+    if ([defaults synchronize]) {
+        return YES;
+    }
+    if (priorValue) {
+        [defaults setObject:priorValue forKey:OreoLoginItemDesiredDefaultsKey];
+    } else {
+        [defaults removeObjectForKey:OreoLoginItemDesiredDefaultsKey];
+    }
+    BOOL rollbackSaved = [defaults synchronize];
+    if (error) {
+        *error = OreoSetupError(
+            15, rollbackSaved
+                ? @"Could not durably save the Launch at Login preference."
+                : @"Could not save or roll back the Launch at Login preference.");
+    }
+    return NO;
 }
 
 BOOL OreoLoginItemDesired(void) {
@@ -72,6 +97,43 @@ static NSError *OreoSetupError(NSInteger code, NSString *message) {
     return [NSError errorWithDomain:OreoSetupErrorDomain
                                code:code
                            userInfo:@{NSLocalizedDescriptionKey: message}];
+}
+
+static BOOL OreoPersistRegisteredHelperVersion(NSString * _Nullable version,
+                                                NSError **error) {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    if (![defaults synchronize]) {
+        if (error) {
+            *error = OreoSetupError(
+                16, @"Could not read the durable login-helper build identity.");
+        }
+        return NO;
+    }
+    id priorValue =
+        [defaults objectForKey:OreoRegisteredHelperVersionDefaultsKey];
+    if (version.length > 0) {
+        [defaults setObject:version
+                     forKey:OreoRegisteredHelperVersionDefaultsKey];
+    } else {
+        [defaults removeObjectForKey:OreoRegisteredHelperVersionDefaultsKey];
+    }
+    if ([defaults synchronize]) {
+        return YES;
+    }
+    if (priorValue) {
+        [defaults setObject:priorValue
+                     forKey:OreoRegisteredHelperVersionDefaultsKey];
+    } else {
+        [defaults removeObjectForKey:OreoRegisteredHelperVersionDefaultsKey];
+    }
+    BOOL rollbackSaved = [defaults synchronize];
+    if (error) {
+        *error = OreoSetupError(
+            16, rollbackSaved
+                ? @"Could not durably save the login-helper build identity."
+                : @"Could not save or roll back the login-helper build identity.");
+    }
+    return NO;
 }
 
 static NSBundle *OreoEmbeddedLoginHelper(NSError **error) {
@@ -103,9 +165,12 @@ BOOL OreoLoginItemRegistrationCurrent(void) {
     NSBundle *helperBundle = OreoEmbeddedLoginHelper(NULL);
     NSString *currentVersion =
         [helperBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
-    NSString *registeredVersion =
-        [OreoCursorDefaults()
-            stringForKey:OreoRegisteredHelperVersionDefaultsKey];
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    if (![defaults synchronize]) {
+        return NO;
+    }
+    NSString *registeredVersion = [defaults
+        stringForKey:OreoRegisteredHelperVersionDefaultsKey];
     SMAppServiceStatus status = OreoLoginItemService().status;
     BOOL registered =
         status == SMAppServiceStatusEnabled ||
@@ -153,6 +218,28 @@ static NSError *OreoErrorByAppendingCleanup(NSError *primary,
             cleanup.localizedDescription ?: @"unknown error"]);
 }
 
+static BOOL OreoRestoreLoginItemAfterMarkerFailure(NSError *preferenceError,
+                                                    NSError **error) {
+    SMAppService *service = OreoLoginItemService();
+    NSError *registrationError = nil;
+    BOOL registered = [service registerAndReturnError:&registrationError];
+    SMAppServiceStatus status = service.status;
+    BOOL restored = registered || status == SMAppServiceStatusEnabled ||
+        status == SMAppServiceStatusRequiresApproval;
+    NSError *reportedError = preferenceError;
+    if (!restored) {
+        reportedError = OreoErrorByAppendingCleanup(
+            preferenceError,
+            @"The login helper also could not be restored after that failure",
+            registrationError ?: OreoSetupError(
+                17, @"macOS returned an unexpected login-helper status."));
+    }
+    if (error) {
+        *error = reportedError;
+    }
+    return NO;
+}
+
 BOOL OreoRegisterLoginItem(NSError **error) {
     NSBundle *helperBundle = OreoEmbeddedLoginHelper(error);
     if (!helperBundle) {
@@ -171,9 +258,16 @@ BOOL OreoRegisterLoginItem(NSError **error) {
     SMAppService *service = OreoLoginItemService();
     if (service.status == SMAppServiceStatusEnabled ||
         service.status == SMAppServiceStatusRequiresApproval) {
-        NSString *registeredVersion =
-            [OreoCursorDefaults()
-                stringForKey:OreoRegisteredHelperVersionDefaultsKey];
+        NSUserDefaults *defaults = OreoCursorDefaults();
+        if (![defaults synchronize]) {
+            if (error) {
+                *error = OreoSetupError(
+                    16, @"Could not read the durable login-helper build identity.");
+            }
+            return NO;
+        }
+        NSString *registeredVersion = [defaults
+            stringForKey:OreoRegisteredHelperVersionDefaultsKey];
         if ([registeredVersion isEqualToString:currentVersion]) {
             return YES;
         }
@@ -221,9 +315,21 @@ BOOL OreoRegisterLoginItem(NSError **error) {
         }
         return NO;
     }
-    [OreoCursorDefaults() setObject:currentVersion
-                             forKey:OreoRegisteredHelperVersionDefaultsKey];
-    [OreoCursorDefaults() synchronize];
+    NSError *preferenceError = nil;
+    if (!OreoPersistRegisteredHelperVersion(currentVersion,
+                                            &preferenceError)) {
+        NSError *cleanupError = nil;
+        if (!OreoWaitForLoginItemUnregister(service, &cleanupError)) {
+            preferenceError = OreoErrorByAppendingCleanup(
+                preferenceError,
+                @"The untracked helper registration could not be removed",
+                cleanupError);
+        }
+        if (error) {
+            *error = preferenceError;
+        }
+        return NO;
+    }
     if (error) {
         *error = nil;
     }
@@ -234,24 +340,23 @@ BOOL OreoUnregisterLoginItem(NSError **error) {
     SMAppService *service = OreoLoginItemService();
     if (service.status == SMAppServiceStatusNotRegistered ||
         service.status == SMAppServiceStatusNotFound) {
-        [OreoCursorDefaults()
-            removeObjectForKey:OreoRegisteredHelperVersionDefaultsKey];
-        [OreoCursorDefaults() synchronize];
-        return YES;
+        return OreoPersistRegisteredHelperVersion(nil, error);
     }
     NSError *unregisterError = nil;
     if ([service unregisterAndReturnError:&unregisterError]) {
-        [OreoCursorDefaults()
-            removeObjectForKey:OreoRegisteredHelperVersionDefaultsKey];
-        [OreoCursorDefaults() synchronize];
-        return YES;
+        NSError *preferenceError = nil;
+        if (OreoPersistRegisteredHelperVersion(nil, &preferenceError)) {
+            return YES;
+        }
+        return OreoRestoreLoginItemAfterMarkerFailure(preferenceError, error);
     }
     if (service.status == SMAppServiceStatusNotRegistered ||
         service.status == SMAppServiceStatusNotFound) {
-        [OreoCursorDefaults()
-            removeObjectForKey:OreoRegisteredHelperVersionDefaultsKey];
-        [OreoCursorDefaults() synchronize];
-        return YES;
+        NSError *preferenceError = nil;
+        if (OreoPersistRegisteredHelperVersion(nil, &preferenceError)) {
+            return YES;
+        }
+        return OreoRestoreLoginItemAfterMarkerFailure(preferenceError, error);
     }
     if (error) {
         *error = unregisterError;
@@ -306,7 +411,13 @@ BOOL OreoMigrateLegacyLoginItemIfNeeded(NSError **error) {
         ![defaults boolForKey:OreoLoginItemDesiredDefaultsKey]) {
         return OreoUnregisterLegacyMainLoginItem(error);
     }
-    OreoSetLoginItemDesired(YES);
+    NSError *desiredError = nil;
+    if (!OreoSetLoginItemDesired(YES, &desiredError)) {
+        if (error) {
+            *error = desiredError;
+        }
+        return NO;
+    }
     SMAppServiceStatus priorHelperStatus = OreoLoginItemService().status;
     BOOL helperWasRegistered =
         priorHelperStatus == SMAppServiceStatusEnabled ||
@@ -561,14 +672,13 @@ static BOOL OreoApplyTheme(NSString *identifier,
         candidateSelectionPersisted = selectionChanged;
     }
     if (cursorChanged && selectionChanged) {
-        if (OreoRegisterLoginItem(&actionError)) {
-            helperCreated =
-                !helperWasRegistered &&
-                (OreoLoginItemService().status ==
-                     SMAppServiceStatusEnabled ||
-                 OreoLoginItemService().status ==
-                     SMAppServiceStatusRequiresApproval);
-        } else {
+        BOOL helperRegistered = OreoRegisterLoginItem(&actionError);
+        helperCreated =
+            !helperWasRegistered &&
+            (OreoLoginItemService().status == SMAppServiceStatusEnabled ||
+             OreoLoginItemService().status ==
+                 SMAppServiceStatusRequiresApproval);
+        if (!helperRegistered) {
             selectionChanged = NO;
         }
     }
@@ -576,9 +686,12 @@ static BOOL OreoApplyTheme(NSString *identifier,
         !OreoUnregisterLegacyMainLoginItem(&actionError)) {
         selectionChanged = NO;
     }
+    if (cursorChanged && selectionChanged &&
+        !OreoSetLoginItemDesired(YES, &actionError)) {
+        selectionChanged = NO;
+    }
 
     if (cursorChanged && selectionChanged) {
-        OreoSetLoginItemDesired(YES);
         *engine = candidate;
         OreoPostSettingsChangedNotification();
         return YES;
@@ -626,7 +739,14 @@ static BOOL OreoApplyTheme(NSString *identifier,
             actionError, @"A valid theme selection could not be restored",
             cleanupError);
     }
-    OreoSetLoginItemDesired(priorThemeUsable ? priorLoginDesired : NO);
+    NSError *loginRollbackError = nil;
+    if (!OreoSetLoginItemDesired(
+            priorThemeUsable ? priorLoginDesired : NO,
+            &loginRollbackError)) {
+        actionError = OreoErrorByAppendingCleanup(
+            actionError, @"The prior Launch at Login preference could not be restored",
+            loginRollbackError);
+    }
     *engine = priorThemeUsable ? priorEngine : candidate;
     if (error) {
         *error = actionError ?: OreoSetupError(
@@ -904,7 +1024,7 @@ int OreoRunCommandLineIfRequested(
             success = OreoUnregisterLegacyMainLoginItem(&actionError);
         }
         if (success) {
-            OreoSetLoginItemDesired(YES);
+            success = OreoSetLoginItemDesired(YES, &actionError);
         }
         if (!success) {
             if (helperWasCreated) {
@@ -923,7 +1043,14 @@ int OreoRunCommandLineIfRequested(
                         restoreError);
                 }
             }
-            OreoSetLoginItemDesired(priorLoginDesired);
+            NSError *loginRollbackError = nil;
+            if (!OreoSetLoginItemDesired(priorLoginDesired,
+                                         &loginRollbackError)) {
+                actionError = OreoErrorByAppendingCleanup(
+                    actionError,
+                    @"The prior Launch at Login preference could not be restored",
+                    loginRollbackError);
+            }
         }
     } else if ([command isEqual:@"--enable"]) {
         success = [engine apply:&actionError];
@@ -931,8 +1058,10 @@ int OreoRunCommandLineIfRequested(
         success = [engine restore:&actionError];
     } else if ([command isEqual:@"--teardown"]) {
         BOOL priorLoginDesired = OreoLoginItemDesired();
-        OreoSetLoginItemDesired(NO);
-        success = [engine restore:&actionError];
+        success = OreoSetLoginItemDesired(NO, &actionError);
+        if (success) {
+            success = [engine restore:&actionError];
+        }
         if (success) {
             actionSource = OreoCursorStatusSourceLogin;
             NSError *loginError = nil;
@@ -948,7 +1077,14 @@ int OreoRunCommandLineIfRequested(
             success = removedHelper && removedLegacy;
         }
         if (!success) {
-            OreoSetLoginItemDesired(priorLoginDesired);
+            NSError *loginRollbackError = nil;
+            if (!OreoSetLoginItemDesired(priorLoginDesired,
+                                         &loginRollbackError)) {
+                actionError = OreoErrorByAppendingCleanup(
+                    actionError,
+                    @"The prior Launch at Login preference could not be restored",
+                    loginRollbackError);
+            }
         }
     } else if ([command isEqual:@"--select-theme"]) {
         NSString *identifier = [NSString stringWithUTF8String:argv[2]];
@@ -957,7 +1093,6 @@ int OreoRunCommandLineIfRequested(
         NSString *identifier = [NSString stringWithUTF8String:argv[2]];
         success = OreoApplyTheme(identifier, &engine, &actionError);
     }
-    [OreoCursorDefaults() synchronize];
     OreoSaveCommandStatus(engine, command, success, actionError, actionSource);
     OreoPostSettingsChangedNotification();
 

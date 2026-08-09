@@ -2,7 +2,6 @@ import { create } from "zustand";
 import themeSeedColors from "@/lib/theme-seed-colors";
 
 const DARK_MODE_MEDIA_QUERY = "(prefers-color-scheme: dark)";
-const THEME_STORAGE_KEY = "app-theme";
 
 function isTheme(value) {
   return value === "light" || value === "dark";
@@ -10,10 +9,6 @@ function isTheme(value) {
 
 function isThemeMode(value) {
   return value === "system" || isTheme(value);
-}
-
-function resolveStorage(storage) {
-  return storage ?? globalThis?.window?.localStorage;
 }
 
 function resolveElectronAPI(electronAPI) {
@@ -24,45 +19,16 @@ function resolveMatchMedia(matchMedia) {
   return matchMedia ?? globalThis?.window?.matchMedia;
 }
 
-export function getStoredThemeMode(storage) {
-  const resolvedStorage = resolveStorage(storage);
-
-  if (typeof resolvedStorage?.getItem !== "function") {
+export function getAppAppearanceMode(electronAPI) {
+  try {
+    const value = resolveElectronAPI(electronAPI)?.getAppAppearanceMode?.();
+    return isThemeMode(value) ? value : null;
+  } catch {
     return null;
   }
-
-  const storedThemeMode = resolvedStorage.getItem(THEME_STORAGE_KEY);
-  return isThemeMode(storedThemeMode) ? storedThemeMode : null;
 }
 
-export function setStoredThemeMode(themeMode, storage) {
-  if (!isThemeMode(themeMode)) {
-    return;
-  }
-
-  const resolvedStorage = resolveStorage(storage);
-
-  if (typeof resolvedStorage?.setItem !== "function") {
-    return;
-  }
-
-  resolvedStorage.setItem(THEME_STORAGE_KEY, themeMode);
-}
-
-export function getElectronTheme(electronAPI) {
-  const resolvedElectronAPI = resolveElectronAPI(electronAPI);
-  const systemTheme = resolvedElectronAPI?.getSystemTheme?.();
-
-  return isTheme(systemTheme) ? systemTheme : null;
-}
-
-export function getSystemTheme({ electronAPI, matchMedia } = {}) {
-  const electronTheme = getElectronTheme(electronAPI);
-
-  if (electronTheme) {
-    return electronTheme;
-  }
-
+export function getSystemTheme({ matchMedia } = {}) {
   const resolvedMatchMedia = resolveMatchMedia(matchMedia);
 
   if (typeof resolvedMatchMedia !== "function") {
@@ -80,8 +46,8 @@ export function resolveTheme(themeMode, options = {}) {
   return themeMode === "system" ? getSystemTheme(options) : themeMode;
 }
 
-export function getInitialThemeMode({ storage } = {}) {
-  return getStoredThemeMode(storage) ?? "system";
+export function getInitialThemeMode({ electronAPI } = {}) {
+  return getAppAppearanceMode(electronAPI) ?? "system";
 }
 
 export function getInitialTheme(options = {}) {
@@ -143,37 +109,77 @@ export function applyThemeToDocument(
   }
 }
 
-export function createAppStore({ electronAPI, matchMedia, storage } = {}) {
-  const initialThemeMode = getInitialThemeMode({ storage });
+export function createAppStore({ electronAPI, matchMedia } = {}) {
+  const initialThemeMode = getInitialThemeMode({ electronAPI });
+  let confirmedThemeMode = initialThemeMode;
+  let appearanceRequest = 0;
+  let persistenceQueue = Promise.resolve();
 
-  return create((set) => ({
+  return create((set, get) => ({
     themeMode: initialThemeMode,
-    theme: resolveTheme(initialThemeMode, { electronAPI, matchMedia }),
+    theme: resolveTheme(initialThemeMode, { matchMedia }),
+    themeError: null,
     setThemeMode: (themeMode) => {
       if (!isThemeMode(themeMode)) {
-        return;
+        return Promise.resolve(false);
       }
 
-      const theme = resolveTheme(themeMode, { electronAPI, matchMedia });
+      const theme = resolveTheme(themeMode, { matchMedia });
+      const request = ++appearanceRequest;
 
-      set({ themeMode, theme });
-      setStoredThemeMode(themeMode, storage);
+      set({ themeMode, theme, themeError: null });
+      const setter = resolveElectronAPI(electronAPI)?.setAppAppearanceMode;
+      if (typeof setter !== "function") {
+        confirmedThemeMode = themeMode;
+        return Promise.resolve(true);
+      }
+
+      const persist = () => setter(themeMode);
+      const result = persistenceQueue.then(persist, persist);
+      persistenceQueue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+
+      return Promise.resolve(result).then(
+        (persistedMode) => {
+          const canonicalMode = isThemeMode(persistedMode)
+            ? persistedMode
+            : themeMode;
+          confirmedThemeMode = canonicalMode;
+          if (appearanceRequest === request && get().themeMode === themeMode) {
+            set({
+              themeMode: canonicalMode,
+              theme: resolveTheme(canonicalMode, {
+                matchMedia,
+              }),
+              themeError: null,
+            });
+          }
+          return true;
+        },
+        (error) => {
+          if (appearanceRequest === request && get().themeMode === themeMode) {
+            set({
+              themeMode: confirmedThemeMode,
+              theme: resolveTheme(confirmedThemeMode, {
+                matchMedia,
+              }),
+              themeError: "Couldn’t save the appearance preference.",
+            });
+          }
+          console.error("Couldn’t save the appearance preference.", error);
+          return false;
+        },
+      );
     },
     setTheme: (theme) => {
       if (!isTheme(theme)) {
-        return;
+        return Promise.resolve(false);
       }
-
-      set({ themeMode: theme, theme });
-      setStoredThemeMode(theme, storage);
+      return get().setThemeMode(theme);
     },
-    followSystemTheme: () => {
-      const themeMode = "system";
-      const theme = resolveTheme(themeMode, { electronAPI, matchMedia });
-
-      set({ themeMode, theme });
-      setStoredThemeMode(themeMode, storage);
-    },
+    followSystemTheme: () => get().setThemeMode("system"),
     syncSystemTheme: (systemTheme) =>
       set((state) => {
         if (state.themeMode !== "system" || !isTheme(systemTheme)) {
@@ -187,13 +193,7 @@ export function createAppStore({ electronAPI, matchMedia, storage } = {}) {
         return { ...state, theme: systemTheme };
       }),
     toggleTheme: () =>
-      set((state) => {
-        const theme = state.theme === "dark" ? "light" : "dark";
-
-        setStoredThemeMode(theme, storage);
-
-        return { themeMode: theme, theme };
-      }),
+      get().setThemeMode(get().theme === "dark" ? "light" : "dark"),
   }));
 }
 

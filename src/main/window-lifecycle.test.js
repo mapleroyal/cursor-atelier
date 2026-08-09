@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createWindowLifecycle,
+  shouldMainAppStayRunning,
   shouldRegisterMainAppLoginItem,
 } from "./window-lifecycle.js";
 
@@ -23,7 +24,7 @@ function fixture({
     quit,
     getMenuBarVisible: () => menuBar,
     getShouldStayRunning: () =>
-      shouldRegisterMainAppLoginItem({
+      shouldMainAppStayRunning({
         appearance: { automaticSwitching: switchAutomatically },
         menuBar: { visible: menuBar },
         randomization: { schedule: { mode: randomizationMode } },
@@ -68,6 +69,12 @@ describe("window lifecycle", () => {
     expect(
       shouldRegisterMainAppLoginItem({
         menuBar: { visible: false },
+        randomization: { schedule: { mode: "launch" } },
+      }),
+    ).toBe(true);
+    expect(
+      shouldRegisterMainAppLoginItem({
+        menuBar: { visible: false },
         appearance: {
           automaticSwitching: false,
           lightCursorId: "OreoWhite",
@@ -85,6 +92,17 @@ describe("window lifecycle", () => {
         randomization: { schedule: { mode: "off" } },
       }),
     ).toBe(false);
+  });
+
+  it("does not keep a launch-only schedule resident after launch work", () => {
+    const preferences = {
+      menuBar: { visible: false },
+      appearance: { automaticSwitching: false },
+      randomization: { schedule: { mode: "launch" } },
+    };
+
+    expect(shouldRegisterMainAppLoginItem(preferences)).toBe(true);
+    expect(shouldMainAppStayRunning(preferences)).toBe(false);
   });
 
   it("moves between regular window presence and an accessory background app", () => {

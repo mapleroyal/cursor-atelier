@@ -39,6 +39,9 @@ static const double OreoMaximumThemeScale = 10;
 // The byte cap below remains the primary allocation bound.
 static const NSUInteger OreoMaximumDecodedDimension = 8192;
 static const NSUInteger OreoMaximumDecodedBytes = 64 * 1024 * 1024;
+// A theme retains every decoded cursor representation for registration. Keep
+// the aggregate allocation bounded independently of the per-cursor ceiling.
+static const NSUInteger OreoMaximumDecodedThemeBytes = 128 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedDirectoryEntries = 512;
 static const NSUInteger OreoMaximumImportedPacks = 256;
 static const NSUInteger OreoMaximumImportedThemes = 512;
@@ -50,6 +53,54 @@ static const NSUInteger OreoMaximumImportedThemeBytesTotal = 512 * 1024 * 1024;
 // Covers the complete built-in, build-generated, and imported catalogue while
 // still bounding malformed preference data independently of import limits.
 static const NSUInteger OreoMaximumThemeSizeEntries = 2048;
+
+typedef NS_ENUM(NSUInteger, OreoSnapshotPreparationDisposition) {
+    OreoSnapshotPreparationCreateFresh = 0,
+    OreoSnapshotPreparationDiscardOrphan = 1,
+    OreoSnapshotPreparationReuseOwned = 2,
+    OreoSnapshotPreparationMissingOwned = 3,
+};
+
+typedef NS_ENUM(NSUInteger, OreoSnapshotRestoreDisposition) {
+    OreoSnapshotRestoreInactive = 0,
+    OreoSnapshotRestoreOwned = 1,
+    OreoSnapshotRestoreMissingOwned = 2,
+};
+
+static OreoSnapshotPreparationDisposition
+OreoSnapshotPreparationForState(BOOL snapshotExists, BOOL ownsSnapshot) {
+    if (!ownsSnapshot) {
+        return snapshotExists ? OreoSnapshotPreparationDiscardOrphan
+                              : OreoSnapshotPreparationCreateFresh;
+    }
+    return snapshotExists ? OreoSnapshotPreparationReuseOwned
+                          : OreoSnapshotPreparationMissingOwned;
+}
+
+static OreoSnapshotRestoreDisposition
+OreoSnapshotRestoreForState(BOOL snapshotExists, BOOL ownsSnapshot) {
+    if (!ownsSnapshot) {
+        return OreoSnapshotRestoreInactive;
+    }
+    return snapshotExists ? OreoSnapshotRestoreOwned
+                          : OreoSnapshotRestoreMissingOwned;
+}
+
+#if defined(OREO_CURSOR_ENGINE_TESTING)
+NSUInteger OreoCursorTestingSnapshotPreparation(BOOL snapshotExists,
+                                                 BOOL effective,
+                                                 BOOL activeBootCurrent) {
+    return OreoSnapshotPreparationForState(
+        snapshotExists, effective || activeBootCurrent);
+}
+
+NSUInteger OreoCursorTestingSnapshotRestore(BOOL snapshotExists,
+                                             BOOL effective,
+                                             BOOL activeBootCurrent) {
+    return OreoSnapshotRestoreForState(
+        snapshotExists, effective || activeBootCurrent);
+}
+#endif
 
 static NSString * const OreoThemeIdentifierSpecKey = @"Identifier";
 static NSString * const OreoThemeDisplayNameSpecKey = @"DisplayName";
@@ -481,6 +532,32 @@ static BOOL OreoIsSafeImportedPackIdentifier(id object) {
         characterIsMember:first];
 }
 
+// Keep this byte-for-byte equivalent to the importer's private transaction
+// entry grammar: /^\.(?:import|metadata|delete)-[A-Za-z0-9]{6}$/.
+static BOOL OreoIsImportedStoreTransactionEntry(const char *name) {
+    const char *suffix = NULL;
+    if (strncmp(name, ".import-", 8) == 0 ||
+        strncmp(name, ".delete-", 8) == 0) {
+        suffix = name + 8;
+    } else if (strncmp(name, ".metadata-", 10) == 0) {
+        suffix = name + 10;
+    } else {
+        return NO;
+    }
+    if (strlen(suffix) != 6) {
+        return NO;
+    }
+    for (NSUInteger index = 0; index < 6; index++) {
+        unsigned char character = (unsigned char)suffix[index];
+        if (!((character >= 'A' && character <= 'Z') ||
+              (character >= 'a' && character <= 'z') ||
+              (character >= '0' && character <= '9'))) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
 static BOOL OreoIsSafeThemeResourceName(id object) {
     if (![object isKindOfClass:[NSString class]]) {
         return NO;
@@ -892,6 +969,9 @@ OreoImportedThemeSpecifications(NSSet<NSString *> *reservedIdentifiers) {
     while ((entry = readdir(directory))) {
         if (strcmp(entry->d_name, ".") == 0 ||
             strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (OreoIsImportedStoreTransactionEntry(entry->d_name)) {
             continue;
         }
         directoryEntryCount++;
@@ -1546,6 +1626,8 @@ OreoThemeCursorsByScalingGeometry(
     NSURL *_operationLockURL;
     NSBundle *_themeResourceBundle;
     NSDictionary<NSString *, NSString *> *_themeSpecification;
+    NSDictionary *_validatedSnapshot;
+    NSString *_validatedSnapshotIdentity;
 }
 
 @property (nonatomic, readwrite) BOOL supported;
@@ -1958,6 +2040,40 @@ OreoThemeCursorsByScalingGeometry(
     }
 }
 
+- (void)invalidateSnapshotCache {
+    _validatedSnapshot = nil;
+    _validatedSnapshotIdentity = nil;
+}
+
+- (NSString * _Nullable)snapshotFileIdentity:(NSError **)error {
+    struct stat state;
+    if (lstat(_snapshotURL.fileSystemRepresentation, &state) != 0) {
+        if (error) {
+            *error = OreoError(
+                93, @"Could not inspect the stock snapshot: %s.",
+                strerror(errno));
+        }
+        return nil;
+    }
+    if (!S_ISREG(state.st_mode) || state.st_uid != geteuid() ||
+        state.st_nlink != 1 || (state.st_mode & 0077) != 0) {
+        if (error) {
+            *error = OreoError(
+                94, @"The stock snapshot is not a private regular file.");
+        }
+        return nil;
+    }
+    return [NSString stringWithFormat:
+        @"%llu:%llu:%lld:%lld:%ld:%lld:%ld",
+        (unsigned long long)state.st_dev,
+        (unsigned long long)state.st_ino,
+        (long long)state.st_size,
+        (long long)state.st_mtimespec.tv_sec,
+        (long)state.st_mtimespec.tv_nsec,
+        (long long)state.st_ctimespec.tv_sec,
+        (long)state.st_ctimespec.tv_nsec];
+}
+
 - (BOOL)persistDesiredState:(BOOL)desired
              effectiveState:(BOOL)effective
              activeSnapshot:(BOOL)activeSnapshot
@@ -2082,7 +2198,10 @@ OreoThemeCursorsByScalingGeometry(
 }
 
 static NSDictionary * _Nullable OreoValidatedThemeCursor(
-    id object, NSString *identifier, NSError **error) {
+    id object,
+    NSString *identifier,
+    NSUInteger *decodedByteCount,
+    NSError **error) {
     if (![object isKindOfClass:[NSDictionary class]]) {
         if (error) {
             *error = OreoError(210, @"Cursor %@ is not a dictionary.", identifier);
@@ -2198,6 +2317,10 @@ static NSDictionary * _Nullable OreoValidatedThemeCursor(
         return nil;
     }
 
+    if (decodedByteCount) {
+        *decodedByteCount = decodedBytes;
+    }
+
     return @{
         @"WasRegistered": @YES,
         @"FrameCount": @(frameCount),
@@ -2214,7 +2337,7 @@ static NSDictionary * _Nullable OreoValidatedThemeCursor(
 - (NSDictionary *)validatedThemeCursor:(id)object
                               identifier:(NSString *)identifier
                                    error:(NSError **)error {
-    return OreoValidatedThemeCursor(object, identifier, error);
+    return OreoValidatedThemeCursor(object, identifier, NULL, error);
 }
 
 static NSDictionary<NSString *, NSDictionary *> * _Nullable
@@ -2261,13 +2384,25 @@ OreoDecodedThemeCursors(NSData *data,
     NSMutableDictionary *validated =
         [NSMutableDictionary dictionaryWithCapacity:
             OreoAllTargetIdentifiers().count];
+    NSUInteger totalDecodedBytes = 0;
     for (NSString *identifier in
              [cursors.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-        NSDictionary *decoded =
-            OreoValidatedThemeCursor(cursors[identifier], identifier, error);
+        NSUInteger cursorDecodedBytes = 0;
+        NSDictionary *decoded = OreoValidatedThemeCursor(
+            cursors[identifier], identifier, &cursorDecodedBytes, error);
         if (!decoded) {
             return nil;
         }
+        if (totalDecodedBytes > OreoMaximumDecodedThemeBytes ||
+            cursorDecodedBytes >
+                OreoMaximumDecodedThemeBytes - totalDecodedBytes) {
+            if (error) {
+                *error = OreoError(
+                    217, @"The cursor theme exceeds the decoded image budget.");
+            }
+            return nil;
+        }
+        totalDecodedBytes += cursorDecodedBytes;
         validated[identifier] = decoded;
     }
 
@@ -2293,6 +2428,10 @@ OreoDecodedThemeCursors(NSData *data,
 - (BOOL)writePropertyList:(NSDictionary *)propertyList
                     toURL:(NSURL *)url
                     error:(NSError **)error {
+    BOOL writesSnapshot = [url.path isEqualToString:_snapshotURL.path];
+    if (writesSnapshot) {
+        [self invalidateSnapshotCache];
+    }
     NSData *data =
         [NSPropertyListSerialization dataWithPropertyList:propertyList
                                                    format:NSPropertyListBinaryFormat_v1_0
@@ -2330,6 +2469,9 @@ OreoDecodedThemeCursors(NSData *data,
 }
 
 - (BOOL)removeItemIfPresentAtURL:(NSURL *)url error:(NSError **)error {
+    if ([url.path isEqualToString:_snapshotURL.path]) {
+        [self invalidateSnapshotCache];
+    }
     if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
         return YES;
     }
@@ -3037,6 +3179,21 @@ OreoDecodedThemeCursors(NSData *data,
 }
 
 - (NSDictionary * _Nullable)loadValidSnapshot:(NSError **)error {
+    NSError *identityError = nil;
+    NSString *identityBefore = [self snapshotFileIdentity:&identityError];
+    if (!identityBefore) {
+        [self invalidateSnapshotCache];
+        if (error) {
+            *error = identityError;
+        }
+        return nil;
+    }
+    if (_validatedSnapshot &&
+        [_validatedSnapshotIdentity isEqualToString:identityBefore]) {
+        return _validatedSnapshot;
+    }
+    [self invalidateSnapshotCache];
+
     NSDictionary *snapshot =
         [self readPropertyListAtURL:_snapshotURL error:error];
     if (!snapshot) {
@@ -3099,12 +3256,43 @@ OreoDecodedThemeCursors(NSData *data,
             return nil;
         }
     }
-    return snapshot;
+    NSString *identityAfter = [self snapshotFileIdentity:&identityError];
+    if (!identityAfter || ![identityAfter isEqualToString:identityBefore]) {
+        if (error) {
+            *error = identityError ?: OreoError(
+                315, @"The stock snapshot changed while it was being checked.");
+        }
+        return nil;
+    }
+    _validatedSnapshot = snapshot;
+    _validatedSnapshotIdentity = identityAfter;
+    return _validatedSnapshot;
+}
+
+- (BOOL)hasDurableSnapshotOwnershipInDefaults:(NSUserDefaults *)defaults {
+    NSString *activeBoot =
+        [defaults stringForKey:OreoCursorActiveBootDefaultsKey];
+    return [defaults boolForKey:OreoCursorEffectiveDefaultsKey] ||
+        [activeBoot isEqualToString:self.bootSessionUUID];
 }
 
 - (BOOL)ensureSnapshot:(NSError **)error {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    BOOL ownsSnapshot =
+        [self hasDurableSnapshotOwnershipInDefaults:defaults];
     BOOL snapshotExists =
         [[NSFileManager defaultManager] fileExistsAtPath:_snapshotURL.path];
+    OreoSnapshotPreparationDisposition preparation =
+        OreoSnapshotPreparationForState(snapshotExists, ownsSnapshot);
+    if (preparation == OreoSnapshotPreparationDiscardOrphan) {
+        // A completed restore can leave its cleanup file behind. Once durable
+        // state says no cursor registration is active, that file no longer
+        // describes state owned by Cursor Atelier and must never be reused.
+        if (![self removeItemIfPresentAtURL:_snapshotURL error:error]) {
+            return NO;
+        }
+        snapshotExists = NO;
+    }
     if (snapshotExists) {
         NSError *snapshotError = nil;
         if ([self loadValidSnapshot:&snapshotError]) {
@@ -3136,14 +3324,11 @@ OreoDecodedThemeCursors(NSData *data,
                 }
                 return NO;
             }
-            NSUserDefaults *defaults = OreoCursorDefaults();
-            [defaults removeObjectForKey:OreoCursorActiveBootDefaultsKey];
-            [defaults setBool:NO forKey:OreoCursorEffectiveDefaultsKey];
-            if (![defaults synchronize]) {
-                if (error) {
-                    *error = OreoError(
-                        315, @"Could not clear stale snapshot state.");
-                }
+            if (![self persistDesiredState:
+                           [defaults boolForKey:OreoCursorEnabledDefaultsKey]
+                              effectiveState:NO
+                              activeSnapshot:NO
+                                        error:error]) {
                 return NO;
             }
         } else {
@@ -3156,9 +3341,10 @@ OreoDecodedThemeCursors(NSData *data,
         }
     }
 
-    NSString *activeBoot = [OreoCursorDefaults()
-        stringForKey:OreoCursorActiveBootDefaultsKey];
-    if ([activeBoot isEqual:self.bootSessionUUID]) {
+    BOOL stillOwnsSnapshot =
+        [self hasDurableSnapshotOwnershipInDefaults:defaults];
+    if (OreoSnapshotPreparationForState(NO, stillOwnsSnapshot) ==
+        OreoSnapshotPreparationMissingOwned) {
         if (error) {
             *error = OreoError(
                 316, @"The cursor theme may still be active, but its same-session "
@@ -3804,6 +3990,9 @@ OreoDecodedThemeCursors(NSData *data,
     BOOL currentlyEffective =
         [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
     BOOL hasActiveSnapshot = [activeBoot isEqual:self.bootSessionUUID];
+    BOOL ownsSnapshot = currentlyEffective || hasActiveSnapshot;
+    OreoSnapshotRestoreDisposition disposition =
+        OreoSnapshotRestoreForState(snapshotExists, ownsSnapshot);
 
     // Record the user's disable intent before any fallible snapshot or journal
     // operation. A launch-time retry must never reapply Oreo after the user has
@@ -3815,14 +4004,20 @@ OreoDecodedThemeCursors(NSData *data,
         return NO;
     }
 
-    if (!snapshotExists) {
-        if (![activeBoot isEqual:self.bootSessionUUID]) {
-            _api.setDockOverride(_api.mainConnectionID(), false);
-            return [self persistDesiredState:NO
-                              effectiveState:NO
-                              activeSnapshot:NO
-                                        error:error];
+    if (disposition == OreoSnapshotRestoreInactive) {
+        // Snapshot presence alone is not ownership. Never restore or reset
+        // cursor registrations after durable state says this app is inactive.
+        NSError *cleanupError = nil;
+        if (snapshotExists &&
+            ![self removeItemIfPresentAtURL:_snapshotURL
+                                      error:&cleanupError]) {
+            NSLog(@"Cursor Atelier: inactive snapshot cleanup warning: %@",
+                  cleanupError.localizedDescription);
         }
+        return YES;
+    }
+
+    if (disposition == OreoSnapshotRestoreMissingOwned) {
         [self bestEffortSystemReset];
         if (error) {
             *error = OreoError(
@@ -3910,11 +4105,6 @@ OreoDecodedThemeCursors(NSData *data,
         }
         return NO;
     }
-    // Never bless or reapply an active cursor set unless its exact pre-apply
-    // recovery snapshot still exists and passes every integrity check.
-    if (![self loadValidSnapshot:error]) {
-        return NO;
-    }
     NSArray *sentinels = @[
         @"com.apple.coregraphics.Arrow",
         @"com.apple.coregraphics.IBeam",
@@ -3922,6 +4112,12 @@ OreoDecodedThemeCursors(NSData *data,
     ];
     NSError *verificationError = nil;
     if ([self verifyThemeIdentifiers:sentinels error:&verificationError]) {
+        // Check the inexpensive live state first. The snapshot loader caches a
+        // complete validation only while its inode, size, mtime, and ctime are
+        // unchanged, so routine activations avoid decoding every saved image.
+        if (![self loadValidSnapshot:error]) {
+            return NO;
+        }
         // Reassert only while the persisted state says Oreo is active.
         // No scale mutation or unconditional restore-side override occurs.
         CGSConnectionID connection = _api.mainConnectionID();
@@ -3935,13 +4131,12 @@ OreoDecodedThemeCursors(NSData *data,
             }
             return NO;
         }
-        if (![self persistDesiredState:YES
-                        effectiveState:YES
-                        activeSnapshot:YES
-                                  error:error]) {
-            return NO;
-        }
         return YES;
+    }
+    // Never reapply an active cursor set unless its exact pre-apply recovery
+    // snapshot still exists and passes every integrity check.
+    if (![self loadValidSnapshot:error]) {
+        return NO;
     }
     // Content was replaced or disappeared; reapply from the trusted,
     // already-decoded theme while retaining the original stock snapshot.

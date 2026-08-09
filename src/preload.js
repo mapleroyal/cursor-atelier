@@ -34,15 +34,12 @@ function subscribeToNavigation(callback) {
 }
 
 contextBridge.exposeInMainWorld("electronAPI", {
-  getSystemTheme: () => {
-    const nativeTheme = electron.nativeTheme;
-
-    if (nativeTheme && typeof nativeTheme.shouldUseDarkColors === "boolean") {
-      return nativeTheme.shouldUseDarkColors ? "dark" : "light";
-    }
-
-    return null;
+  getAppAppearanceMode: () => {
+    const mode = electron.ipcRenderer.sendSync("app:get-appearance-mode");
+    return ["system", "light", "dark"].includes(mode) ? mode : "system";
   },
+  setAppAppearanceMode: (mode) =>
+    electron.ipcRenderer.invoke("app:set-appearance-mode", mode),
   getCursorStatus: () => electron.ipcRenderer.invoke("cursor:status"),
   listCursorThemes: () => electron.ipcRenderer.invoke("cursor:list-themes"),
   importCursorPack: () => electron.ipcRenderer.invoke("cursor:import-pack"),
@@ -70,7 +67,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       identifier,
       sizePercentage,
     ),
-  restoreCursors: () => electron.ipcRenderer.invoke("cursor:restore"),
+  restoreCursorState: () => electron.ipcRenderer.invoke("cursor:restore-state"),
   openLoginItemsSettings: () =>
     electron.ipcRenderer.invoke("cursor:open-login-settings"),
   getCursorPreferences: () => electron.ipcRenderer.invoke("preferences:get"),
@@ -80,5 +77,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onCursorPreferencesChanged: (callback) =>
     subscribe("preferences:changed", callback),
   onCursorChanged: (callback) => subscribe("cursor:changed", callback),
+  onCursorLibraryChanged: (callback) =>
+    subscribe("cursor:library-changed", callback),
   onNavigate: subscribeToNavigation,
 });
