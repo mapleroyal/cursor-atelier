@@ -90,10 +90,30 @@ bundles must have the same nonempty TeamIdentifier and keep their distinct
 bundle identifiers. No Developer ID distribution certificate or notarization
 is needed for this personal local build.
 
-Forge writes its output under `out`; neither command installs or opens the app.
-Move the resulting outer `Cursor Atelier.app` to a stable location such as
-`/Applications` before assigning a cursor, because its nested `SMAppService`
-login item is registered from that location.
+Forge writes its staging output under `out.noindex`; neither command installs
+or opens the app. The `.noindex` suffix keeps the staged bundle out of Spotlight
+so it cannot appear beside the real installation in app search. Install the
+resulting outer `Cursor Atelier.app` at `/Applications/Cursor Atelier.app`
+before assigning a cursor, because its nested `SMAppService` login item is
+registered from that location. Never use the staged copy as the interactive
+app; the isolated packaged smoke test is the only exception and disables
+login-item registration while using temporary user state.
+
+After the installed app and its login helper are verified on the new build,
+unregister and move the staging output to Trash with:
+
+```sh
+npm run package:clean -- --dry-run
+npm run package:clean
+```
+
+When adopting this workflow in a checkout that still has the former `out`
+directory, include it in the same recoverable cleanup once:
+
+```sh
+npm run package:clean -- --include-legacy --dry-run
+npm run package:clean -- --include-legacy
+```
 
 ### Replacing the proof of concept
 

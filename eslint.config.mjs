@@ -5,7 +5,15 @@ import reactHooks from "eslint-plugin-react-hooks";
 
 export default defineConfig([
   {
-    ignores: ["node_modules/**", "out/**", ".vite/**"],
+    ignores: [
+      "node_modules/**",
+      "out/**",
+      "out.noindex/**",
+      ".vite/**",
+      "dist/**",
+      "build/**",
+      "coverage/**",
+    ],
   },
   {
     files: ["**/*.{js,jsx,mjs,cjs}"],

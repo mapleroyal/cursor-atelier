@@ -10,7 +10,8 @@ function fixture({
   isMacOS = true,
   menuBarVisible = true,
   automaticSwitching = false,
-  randomizationMode = "off",
+  automaticRandomization = false,
+  randomizationMode = "launch",
 } = {}) {
   let menuBar = menuBarVisible;
   let switchAutomatically = automaticSwitching;
@@ -27,7 +28,10 @@ function fixture({
       shouldMainAppStayRunning({
         appearance: { automaticSwitching: switchAutomatically },
         menuBar: { visible: menuBar },
-        randomization: { schedule: { mode: randomizationMode } },
+        randomization: {
+          automaticEnabled: automaticRandomization,
+          schedule: { mode: randomizationMode },
+        },
       }),
     hasVisibleWindows: (excludedWindow) =>
       [...visibleWindows].some((window) => window !== excludedWindow),
@@ -69,7 +73,10 @@ describe("window lifecycle", () => {
     expect(
       shouldRegisterMainAppLoginItem({
         menuBar: { visible: false },
-        randomization: { schedule: { mode: "launch" } },
+        randomization: {
+          automaticEnabled: true,
+          schedule: { mode: "launch" },
+        },
       }),
     ).toBe(true);
     expect(
@@ -79,7 +86,10 @@ describe("window lifecycle", () => {
           automaticSwitching: false,
           lightCursorId: "OreoWhite",
         },
-        randomization: { schedule: { mode: "interval" } },
+        randomization: {
+          automaticEnabled: true,
+          schedule: { mode: "interval" },
+        },
       }),
     ).toBe(true);
     expect(
@@ -89,7 +99,10 @@ describe("window lifecycle", () => {
           automaticSwitching: false,
           lightCursorId: "OreoWhite",
         },
-        randomization: { schedule: { mode: "off" } },
+        randomization: {
+          automaticEnabled: false,
+          schedule: { mode: "interval" },
+        },
       }),
     ).toBe(false);
   });
@@ -98,7 +111,10 @@ describe("window lifecycle", () => {
     const preferences = {
       menuBar: { visible: false },
       appearance: { automaticSwitching: false },
-      randomization: { schedule: { mode: "launch" } },
+      randomization: {
+        automaticEnabled: true,
+        schedule: { mode: "launch" },
+      },
     };
 
     expect(shouldRegisterMainAppLoginItem(preferences)).toBe(true);

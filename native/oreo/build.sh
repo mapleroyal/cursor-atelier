@@ -201,6 +201,8 @@ fi
     "$contents_path/Resources/Oreo-GPL-2.0.txt"
 /usr/bin/ditto "$script_dir/Resources/Oreo-AUTHORS.txt" \
     "$contents_path/Resources/Oreo-AUTHORS.txt"
+/usr/bin/ditto "$script_dir/../../assets/BrandMark.svg" \
+    "$contents_path/Resources/BrandMark.svg"
 /usr/bin/ditto "$script_dir/LICENSE" \
     "$contents_path/Resources/LICENSE-CODE.txt"
 /usr/bin/ditto "$script_dir/THIRD-PARTY-NOTICES.md" \

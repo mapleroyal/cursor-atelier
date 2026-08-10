@@ -25,6 +25,7 @@ describe("cursor preference normalization", () => {
         lightCursorId: " OreoWhite ",
       },
       randomization: {
+        automaticEnabled: true,
         source: "family",
         family: " Oreo ",
         pools: {
@@ -49,6 +50,7 @@ describe("cursor preference normalization", () => {
         darkCursorId: null,
       },
       randomization: {
+        automaticEnabled: true,
         source: "family",
         family: "Oreo",
         pools: {
@@ -136,6 +138,31 @@ describe("cursor preference normalization", () => {
         appearance: { automaticSwitching: "true" },
       }).appearance.automaticSwitching,
     ).toBe(false);
+  });
+
+  it("keeps automatic randomization fail-closed and its schedule configurable", () => {
+    expect(
+      normalizeCursorPreferences({
+        randomization: {
+          automaticEnabled: true,
+          schedule: { mode: "interval" },
+        },
+      }).randomization,
+    ).toMatchObject({
+      automaticEnabled: true,
+      schedule: { mode: "interval" },
+    });
+    expect(
+      normalizeCursorPreferences({
+        randomization: {
+          automaticEnabled: "true",
+          schedule: { mode: "off" },
+        },
+      }).randomization,
+    ).toMatchObject({
+      automaticEnabled: false,
+      schedule: { mode: "launch" },
+    });
   });
 });
 
@@ -285,13 +312,28 @@ describe("random cursor selection", () => {
 });
 
 describe("randomization schedule math", () => {
-  it("returns no timer date for off and launch schedules", () => {
+  it("returns no timer date when automation is disabled or launch-only", () => {
     const now = new Date(2026, 7, 6, 8, 0);
 
-    expect(getNextRandomizationDate({}, now)).toBeNull();
     expect(
       getNextRandomizationDate(
-        { randomization: { schedule: { mode: "launch" } } },
+        {
+          randomization: {
+            automaticEnabled: false,
+            schedule: { mode: "interval" },
+          },
+        },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      getNextRandomizationDate(
+        {
+          randomization: {
+            automaticEnabled: true,
+            schedule: { mode: "launch" },
+          },
+        },
         now,
       ),
     ).toBeNull();
@@ -301,6 +343,7 @@ describe("randomization schedule math", () => {
     const now = new Date("2026-08-06T12:00:00.000Z");
     const interval = {
       randomization: {
+        automaticEnabled: true,
         schedule: { mode: "interval", intervalHours: 1.5 },
       },
     };
@@ -337,11 +380,13 @@ describe("randomization schedule math", () => {
     const evening = new Date(2026, 7, 6, 19, 0);
     const daily = {
       randomization: {
+        automaticEnabled: true,
         schedule: { mode: "daily", dailyTime: "09:00" },
       },
     };
     const times = {
       randomization: {
+        automaticEnabled: true,
         schedule: { mode: "times", times: ["08:00", "12:00", "18:00"] },
       },
     };

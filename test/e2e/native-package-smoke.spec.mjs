@@ -43,7 +43,7 @@ const bundledThemeIdSet = new Set(bundledThemeIds);
 function findPackagedExecutable() {
   const executable = path.join(
     projectRoot,
-    "out",
+    "out.noindex",
     `Cursor Atelier-darwin-${process.arch}`,
     "Cursor Atelier.app",
     "Contents",
@@ -204,7 +204,7 @@ test.describe("packaged native integration", () => {
           canApply: true,
           imported: false,
           nativeListed: true,
-          resourceInstalled: true,
+          resourceAvailable: true,
         });
         expect(theme.rolePreviews).toHaveLength(47);
       }
@@ -218,7 +218,7 @@ test.describe("packaged native integration", () => {
           canApply: true,
           imported: true,
           nativeListed: true,
-          resourceInstalled: true,
+          resourceAvailable: true,
         });
         expect(theme.rolePreviews).toHaveLength(47);
         expect(theme.preview).toMatch(/^cursor-preview:\/\/asset\//);

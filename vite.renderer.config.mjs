@@ -15,6 +15,7 @@ export default defineConfig({
         "**/native/cursor-packs/generated/**",
         "**/native/oreo/build/**",
         "**/out/**",
+        "**/out.noindex/**",
       ],
     },
   },

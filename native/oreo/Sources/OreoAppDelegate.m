@@ -244,13 +244,13 @@
     header.spacing = 18.0;
     NSImageView *headerIcon = [[NSImageView alloc] initWithFrame:NSZeroRect];
     headerIcon.translatesAutoresizingMaskIntoConstraints = NO;
-    headerIcon.image = [NSImage
-        imageWithSystemSymbolName:@"cursorarrow.rays"
-         accessibilityDescription:@"Cursor Atelier"];
-    headerIcon.image = [headerIcon.image imageWithSymbolConfiguration:
-        [NSImageSymbolConfiguration configurationWithPointSize:72.0
-                                                        weight:
-                                                            NSFontWeightRegular]];
+    NSURL *brandMarkURL =
+        [NSBundle.mainBundle URLForResource:@"BrandMark" withExtension:@"svg"];
+    NSImage *brandMark = brandMarkURL
+        ? [[NSImage alloc] initWithContentsOfURL:brandMarkURL] : nil;
+    brandMark.template = YES;
+    brandMark.accessibilityDescription = @"Cursor Atelier";
+    headerIcon.image = brandMark;
     headerIcon.imageScaling = NSImageScaleProportionallyUpOrDown;
     headerIcon.contentTintColor = NSColor.controlAccentColor;
     [NSLayoutConstraint activateConstraints:@[

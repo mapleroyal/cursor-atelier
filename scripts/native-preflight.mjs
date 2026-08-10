@@ -41,6 +41,8 @@ const helperInfo = path.join(
 );
 const helperApp = path.resolve(helperInfo, "..", "..");
 const appInfo = path.join(contents, "Info.plist");
+const brandMarkSource = path.join(projectRoot, "assets", "BrandMark.svg");
+const bundledBrandMark = path.join(contents, "Resources", "BrandMark.svg");
 const themesDirectory = path.join(contents, "Resources", "Themes");
 const manifestPath = path.join(themesDirectory, "manifest.json");
 const builtInCatalogPath = path.join(themesDirectory, "catalog.json");
@@ -134,6 +136,24 @@ try {
 }
 if (!fs.existsSync(manifestPath)) {
   fail("The generated cursor manifest is missing from the native bundle.");
+}
+if (
+  !fs.existsSync(brandMarkSource) ||
+  !fs.statSync(brandMarkSource).isFile() ||
+  !fs.existsSync(bundledBrandMark) ||
+  !fs.statSync(bundledBrandMark).isFile() ||
+  !crypto.timingSafeEqual(
+    crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(brandMarkSource))
+      .digest(),
+    crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(bundledBrandMark))
+      .digest(),
+  )
+) {
+  fail("The native application brand mark is missing or stale.");
 }
 
 for (const plist of [appInfo, helperInfo]) {

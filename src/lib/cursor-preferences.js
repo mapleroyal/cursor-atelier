@@ -1,8 +1,7 @@
-export const CURSOR_PREFERENCES_VERSION = 5;
+export const CURSOR_PREFERENCES_VERSION = 6;
 
 export const RANDOM_SOURCES = Object.freeze(["all", "favorites", "family"]);
 export const RANDOM_SCHEDULE_MODES = Object.freeze([
-  "off",
   "launch",
   "interval",
   "daily",
@@ -31,6 +30,7 @@ export function createDefaultCursorPreferences() {
       darkCursorId: null,
     },
     randomization: {
+      automaticEnabled: false,
       source: "all",
       family: null,
       pools: {
@@ -38,7 +38,7 @@ export function createDefaultCursorPreferences() {
         dark: [],
       },
       schedule: {
-        mode: "off",
+        mode: "launch",
         intervalHours: 1,
         dailyTime: "09:00",
         times: ["09:00", "17:00"],
@@ -185,6 +185,7 @@ export function normalizeCursorPreferences(value) {
       darkCursorId: nullableIdentifier(appearance.darkCursorId),
     },
     randomization: {
+      automaticEnabled: randomization.automaticEnabled === true,
       source,
       family: nullableFamily(randomization.family),
       pools: {
@@ -395,9 +396,9 @@ function localDateAtTime(time, reference) {
 
 export function getNextRandomizationDate(preferences, now = new Date()) {
   const normalized = normalizeCursorPreferences(preferences);
-  const { schedule, lastRunAt } = normalized.randomization;
+  const { automaticEnabled, schedule, lastRunAt } = normalized.randomization;
   const current = new Date(now);
-  if (!Number.isFinite(current.getTime())) {
+  if (!automaticEnabled || !Number.isFinite(current.getTime())) {
     return null;
   }
 

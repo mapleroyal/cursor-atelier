@@ -8,7 +8,7 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
-const packagedOutput = path.join(projectRoot, "out");
+const packagedOutput = path.join(projectRoot, "out.noindex");
 
 function packList(scope) {
   return scope.getByRole("navigation", { name: "Cursor packs" });
@@ -115,6 +115,75 @@ test.describe("Cursor Atelier packaged app", () => {
     );
 
     await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const settingsAlignment = await page.evaluate(() => {
+      const title = document.getElementById("settings-title");
+      const settings = title?.closest("section");
+      const scrollContainer = settings?.querySelector(":scope > div");
+      const content = scrollContainer?.firstElementChild;
+      const back = settings?.querySelector('button[aria-label="Back"]');
+      const appearance = settings?.querySelector(
+        '[role="radiogroup"][aria-label="Appearance mode"]',
+      );
+      const sectionHeadings = [...(settings?.querySelectorAll("h2") ?? [])];
+      const general = sectionHeadings.find(
+        (heading) => heading.textContent === "General",
+      );
+      const randomization = sectionHeadings.find(
+        (heading) => heading.textContent === "Randomization",
+      );
+      const randomizeNow = [
+        ...(settings?.querySelectorAll("button") ?? []),
+      ].find((button) => button.textContent === "Randomize Now");
+      const titleRect = title?.getBoundingClientRect();
+      const contentRect = content?.getBoundingClientRect();
+      const backRect = back?.getBoundingClientRect();
+      const appearanceRect = appearance?.getBoundingClientRect();
+      const generalRect = general?.getBoundingClientRect();
+      const randomizationRect = randomization?.getBoundingClientRect();
+      const randomizeNowRect = randomizeNow?.getBoundingClientRect();
+
+      return {
+        appearanceCenter:
+          appearanceRect && appearanceRect.top + appearanceRect.height / 2,
+        appearanceRight: appearanceRect?.right,
+        backLeft: backRect?.left,
+        contentLeft: contentRect?.left,
+        contentRight: contentRect?.right,
+        generalCenter: generalRect && generalRect.top + generalRect.height / 2,
+        randomizationCenter:
+          randomizationRect &&
+          randomizationRect.top + randomizationRect.height / 2,
+        randomizeNowCenter:
+          randomizeNowRect &&
+          randomizeNowRect.top + randomizeNowRect.height / 2,
+        titleCenter: titleRect && titleRect.left + titleRect.width / 2,
+        viewportCenter: window.innerWidth / 2,
+      };
+    });
+    expect(
+      Math.abs(settingsAlignment.backLeft + 8 - settingsAlignment.contentLeft),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        settingsAlignment.appearanceRight - settingsAlignment.contentRight,
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        settingsAlignment.titleCenter - settingsAlignment.viewportCenter,
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        settingsAlignment.appearanceCenter - settingsAlignment.generalCenter,
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        settingsAlignment.randomizeNowCenter -
+          settingsAlignment.randomizationCenter,
+      ),
+    ).toBeLessThanOrEqual(1);
     await expect(
       page.getByRole("button", { name: "Appearance", exact: true }),
     ).toHaveCount(0);
@@ -512,6 +581,11 @@ test.describe("Cursor Atelier packaged app", () => {
     await expect(
       page.getByRole("button", { name: "Randomize Now", exact: true }),
     ).toBeVisible();
+    const automaticRandomizationSwitch = page.getByRole("switch", {
+      name: "Randomize Automatically",
+    });
+    await expect(automaticRandomizationSwitch).toBeVisible();
+    await expect(automaticRandomizationSwitch).not.toBeChecked();
     await expect(page.locator("#random-source")).toHaveText(
       "Light & Dark Pools",
     );
@@ -591,6 +665,14 @@ test.describe("Cursor Atelier packaged app", () => {
         }),
       )
       .toEqual(["09:00", "17:00", "17:15"]);
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const preferences = await window.electronAPI.getCursorPreferences();
+          return preferences.randomization.automaticEnabled;
+        }),
+      )
+      .toBe(false);
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
   });

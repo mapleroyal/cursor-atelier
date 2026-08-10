@@ -1595,14 +1595,7 @@ function PackDetails({
           <div className="flex min-w-0 items-center gap-3">
             <PackPreview pack={pack} active={active} size="lg" />
             <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-headline-md">{pack.variant}</h1>
-                {active ? (
-                  <span className="shrink-0 text-label-sm text-primary">
-                    Active
-                  </span>
-                ) : null}
-              </div>
+              <h1 className="truncate text-headline-md">{pack.variant}</h1>
               {pack.sourceUrl ? (
                 <a
                   href={pack.sourceUrl}
@@ -2415,16 +2408,13 @@ export function HomeRoute() {
               .length > 0,
         );
         return engineAvailable &&
-          requestedPreferences.randomization.schedule.mode !== "off" &&
+          requestedPreferences.randomization.automaticEnabled === true &&
           !scheduleHasCompletePools
           ? {
               ...patch,
               randomization: {
                 ...(patch?.randomization ?? {}),
-                schedule: {
-                  ...(patch?.randomization?.schedule ?? {}),
-                  mode: "off",
-                },
+                automaticEnabled: false,
               },
             }
           : patch;
@@ -2524,7 +2514,7 @@ export function HomeRoute() {
     }
     if (
       hasCompleteRandomizationPools ||
-      preferences.randomization.schedule.mode === "off"
+      preferences.randomization.automaticEnabled !== true
     ) {
       if (pendingPreferenceCount === 0) {
         scheduleCorrectionRef.current = null;
@@ -2546,7 +2536,7 @@ export function HomeRoute() {
     const disableTimer = window.setTimeout(() => {
       scheduleCorrectionRef.current = correctionKey;
       void handlePreferenceChange({
-        randomization: { schedule: { mode: "off" } },
+        randomization: { automaticEnabled: false },
       });
     }, 0);
     return () => window.clearTimeout(disableTimer);

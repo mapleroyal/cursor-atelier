@@ -1,0 +1,85 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.44645,0.82389,0.88497,1.00000",
+      "display-p3:0.66348,0.96783,0.79298,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 1
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.3
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.25487,0.36973,0.54154,1.00000",
+                  "display-p3:0.09001,0.20966,0.38863,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.42436356604918246,
+                    "y" : 0.07043896854498002
+                  },
+                  "stop" : {
+                    "x" : 0.24131268145404902,
+                    "y" : 0.4999999999999995
+                  }
+                }
+              }
+            }
+          ],
+          "image-name" : "BrandMarkCursor.svg",
+          "name" : "BrandMarkCursor"
+        },
+        {
+          "image-name" : "BrandMarkRays.svg",
+          "name" : "BrandMarkRays"
+        }
+      ],
+      "position" : {
+        "scale" : 0.84,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
+      "shadow-specializations" : [
+        {
+          "value" : {
+            "kind" : "layer-color",
+            "opacity" : 1
+          }
+        },
+        {
+          "appearance" : "dark",
+          "value" : {
+            "kind" : "neutral",
+            "opacity" : 1
+          }
+        }
+      ],
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

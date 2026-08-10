@@ -1390,6 +1390,7 @@ describe("cursor automation", () => {
     const timers = [];
     const preferencesStore = createMemoryPreferences({
       randomization: {
+        automaticEnabled: true,
         source: "all",
         schedule: { mode: "interval", intervalHours: 1 },
         lastRunAt: "2026-08-06T10:00:00.000Z",
@@ -1441,6 +1442,13 @@ describe("cursor automation", () => {
     current = new Date("2026-08-06T12:00:01.000Z");
     await automation.reschedule();
     expect(timers.findLast((timer) => !timer.cleared).delay).toBe(59_000);
+
+    preferencesStore.update({
+      randomization: { automaticEnabled: false },
+    });
+    await automation.reschedule();
+    expect(timers.filter((timer) => !timer.cleared)).toHaveLength(0);
+    expect(automation.getNextRunAt()).toBeNull();
     automation.stop();
   });
 
@@ -1453,7 +1461,7 @@ describe("cursor automation", () => {
       let current = new Date(2026, 7, 6, 8, 0);
       const timers = [];
       const preferencesStore = createMemoryPreferences({
-        randomization: { source: "all", schedule },
+        randomization: { automaticEnabled: true, source: "all", schedule },
       });
       const nativeBridge = bridge({
         themes: [theme("OreoWhite")],
@@ -1502,6 +1510,7 @@ describe("cursor automation", () => {
     const timers = [];
     const preferencesStore = createMemoryPreferences({
       randomization: {
+        automaticEnabled: true,
         source: "all",
         schedule: { mode: "interval", intervalHours: 1 },
         lastRunAt: "2026-08-06T12:00:00.000Z",
@@ -1582,6 +1591,7 @@ describe("cursor automation", () => {
   it("runs launch schedules once when the service starts", async () => {
     const preferencesStore = createMemoryPreferences({
       randomization: {
+        automaticEnabled: true,
         source: "all",
         schedule: { mode: "launch" },
       },
@@ -1610,6 +1620,134 @@ describe("cursor automation", () => {
 
     expect(nativeBridge.applyTheme).toHaveBeenCalledTimes(1);
     automation.stop();
+  });
+
+  it("keeps automatic configuration inert while disabled and preserves manual randomization", async () => {
+    const timers = [];
+    const preferencesStore = createMemoryPreferences({
+      randomization: {
+        automaticEnabled: false,
+        source: "all",
+        schedule: { mode: "interval", intervalHours: 1 },
+      },
+    });
+    const nativeBridge = bridge({ themes: [theme("OreoWhite")] });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+      setTimer(callback, delay) {
+        const timer = { callback, delay, cleared: false };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer(timer) {
+        timer.cleared = true;
+      },
+    });
+
+    await automation.start();
+    preferencesStore.update({
+      randomization: {
+        source: "favorites",
+        schedule: { mode: "daily", dailyTime: "18:30" },
+      },
+    });
+    await automation.reschedule();
+
+    expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+    expect(timers.filter((timer) => !timer.cleared)).toHaveLength(0);
+    expect(automation.getNextRunAt()).toBeNull();
+
+    preferencesStore.update({ randomization: { source: "all" } });
+    await automation.randomize("manual");
+    expect(nativeBridge.applyTheme).toHaveBeenCalledOnce();
+    expect(preferencesStore.get().randomization.automaticEnabled).toBe(false);
+    expect(timers.filter((timer) => !timer.cleared)).toHaveLength(0);
+    automation.stop();
+  });
+
+  it("starts a newly enabled interval in the future and cancels it when disabled", async () => {
+    const current = new Date("2026-08-06T12:00:00.000Z");
+    const timers = [];
+    const preferencesStore = createMemoryPreferences({
+      randomization: {
+        automaticEnabled: false,
+        source: "all",
+        schedule: { mode: "interval", intervalHours: 1 },
+        lastRunAt: "2026-08-06T08:00:00.000Z",
+      },
+    });
+    const nativeBridge = bridge({ themes: [theme("OreoWhite")] });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+      now: () => current,
+      setTimer(callback, delay) {
+        const timer = { callback, delay, cleared: false };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer(timer) {
+        timer.cleared = true;
+      },
+    });
+
+    await automation.start({ runLaunch: false });
+    preferencesStore.update({
+      randomization: { automaticEnabled: true },
+    });
+    await automation.reschedule();
+
+    expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+    expect(automation.getNextRunAt()?.toISOString()).toBe(
+      "2026-08-06T13:00:00.000Z",
+    );
+    expect(timers.findLast((timer) => !timer.cleared)?.delay).toBe(
+      60 * 60 * 1_000,
+    );
+
+    preferencesStore.update({
+      randomization: { automaticEnabled: false },
+    });
+    await automation.reschedule();
+    expect(automation.getNextRunAt()).toBeNull();
+    expect(timers.filter((timer) => !timer.cleared)).toHaveLength(0);
+    automation.stop();
+  });
+
+  it("waits for the next actual launch when launch automation is enabled at runtime", async () => {
+    const preferencesStore = createMemoryPreferences({
+      randomization: {
+        automaticEnabled: false,
+        source: "all",
+        schedule: { mode: "launch" },
+      },
+    });
+    const nativeBridge = bridge({ themes: [theme("OreoWhite")] });
+    const firstLaunch = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+    });
+
+    await firstLaunch.start();
+    preferencesStore.update({
+      randomization: { automaticEnabled: true },
+    });
+    await firstLaunch.reschedule();
+    expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+    firstLaunch.stop();
+
+    const nextLaunch = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+    });
+    await nextLaunch.start();
+    expect(nativeBridge.applyTheme).toHaveBeenCalledOnce();
+    nextLaunch.stop();
   });
 
   it("runs external cursor state work exclusively with automation mutations", async () => {

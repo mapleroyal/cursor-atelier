@@ -66,6 +66,7 @@ function automaticRandomizationPreferences(preferences) {
     scheduleConfiguration.times = schedule.times ?? null;
   }
   return {
+    automaticEnabled: randomization.automaticEnabled === true,
     source: randomization.source ?? null,
     sourceSelection:
       randomization.source === "favorites"
@@ -208,6 +209,7 @@ export function createCursorAutomation({
   let lastAppearance = null;
   let operationQueue = Promise.resolve();
   let scheduleGeneration = 0;
+  let randomizationActivatedAt = null;
 
   const getNow = () => {
     const value = new Date(now());
@@ -399,16 +401,20 @@ export function createCursorAutomation({
     reason,
     { expectedMode = null, expectedScheduleGeneration = null } = {},
   ) => {
+    const automaticRequestIsCurrent = (preferences) =>
+      expectedMode === null ||
+      (started &&
+        preferences.randomization.automaticEnabled === true &&
+        preferences.randomization.schedule.mode === expectedMode &&
+        (expectedScheduleGeneration === null ||
+          expectedScheduleGeneration === scheduleGeneration));
+    if (!automaticRequestIsCurrent(preferencesStore.get())) {
+      return null;
+    }
     const themes = await authoritativeThemes();
     const status = await bridge.status();
     const preferences = preferencesStore.get();
-    if (
-      (expectedMode !== null &&
-        (!started ||
-          preferences.randomization.schedule.mode !== expectedMode)) ||
-      (expectedScheduleGeneration !== null &&
-        expectedScheduleGeneration !== scheduleGeneration)
-    ) {
+    if (!automaticRequestIsCurrent(preferences)) {
       return null;
     }
     const appearance = readSystemAppearance();
@@ -523,11 +529,7 @@ export function createCursorAutomation({
         readSystemAppearance() === appearance &&
         JSON.stringify(automaticRandomizationPreferences(latestPreferences)) ===
           randomizationConfiguration &&
-        (expectedMode === null ||
-          (started &&
-            latestPreferences.randomization.schedule.mode === expectedMode)) &&
-        (expectedScheduleGeneration === null ||
-          expectedScheduleGeneration === scheduleGeneration)
+        automaticRequestIsCurrent(latestPreferences)
       );
     };
 
@@ -715,7 +717,28 @@ export function createCursorAutomation({
     }
 
     const current = getNow();
-    const scheduled = getNextRandomizationDate(preferencesStore.get(), current);
+    const preferences = preferencesStore.get();
+    if (preferences.randomization.automaticEnabled !== true) {
+      retryAt = null;
+      return;
+    }
+    const schedulingPreferences =
+      randomizationActivatedAt &&
+      preferences.randomization.schedule.mode === "interval"
+        ? {
+            ...preferences,
+            randomization: {
+              ...preferences.randomization,
+              lastRunAt:
+                !preferences.randomization.lastRunAt ||
+                new Date(preferences.randomization.lastRunAt) <
+                  randomizationActivatedAt
+                  ? randomizationActivatedAt.toISOString()
+                  : preferences.randomization.lastRunAt,
+            },
+          }
+        : preferences;
+    const scheduled = getNextRandomizationDate(schedulingPreferences, current);
     if (!scheduled && !retryAt) {
       return;
     }
@@ -756,6 +779,10 @@ export function createCursorAutomation({
 
     const preferences = preferencesStore.get();
     const mode = preferences.randomization.schedule.mode;
+    if (preferences.randomization.automaticEnabled !== true) {
+      scheduleNext();
+      return null;
+    }
     if (!nextRunAt || nextRunAt > getNow()) {
       scheduleNext();
       return null;
@@ -785,6 +812,10 @@ export function createCursorAutomation({
   }
 
   const preferencesChanged = (preferences) => {
+    const wasRandomizationEnabled =
+      observedPreferences.randomization.automaticEnabled === true;
+    const randomizationEnabled =
+      preferences.randomization.automaticEnabled === true;
     const appearanceChanged =
       JSON.stringify(automaticAppearancePreferences(preferences)) !==
       JSON.stringify(automaticAppearancePreferences(observedPreferences));
@@ -796,6 +827,11 @@ export function createCursorAutomation({
       scheduleGeneration += 1;
       nextRunAt = null;
       retryAt = null;
+    }
+    if (!wasRandomizationEnabled && randomizationEnabled) {
+      randomizationActivatedAt = getNow();
+    } else if (!randomizationEnabled) {
+      randomizationActivatedAt = null;
     }
     clearScheduledTimer();
     void enqueue(async () => {
@@ -815,6 +851,11 @@ export function createCursorAutomation({
       started = true;
       scheduleGeneration += 1;
       observedPreferences = preferencesStore.get();
+      const launchGeneration = scheduleGeneration;
+      const shouldRunLaunch =
+        runLaunch &&
+        observedPreferences.randomization.automaticEnabled === true &&
+        observedPreferences.randomization.schedule.mode === "launch";
       unsubscribePreferences = preferencesStore.subscribe(preferencesChanged);
       return enqueue(async () => {
         await syncAppearanceWithRetry(
@@ -823,11 +864,7 @@ export function createCursorAutomation({
           "startup-appearance",
         );
 
-        if (
-          runLaunch &&
-          preferencesStore.get().randomization.schedule.mode === "launch"
-        ) {
-          const launchGeneration = scheduleGeneration;
+        if (shouldRunLaunch) {
           try {
             await applyRandomCursor("schedule:launch", {
               expectedMode: "launch",
@@ -849,6 +886,7 @@ export function createCursorAutomation({
       appearanceRetryIncident = null;
       nextRunAt = null;
       retryAt = null;
+      randomizationActivatedAt = null;
       unsubscribePreferences?.();
       unsubscribePreferences = null;
     },

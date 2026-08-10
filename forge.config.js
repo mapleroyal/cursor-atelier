@@ -10,6 +10,10 @@ const { FuseV1Options, FuseVersion } = require("@electron/fuses");
 const productVersion = require("./package.json").version;
 
 const rootDirectory = __dirname;
+// A packaged app is only a staging artifact. Keep it out of Spotlight so it
+// cannot compete with the authoritative /Applications installation while it
+// is being verified and installed.
+const packageOutputDirectory = "out.noindex";
 const outerAppName = "Cursor Atelier.app";
 const outerBundleId = "com.cursoratelier.CursorAtelier";
 const nativeAppName = "Oreo Cursor.app";
@@ -332,15 +336,23 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
         "The packaged application and resident helper build identities are inconsistent.",
       );
     }
-    const iconName = plistValue(plistPath, "CFBundleIconFile");
-    const iconFile = iconName.endsWith(".icns") ? iconName : `${iconName}.icns`;
-    if (
-      !iconName ||
-      !fs.existsSync(path.join(appPath, "Contents", "Resources", iconFile))
-    ) {
-      throw new Error("The packaged application icon is missing.");
-    }
     const packagedResources = path.join(appPath, "Contents", "Resources");
+    const modernIconName = plistValue(plistPath, "CFBundleIconName");
+    if (
+      modernIconName !== "Icon" ||
+      !fs.existsSync(path.join(packagedResources, "Assets.car"))
+    ) {
+      throw new Error("The packaged modern application icon is missing.");
+    }
+    const iconName = plistValue(plistPath, "CFBundleIconFile");
+    const iconFile = iconName
+      ? iconName.endsWith(".icns")
+        ? iconName
+        : `${iconName}.icns`
+      : null;
+    if (!iconFile || !fs.existsSync(path.join(packagedResources, iconFile))) {
+      throw new Error("The packaged legacy application icon is missing.");
+    }
     for (const templateName of [
       "MenuBarIconTemplate.png",
       "MenuBarIconTemplate@2x.png",
@@ -444,7 +456,11 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
   }
 }
 
-function runNativePreflight() {
+function runPackagePreflight() {
+  execFileSync(path.join(rootDirectory, "scripts", "build-icon.sh"), [], {
+    cwd: rootDirectory,
+    stdio: "inherit",
+  });
   execFileSync(
     process.execPath,
     [path.join(rootDirectory, "scripts", "native-preflight.mjs")],
@@ -453,6 +469,7 @@ function runNativePreflight() {
 }
 
 module.exports = {
+  outDir: packageOutputDirectory,
   packagerConfig: {
     name: "Cursor Atelier",
     // Keep the outer bundle on the same exact-build identity as the signed
@@ -477,7 +494,10 @@ module.exports = {
     appCategoryType: "public.app-category.utilities",
     appCopyright: "Cursor Atelier contributors",
     darwinDarkModeSupport: true,
-    icon: path.join(rootDirectory, "assets", "AppIcon.icns"),
+    icon: [
+      path.join(rootDirectory, "assets", "AppIcon.icon"),
+      path.join(rootDirectory, "assets", "AppIcon.icns"),
+    ],
     extendInfo: {
       LSMinimumSystemVersion: "13.0",
       NSAppTransportSecurity: {
@@ -505,7 +525,7 @@ module.exports = {
   },
   rebuildConfig: {},
   hooks: {
-    prePackage: runNativePreflight,
+    prePackage: runPackagePreflight,
     postPackage: verifyPackagedApp,
   },
   makers: [

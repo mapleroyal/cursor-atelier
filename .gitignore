@@ -9,6 +9,7 @@ node_modules/
 
 # Build outputs and caches
 out/
+out.noindex/
 dist/
 build/
 coverage/

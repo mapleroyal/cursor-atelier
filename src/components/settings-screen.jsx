@@ -29,7 +29,6 @@ import {
 import { cn } from "@/lib/utils";
 
 const SCHEDULE_OPTIONS = [
-  ["off", "Off"],
   ["launch", "At app launch"],
   ["interval", "Every x hours"],
   ["daily", "Daily"],
@@ -84,10 +83,13 @@ export function reconcileTimeRows(rows, times, createRow) {
   });
 }
 
-function SettingsSection({ title, children }) {
+function SettingsSection({ title, action, children }) {
   return (
     <section className="grid gap-5 py-6 first:pt-0 last:pb-0">
-      <h2 className="text-title-md">{title}</h2>
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <h2 className="text-title-md">{title}</h2>
+        {action}
+      </div>
       {children}
     </section>
   );
@@ -520,6 +522,7 @@ export function SettingsScreen({
       ? randomizationFeedback
       : randomizationFeedback?.message;
   const settingsDisabled = !preferencesAvailable;
+  const automaticRandomizationEnabled = randomization.automaticEnabled === true;
   const displayedPreferenceError = preferencesError
     ? preferencesErrorMessage
     : preferenceError?.message;
@@ -535,14 +538,14 @@ export function SettingsScreen({
       aria-labelledby="settings-title"
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
     >
-      <header className="titlebar-drag relative h-12 shrink-0 border-b border-border/60 pr-3 pl-[78px] sm:pr-4">
-        <div className="mx-auto flex h-full max-w-3xl items-center gap-2">
+      <header className="titlebar-drag relative h-12 shrink-0 border-b border-border/60 px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-full w-full max-w-3xl items-center gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             aria-label="Back"
-            className="titlebar-no-drag shrink-0"
+            className="titlebar-no-drag absolute top-1/2 left-[max(78px,calc((100%_-_48rem)/2_-_0.5rem))] shrink-0 -translate-y-1/2 active:-translate-y-1/2"
             onClick={onClose}
           >
             <HugeiconsIcon
@@ -557,20 +560,14 @@ export function SettingsScreen({
           >
             Settings
           </h1>
-          <div className="titlebar-no-drag ml-auto flex items-center gap-2">
-            {saving ? (
-              <span
-                role="status"
-                className="text-body-sm text-muted-foreground"
-              >
-                Saving…
-              </span>
-            ) : null}
-            <AppearanceModeSelector
-              value={appearanceMode}
-              onValueChange={onAppearanceModeChange}
-            />
-          </div>
+          {saving ? (
+            <span
+              role="status"
+              className="ml-auto text-body-sm text-muted-foreground"
+            >
+              Saving…
+            </span>
+          ) : null}
         </div>
       </header>
 
@@ -608,7 +605,15 @@ export function SettingsScreen({
           ) : null}
 
           <div className="divide-y divide-border/60">
-            <SettingsSection title="General">
+            <SettingsSection
+              title="General"
+              action={
+                <AppearanceModeSelector
+                  value={appearanceMode}
+                  onValueChange={onAppearanceModeChange}
+                />
+              }
+            >
               <Field orientation="horizontal">
                 <FieldContent>
                   <div className="flex items-center gap-1.5">
@@ -670,24 +675,9 @@ export function SettingsScreen({
               </Field>
             </SettingsSection>
 
-            <SettingsSection title="Randomization">
-              <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-                {feedbackMessage || emptyPoolMessage ? (
-                  <p
-                    role={
-                      randomizationFeedback?.type === "error"
-                        ? "alert"
-                        : "status"
-                    }
-                    className={cn(
-                      "mr-auto min-w-0 text-body-sm text-muted-foreground",
-                      randomizationFeedback?.type === "error" &&
-                        "text-destructive",
-                    )}
-                  >
-                    {feedbackMessage ?? emptyPoolMessage}
-                  </p>
-                ) : null}
+            <SettingsSection
+              title="Randomization"
+              action={
                 <Button
                   type="button"
                   variant="outline"
@@ -703,7 +693,42 @@ export function SettingsScreen({
                 >
                   {randomizing ? "Randomizing…" : "Randomize Now"}
                 </Button>
-              </div>
+              }
+            >
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor="randomization-automatic-enabled">
+                    Randomize Automatically
+                  </FieldLabel>
+                </FieldContent>
+                <Switch
+                  id="randomization-automatic-enabled"
+                  checked={automaticRandomizationEnabled}
+                  disabled={
+                    settingsDisabled ||
+                    (!automaticRandomizationEnabled &&
+                      !canScheduleRandomization)
+                  }
+                  onCheckedChange={(automaticEnabled) =>
+                    onChange({ randomization: { automaticEnabled } })
+                  }
+                />
+              </Field>
+
+              {feedbackMessage || emptyPoolMessage ? (
+                <p
+                  role={
+                    randomizationFeedback?.type === "error" ? "alert" : "status"
+                  }
+                  className={cn(
+                    "min-w-0 text-body-sm text-muted-foreground",
+                    randomizationFeedback?.type === "error" &&
+                      "text-destructive",
+                  )}
+                >
+                  {feedbackMessage ?? emptyPoolMessage}
+                </p>
+              ) : null}
 
               <Field orientation="responsive">
                 <FieldContent>
@@ -778,7 +803,7 @@ export function SettingsScreen({
                   <FieldLabel htmlFor="random-schedule">Schedule</FieldLabel>
                 </FieldContent>
                 <Select
-                  value={schedule.mode ?? "off"}
+                  value={schedule.mode ?? "launch"}
                   disabled={settingsDisabled}
                   onValueChange={(mode) =>
                     onChange({
@@ -797,13 +822,7 @@ export function SettingsScreen({
                   <SelectContent>
                     <SelectGroup>
                       {SCHEDULE_OPTIONS.map(([value, label]) => (
-                        <SelectItem
-                          key={value}
-                          value={value}
-                          disabled={
-                            value !== "off" && !canScheduleRandomization
-                          }
-                        >
+                        <SelectItem key={value} value={value}>
                           {label}
                         </SelectItem>
                       ))}

@@ -1,20 +1,26 @@
 export function shouldRegisterMainAppLoginItem(preferences) {
+  const automaticRandomizationEnabled =
+    preferences?.randomization?.automaticEnabled === true;
   return (
     preferences?.menuBar?.visible === true ||
     preferences?.appearance?.automaticSwitching === true ||
-    ["launch", "interval", "daily", "times"].includes(
-      preferences?.randomization?.schedule?.mode,
-    )
+    (automaticRandomizationEnabled &&
+      ["launch", "interval", "daily", "times"].includes(
+        preferences?.randomization?.schedule?.mode,
+      ))
   );
 }
 
 export function shouldMainAppStayRunning(preferences) {
+  const automaticRandomizationEnabled =
+    preferences?.randomization?.automaticEnabled === true;
   return (
     preferences?.menuBar?.visible === true ||
     preferences?.appearance?.automaticSwitching === true ||
-    ["interval", "daily", "times"].includes(
-      preferences?.randomization?.schedule?.mode,
-    )
+    (automaticRandomizationEnabled &&
+      ["interval", "daily", "times"].includes(
+        preferences?.randomization?.schedule?.mode,
+      ))
   );
 }
 
