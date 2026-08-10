@@ -1,15 +1,14 @@
 # Cursor pack conversion
 
-`converter.py` is the build-time boundary between pinned upstream artwork and
-Cursor Atelier's native `.cursor` resources. The large upstream trees live in
-an ignored acquisition cache; only revision and archive-digest locks are kept
-in the application repository.
+This directory contains both source-specific curated recipes and the general
+compiled-theme importer. The signed app ships the recipes in a self-contained
+converter, not the generated `.cursor` resources or upstream source archives.
 
 The locked corpus is 221 generated external variants plus 19 vendored Oreo
 variants. Its unified schema-v2 manifest has 240 rows, 47 native roles per
-row, and 9,328 unique PNG previews derived from the real resources. Both the
-source cache and `generated/` are ignored build data and are never runtime
-download targets.
+row, and 9,328 unique PNG previews derived from the real resources. The source
+cache and bulk `generated/` corpus are ignored build data. Only 45 small static
+family-choice previews are tracked and shipped.
 
 Acquire a fresh cache, or verify an existing one, before conversion:
 
@@ -47,9 +46,8 @@ The converter accepts:
 - All eight Bibata Extra palette profiles plus the upstream hotspot table.
   Its rotation SMIL is frozen at 24 deterministic timestamps rather than
   silently becoming a static cursor.
-- Every Simp1e color scheme and every supplied Nordzy variant. Nordzy's Cape
-  filenames define the variant inventory, while its matching Xcursor packages
-  provide correctly scaled native tiers and hotspots.
+- Every Simp1e color scheme and every supplied Nordzy Xcursor variant,
+  preserving its correctly scaled native tiers and hotspots.
 
 Every output contains all 47 CoreGraphics cursor identifiers used by the
 native engine. Missing source roles use the source's default arrow as a
@@ -59,18 +57,26 @@ cursors are static, or if preview metadata is incomplete. The complete corpus
 also enforces its per-family fallback counts, exact 221 external/19 Oreo ID
 inventory, and 47-role contract from `inventory-lock.json`.
 
-## Packaged-app imports
+## Packaged-app conversion paths
 
-The packaged app has a separate, deliberately narrower conversion path for
-user-selected local files. It accepts an extracted compiled Xcursor theme
+For curated onboarding, `curated_runtime.py` selects the existing recipes for
+one requested family. `curated-source-acquisition.js` downloads only that
+family's pinned original source inputs, verifies archive and filtered-tree
+locks, and passes a private cache root to the packaged converter. Each
+completed artifact is installed transactionally in small progressive batches;
+successful source caches are then removed. All 240 variants across the 15
+families are represented in `curated-family-catalog.json`.
+
+Arbitrary user imports use a separate, deliberately narrower conversion path.
+It accepts an extracted compiled Xcursor theme
 directory; a ZIP, `.tar`, `.tar.gz`/`.tgz`, or `.tar.xz`/`.txz` archive; a
 compatible Mousecape `.cape`; or a compiled macOS `.cursor` property list. It
 converts every discovered variant to the same 47-role schema-v2 contract and
 installs a self-contained resource, manifest, and preview tree under
 `~/Library/Application Support/Cursor Atelier/ImportedPacks`.
 
-This runtime path does not acquire source repositories or invoke the broader
-build-time SVG/config converter described above. It rejects raw SVG/config
+The arbitrary-import path does not acquire source repositories or invoke the
+curated SVG/config recipes. It rejects raw SVG/config
 trees, xcursorgen text files, unsafe archive paths, and unbounded/malformed
 inputs. Imported artifacts are staged privately, checked for path and
 identifier collisions, verified by SHA-256, and atomically moved into the
@@ -88,8 +94,9 @@ python3 -m pip install -r native/oreo/ArtworkSource/requirements.txt
 ```
 
 On Debian/Ubuntu, the command-line renderer is provided by `librsvg2-bin`.
-Both the generic and Oreo converters require `rsvg-convert`; shipped cursor
-themes have no librsvg runtime dependency.
+Developer conversions use `rsvg-convert`. The released curated converter uses
+the app's packaged Sharp/libvips renderer over a bounded JSON-lines protocol;
+it needs no user-installed Python, Pillow, librsvg, Git, or Homebrew.
 
 Convert one resolved source variant:
 
@@ -179,11 +186,12 @@ UUIDs are UUIDv5 values under a Cursor Atelier namespace and the theme
 identifier, so rebuilding the same pinned input is reproducible. Binary plist
 keys and manifest keys are sorted; PNG sprite sheets use Pillow's deterministic
 encoder. The generated directory is intentionally separate from the vendored
-source tree and is ignored by Git. `build_all.py` builds and validates a
-staging sibling before atomically replacing `generated/`; a failed build keeps
-the previous valid output. The native build copies its selected
-`.cursor` files, previews, and manifest into `Contents/Resources/Themes`
-during staging.
+source tree and is ignored by Git apart from the 45 onboarding previews.
+`build_all.py` builds and validates a staging sibling before atomically
+replacing `generated/`; a failed build keeps the previous valid output. These
+`.cursor` files, bulk previews, and the generated manifest are developer
+artifacts. The native build rejects a staged `Contents/Resources/Themes`
+payload.
 
 ## Role and animation details
 

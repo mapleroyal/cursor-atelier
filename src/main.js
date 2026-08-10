@@ -25,12 +25,37 @@ import {
 } from "./main/app-appearance-ipc";
 import { createCursorAutomation } from "./main/cursor-automation";
 import { createCursorBridge, registerCursorIpc } from "./main/cursor-bridge";
-import { reconcileCursorImportTransactions } from "./main/cursor-import-install";
+import {
+  createCursorImportStaging,
+  installImportedArtifacts,
+  reconcileCursorImportTransactions,
+  removeCursorImportStaging,
+} from "./main/cursor-import-install";
 import { createCursorLibraryPreferencesReconciler } from "./main/cursor-library-preferences-reconciler";
 import { createCursorPreferencesStore } from "./main/cursor-preferences-store";
 import { restoreCursorState } from "./main/cursor-state-service";
 import { createCursorThemeSizeCleanupReconciler } from "./main/cursor-theme-size-cleanup-reconciler";
+import {
+  createCuratedConversionWorkspace,
+  reconcileCuratedConversionWorkspaces,
+  removeCuratedConversionWorkspace,
+} from "./main/curated-conversion-workspace";
+import { convertCuratedFamily } from "./main/curated-converter-client";
+import {
+  CURATED_FAMILY_CATALOG,
+  CURATED_VARIANTS_BY_FAMILY,
+} from "./main/curated-family-catalog";
+import { createCuratedFamilyService } from "./main/curated-family-service";
+import {
+  acquireCuratedFamilySources,
+  CURATED_FAMILY_IDS,
+  CURATED_SOURCE_CATALOG,
+  reconcileCuratedSourceTransactions,
+  removeCuratedFamilySources,
+} from "./main/curated-source-acquisition";
+import { createCuratedVariantInstaller } from "./main/curated-variant-installer";
 import { createMainLoginItemReconciler } from "./main/main-login-item-reconciler";
+import { createOnboardingStore } from "./main/onboarding-store";
 import { broadcastToRendererWindows } from "./main/renderer-broadcast";
 import { createRendererNavigation } from "./main/renderer-navigation";
 import {
@@ -566,6 +591,30 @@ function notifyLibraryChanged(payload) {
   void refreshTrayMenu();
 }
 
+function curatedConverterInvocation() {
+  if (app.isPackaged) {
+    return {
+      command: path.join(
+        process.resourcesPath,
+        "curated-cursor-converter",
+        "curated-cursor-converter",
+      ),
+      commandArguments: [],
+    };
+  }
+  return {
+    command: "/usr/bin/python3",
+    commandArguments: [
+      path.join(
+        app.getAppPath(),
+        "native",
+        "cursor-packs",
+        "curated_runtime.py",
+      ),
+    ],
+  };
+}
+
 async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);
   const options = {
@@ -651,7 +700,18 @@ async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
 
 async function startApplication() {
   const importedPacksRoot = path.join(app.getPath("userData"), "ImportedPacks");
+  const curatedSourceRoot = path.join(
+    app.getPath("userData"),
+    "CuratedSources",
+  );
+  const curatedWorkRoot = path.join(
+    app.getPath("userData"),
+    "CuratedConversion",
+  );
   const preferencesStore = createCursorPreferencesStore({
+    directory: app.getPath("userData"),
+  });
+  const onboardingStore = createOnboardingStore({
     directory: app.getPath("userData"),
   });
   getSystemAppearance();
@@ -692,6 +752,151 @@ async function startApplication() {
   } catch (error) {
     console.error("Could not reconcile interrupted cursor imports.", error);
   }
+  try {
+    const reconciliation =
+      await reconcileCuratedConversionWorkspaces(curatedWorkRoot);
+    if (reconciliation.cleanupPending) {
+      console.error(
+        "Some interrupted curated conversions still require cleanup.",
+      );
+    }
+  } catch (error) {
+    console.error(
+      "Could not reconcile interrupted curated conversions.",
+      error,
+    );
+  }
+  try {
+    const reconciliation = await reconcileCuratedSourceTransactions({
+      cacheRoot: curatedSourceRoot,
+    });
+    if (reconciliation.cleanupPending) {
+      console.error(
+        "Some interrupted curated source acquisitions still require cleanup.",
+      );
+    }
+  } catch (error) {
+    console.error(
+      "Could not reconcile interrupted curated source acquisitions.",
+      error,
+    );
+  }
+  const completedSourceFamilies = onboardingStore
+    .get()
+    .jobs.filter((job) => job.status === "completed")
+    .map((job) => job.familyId)
+    .filter((familyId) => CURATED_FAMILY_IDS.includes(familyId));
+  if (completedSourceFamilies.length) {
+    void removeCuratedFamilySources({
+      familyIds: completedSourceFamilies,
+      cacheRoot: curatedSourceRoot,
+    }).catch((error) =>
+      console.error("Could not remove completed curated source caches.", error),
+    );
+  }
+
+  const converter = curatedConverterInvocation();
+  const installCuratedVariants = createCuratedVariantInstaller({
+    workRoot: curatedWorkRoot,
+    importedPacksRoot,
+    bridge,
+    createStaging: createCursorImportStaging,
+    removeStaging: removeCursorImportStaging,
+    installArtifacts: installImportedArtifacts,
+  });
+  const localArchiveRoot =
+    process.env.CURSOR_ATELIER_CURATED_ARCHIVE_ROOT || undefined;
+  const runImportedLibraryExclusive = (operation) => {
+    const result = importQueue.then(operation);
+    importQueue = result.catch(() => undefined);
+    return result;
+  };
+  const curatedFamilyService = createCuratedFamilyService({
+    familyIds: CURATED_FAMILY_IDS,
+    variantsByFamily: CURATED_VARIANTS_BY_FAMILY,
+    store: onboardingStore,
+    acquireFamilySources: ({ familyId, signal, onProgress }) => {
+      const sourceIds = CURATED_SOURCE_CATALOG.families.find(
+        (family) => family.id === familyId,
+      ).sourceIds;
+      const sourceProgress = new Map(
+        sourceIds.map((sourceId) => [sourceId, 0]),
+      );
+      return acquireCuratedFamilySources({
+        familyIds: [familyId],
+        cacheRoot: curatedSourceRoot,
+        localArchiveRoot,
+        signal,
+        onProgress: (event) => {
+          if (sourceProgress.has(event?.sourceId)) {
+            sourceProgress.set(
+              event.sourceId,
+              Math.min(1, Math.max(0, Number(event.progress) || 0)),
+            );
+          }
+          onProgress(
+            [...sourceProgress.values()].reduce(
+              (total, progress) => total + progress,
+              0,
+            ) / sourceProgress.size,
+          );
+        },
+      });
+    },
+    releaseFamilySources: ({ familyId }) =>
+      removeCuratedFamilySources({
+        familyIds: [familyId],
+        cacheRoot: curatedSourceRoot,
+      }),
+    getInstalledVariantIds: ({ familyId }) =>
+      runImportedLibraryExclusive(async () => {
+        const expected = new Set(CURATED_VARIANTS_BY_FAMILY.get(familyId));
+        return (await bridge.listThemes())
+          .filter(
+            (theme) =>
+              expected.has(theme.nativeThemeId) &&
+              theme.curatedFamilyId === familyId &&
+              theme.sourceFormat === "curated-source" &&
+              theme.curatedCatalogSha256 === CURATED_FAMILY_CATALOG.sha256,
+          )
+          .map((theme) => theme.nativeThemeId);
+      }),
+    convertFamily: async ({
+      familyId,
+      sourceRoot,
+      skipIdentifiers,
+      signal,
+      onEvent,
+    }) => {
+      const workspace = await createCuratedConversionWorkspace(curatedWorkRoot);
+      try {
+        await convertCuratedFamily({
+          ...converter,
+          familyId,
+          sourceRoot,
+          outputRoot: workspace,
+          skipIdentifiers,
+          signal,
+          onEvent,
+        });
+      } finally {
+        try {
+          await removeCuratedConversionWorkspace({
+            root: curatedWorkRoot,
+            workspace,
+          });
+        } catch (error) {
+          console.error(
+            "Could not remove a curated conversion workspace.",
+            error,
+          );
+        }
+      }
+    },
+    installVariants: installCuratedVariants,
+    runInstallExclusive: runImportedLibraryExclusive,
+    onLibraryChanged: notifyLibraryChanged,
+  });
   const libraryPreferencesReconciler = createCursorLibraryPreferencesReconciler(
     {
       bridge,
@@ -841,6 +1046,21 @@ async function startApplication() {
       throw new Error("Cursor IPC is unavailable to this page.");
     }
   };
+  const unsubscribeOnboarding = curatedFamilyService.subscribe((state) => {
+    broadcastToRenderers("onboarding:changed", state);
+  });
+  ipcMain.handle("onboarding:get", (event) => {
+    requireTrustedSender(event);
+    return curatedFamilyService.getState();
+  });
+  ipcMain.handle("onboarding:start", (event, familyIds) => {
+    requireTrustedSender(event);
+    return curatedFamilyService.start(familyIds);
+  });
+  ipcMain.handle("onboarding:retry", (event, familyId) => {
+    requireTrustedSender(event);
+    return curatedFamilyService.retry(familyId);
+  });
   const disposeAppAppearanceIpc = registerAppAppearanceIpc({
     ipcMain,
     preferencesStore,
@@ -923,6 +1143,22 @@ async function startApplication() {
     importQueue = result.catch(() => undefined);
     return result;
   };
+  const assertCuratedMutationIdle = () => {
+    const active = curatedFamilyService
+      .getState()
+      .jobs.some((job) =>
+        ["queued", "downloading", "converting", "installing"].includes(
+          job.status,
+        ),
+      );
+    if (active) {
+      const error = new Error(
+        "Wait for this curated family to finish before changing it.",
+      );
+      error.code = "CURATED_FAMILY_BUSY";
+      throw error;
+    }
+  };
   const completeImportedDeletion = async (result, reason) => {
     if (result.sizePreferenceCleanupIdentifiers?.length) {
       try {
@@ -964,6 +1200,7 @@ async function startApplication() {
     (event, identifiers, family) => {
       requireTrustedSender(event);
       return enqueueImportedLibraryMutation(async () => {
+        assertCuratedMutationIdle();
         const result = await bridge.assignImportedFamily(identifiers, family);
         let preferenceCleanupPending = false;
         try {
@@ -985,21 +1222,23 @@ async function startApplication() {
   );
   ipcMain.handle("cursor:delete-imported", (event, identifier) => {
     requireTrustedSender(event);
-    return enqueueImportedLibraryMutation(async () =>
-      completeImportedDeletion(
+    return enqueueImportedLibraryMutation(async () => {
+      assertCuratedMutationIdle();
+      return completeImportedDeletion(
         await bridge.deleteImportedThemes([identifier]),
         "renderer-delete-imported",
-      ),
-    );
+      );
+    });
   });
   ipcMain.handle("cursor:delete-imported-family", (event, family) => {
     requireTrustedSender(event);
-    return enqueueImportedLibraryMutation(async () =>
-      completeImportedDeletion(
+    return enqueueImportedLibraryMutation(async () => {
+      assertCuratedMutationIdle();
+      return completeImportedDeletion(
         await bridge.deleteImportedFamily(family),
         "renderer-delete-imported-family",
-      ),
-    );
+      );
+    });
   });
 
   const automation = createCursorAutomation({
@@ -1011,7 +1250,13 @@ async function startApplication() {
       console.error(`Cursor automation failed (${reason}).`, error);
     },
   });
-  runtime = { automation, bridge, preferencesStore };
+  runtime = {
+    automation,
+    bridge,
+    preferencesStore,
+    curatedFamilyService,
+    curatedCatalogSha256: CURATED_FAMILY_CATALOG.sha256,
+  };
 
   ipcMain.handle(
     "cursor:set-appearance-cursor",
@@ -1103,13 +1348,23 @@ async function startApplication() {
   }
 
   let stopping = false;
-  app.once("before-quit", () => {
+  let shutdownReady = false;
+  const handleBeforeQuit = (event) => {
+    if (shutdownReady) {
+      return;
+    }
+    event.preventDefault();
+    if (stopping) {
+      return;
+    }
     stopping = true;
     windowLifecycle?.beginQuit();
     automation.stop();
     libraryPreferencesReconciler.stop();
     themeSizeCleanupReconciler.stop();
     mainLoginItemReconciler.stop();
+    curatedFamilyService.stop();
+    unsubscribeOnboarding();
     disposeAppAppearanceIpc();
     unsubscribePreferences();
     nativeTheme.off("updated", handleNativeThemeUpdated);
@@ -1125,7 +1380,19 @@ async function startApplication() {
     tray?.destroy();
     tray = null;
     runtime = null;
-  });
+    let timeoutId;
+    void Promise.race([
+      curatedFamilyService.whenIdle(),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(resolve, 7_000);
+      }),
+    ]).finally(() => {
+      clearTimeout(timeoutId);
+      shutdownReady = true;
+      app.quit();
+    });
+  };
+  app.on("before-quit", handleBeforeQuit);
 
   app.on("activate", () => {
     requestMainWindow();

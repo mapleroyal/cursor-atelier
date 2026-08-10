@@ -110,6 +110,15 @@ class BuildInventoryTests(unittest.TestCase):
             values = build_all._simp1e_scheme(schemes / filename)
             self.assertEqual(values["spinner_bg"], spinner_background)
 
+        source = Path(build_all._repo("simp1e"))
+        rendered, _slices, _hotspots = build_all._simp1e_template(
+            source,
+            schemes / "Simp1e.txt",
+        )
+        # Sharp/libvips sniffs an SVG by its root element and does not accept
+        # ElementTree's otherwise-valid ``<ns0:svg>`` serialization.
+        self.assertTrue(rendered.startswith('<svg xmlns="http://www.w3.org/2000/svg"'))
+
     def test_build_config_aliases_complete_google_and_bibata_roles(self) -> None:
         configs = (
             Path(build_all._repo("google-cursor", "build.toml")),

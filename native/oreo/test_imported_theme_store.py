@@ -296,7 +296,7 @@ class ImportedThemeStoreTests(unittest.TestCase):
         # snapshot, and missing owned state remains an explicit failure.
         self.assertEqual(policy["restore"], [0, 0, 1, 1, 2, 2])
 
-    def test_builtin_catalog_loader_fails_closed_when_missing_or_invalid(self) -> None:
+    def test_imports_do_not_depend_on_a_bundled_catalog(self) -> None:
         self._install("orphaned-pack", "OrphanedFixture")
         for catalog in (None, "{}"):
             with self.subTest(catalog=catalog):
@@ -307,7 +307,28 @@ class ImportedThemeStoreTests(unittest.TestCase):
                     themes = json.loads(
                         self._run("list", theme_root=theme_root).stdout
                     )
-                    self.assertEqual(themes, [])
+                    self.assertEqual(
+                        [theme["Identifier"] for theme in themes],
+                        ["OrphanedFixture"],
+                    )
+
+    def test_clean_install_with_no_bundled_or_imported_themes_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            empty_import_root = pathlib.Path(directory) / "empty-home"
+            empty_import_root.mkdir()
+            prior_home = self.home
+            try:
+                self.home = empty_import_root
+                theme_root = pathlib.Path(directory) / "empty-themes"
+                theme_root.mkdir()
+                self.assertEqual(
+                    json.loads(
+                        self._run("list", theme_root=theme_root).stdout
+                    ),
+                    [],
+                )
+            finally:
+                self.home = prior_home
 
     def test_builtin_catalog_orders_its_declared_default_first(self) -> None:
         source_root = NATIVE_ROOT / "Resources" / "Themes"
@@ -331,7 +352,7 @@ class ImportedThemeStoreTests(unittest.TestCase):
                 )
             ]
             self.assertIn(
-                "OreoThemeSpecifications(resourceBundle).firstObject",
+                "OreoThemeSpecificationsForBundle(resourceBundle).firstObject",
                 selection,
             )
 
@@ -511,7 +532,7 @@ class ImportedThemeStoreTests(unittest.TestCase):
             {theme["Identifier"] for theme in self._themes()},
         )
 
-        # Exactly 512 near-misses plus the pack exceed the quota. If even one
+        # Exactly 576 near-misses plus the pack exceed the quota. If even one
         # near-miss is incorrectly exempted, the catalogue remains visible.
         invalid_templates = (
             ".metadata-{index:05d}",
@@ -522,7 +543,7 @@ class ImportedThemeStoreTests(unittest.TestCase):
             ".delete-{index:06d}x",
             ".other-{index:06d}",
         )
-        for index in range(512):
+        for index in range(576):
             template = invalid_templates[index % len(invalid_templates)]
             invalid = self.imported_root / template.format(index=index)
             invalid.mkdir(mode=0o700)

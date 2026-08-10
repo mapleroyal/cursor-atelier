@@ -1,5 +1,12 @@
 import { create } from "zustand";
 import themeSeedColors from "@/lib/theme-seed-colors";
+import {
+  ONBOARDING_VERSION,
+  createOptimisticOnboardingState,
+  failOnboardingJobs,
+  normalizeOnboardingState,
+  queueOnboardingJob,
+} from "@/lib/onboarding";
 
 const DARK_MODE_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
@@ -114,11 +121,22 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
   let confirmedThemeMode = initialThemeMode;
   let appearanceRequest = 0;
   let persistenceQueue = Promise.resolve();
+  let onboardingRequest = 0;
+  let onboardingHydration = null;
+
+  const initialOnboardingState = {
+    version: ONBOARDING_VERSION,
+    completed: null,
+    jobs: [],
+    error: null,
+  };
 
   return create((set, get) => ({
     themeMode: initialThemeMode,
     theme: resolveTheme(initialThemeMode, { matchMedia }),
     themeError: null,
+    onboarding: initialOnboardingState,
+    onboardingLoading: true,
     setThemeMode: (themeMode) => {
       if (!isThemeMode(themeMode)) {
         return Promise.resolve(false);
@@ -194,6 +212,136 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
       }),
     toggleTheme: () =>
       get().setThemeMode(get().theme === "dark" ? "light" : "dark"),
+    hydrateOnboarding: () => {
+      if (onboardingHydration) {
+        return onboardingHydration;
+      }
+      const request = ++onboardingRequest;
+      const getter = resolveElectronAPI(electronAPI)?.getOnboardingState;
+      if (typeof getter !== "function") {
+        const state = { ...initialOnboardingState, completed: true };
+        set({ onboarding: state, onboardingLoading: false });
+        onboardingHydration = Promise.resolve(state);
+        return onboardingHydration;
+      }
+
+      onboardingHydration = Promise.resolve()
+        .then(() => getter())
+        .then(
+          (value) => {
+            const state = normalizeOnboardingState(value);
+            if (request === onboardingRequest) {
+              set({ onboarding: state, onboardingLoading: false });
+            }
+            return state;
+          },
+          (error) => {
+            const state = normalizeOnboardingState({
+              completed: false,
+              error,
+            });
+            if (request === onboardingRequest) {
+              set({ onboarding: state, onboardingLoading: false });
+            }
+            return state;
+          },
+        );
+      return onboardingHydration;
+    },
+    completeOnboarding: (familyIds) => {
+      const optimistic = createOptimisticOnboardingState(familyIds);
+      const request = ++onboardingRequest;
+      set({ onboarding: optimistic, onboardingLoading: false });
+      const starter = resolveElectronAPI(electronAPI)?.startOnboarding;
+      if (typeof starter !== "function") {
+        const failed = optimistic.jobs.length
+          ? failOnboardingJobs(
+              optimistic,
+              "Starter pack imports are unavailable in this build.",
+            )
+          : optimistic;
+        set({ onboarding: failed });
+        return Promise.resolve(failed);
+      }
+
+      return Promise.resolve()
+        .then(() => starter(optimistic.jobs.map((job) => job.familyId)))
+        .then(
+          (value) => {
+            const state = normalizeOnboardingState(value, optimistic);
+            if (request === onboardingRequest) {
+              set({ onboarding: state });
+            }
+            return state;
+          },
+          (error) => {
+            const failed = failOnboardingJobs(optimistic, error);
+            if (request === onboardingRequest) {
+              set({ onboarding: failed });
+            }
+            return failed;
+          },
+        );
+    },
+    retryOnboardingImport: (familyId) => {
+      const id = String(familyId ?? "").trim();
+      if (!id) {
+        return Promise.resolve(get().onboarding);
+      }
+      const optimistic = queueOnboardingJob(get().onboarding, id);
+      const request = ++onboardingRequest;
+      set({ onboarding: optimistic });
+      const retry = resolveElectronAPI(electronAPI)?.retryOnboardingImport;
+      if (typeof retry !== "function") {
+        const failed = {
+          ...optimistic,
+          jobs: optimistic.jobs.map((job) =>
+            job.familyId === id
+              ? {
+                  ...job,
+                  status: "failed",
+                  error: "Retry is unavailable in this build.",
+                }
+              : job,
+          ),
+        };
+        set({ onboarding: failed });
+        return Promise.resolve(failed);
+      }
+
+      return Promise.resolve()
+        .then(() => retry(id))
+        .then(
+          (value) => {
+            const state = normalizeOnboardingState(value, optimistic);
+            if (request === onboardingRequest) {
+              set({ onboarding: state });
+            }
+            return state;
+          },
+          (error) => {
+            const message = String(error?.message ?? error ?? "Retry failed.");
+            const failed = {
+              ...optimistic,
+              jobs: optimistic.jobs.map((job) =>
+                job.familyId === id
+                  ? { ...job, status: "failed", error: message }
+                  : job,
+              ),
+            };
+            if (request === onboardingRequest) {
+              set({ onboarding: failed });
+            }
+            return failed;
+          },
+        );
+    },
+    syncOnboarding: (value) => {
+      onboardingRequest += 1;
+      const onboarding = normalizeOnboardingState(value, get().onboarding);
+      set({ onboarding, onboardingLoading: false });
+      return onboarding;
+    },
   }));
 }
 

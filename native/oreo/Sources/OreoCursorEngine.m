@@ -42,8 +42,8 @@ static const NSUInteger OreoMaximumDecodedBytes = 64 * 1024 * 1024;
 // A theme retains every decoded cursor representation for registration. Keep
 // the aggregate allocation bounded independently of the per-cursor ceiling.
 static const NSUInteger OreoMaximumDecodedThemeBytes = 128 * 1024 * 1024;
-static const NSUInteger OreoMaximumImportedDirectoryEntries = 512;
-static const NSUInteger OreoMaximumImportedPacks = 256;
+static const NSUInteger OreoMaximumImportedDirectoryEntries = 576;
+static const NSUInteger OreoMaximumImportedPacks = 512;
 static const NSUInteger OreoMaximumImportedThemes = 512;
 static const NSUInteger OreoMaximumImportedThemesPerPack = 64;
 static const NSUInteger OreoMaximumImportedManifestBytes = 16 * 1024 * 1024;
@@ -53,10 +53,10 @@ static const NSUInteger OreoMaximumImportedPackThemeBytes = 128 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedThemeBytesTotal = 512 * 1024 * 1024;
 static const NSUInteger OreoMaximumImportedReceiptBytes = 4 * 1024 * 1024;
 static const NSUInteger OreoMaximumBuiltInCatalogBytes = 1024 * 1024;
+static const NSUInteger OreoMaximumBundledThemes = 256;
 // Covers the complete built-in, build-generated, and imported catalogue while
 // still bounding malformed preference data independently of import limits.
 static const NSUInteger OreoMaximumThemeSizeEntries = 2048;
-static const NSUInteger OreoBuiltInThemeCount = 19;
 
 typedef NS_ENUM(NSUInteger, OreoSnapshotPreparationDisposition) {
     OreoSnapshotPreparationCreateFresh = 0,
@@ -217,11 +217,6 @@ static NSDictionary<NSString *, NSString *> *
 OreoThemeSpecificationForBundle(NSString *identifier, NSBundle *bundle) {
     NSDictionary<NSString *, id> *catalog =
         OreoBundledThemeCatalogForBundle(bundle);
-    NSArray<NSDictionary<NSString *, NSString *> *> *bundledThemes =
-        catalog[@"Themes"];
-    if (bundledThemes.count < OreoBuiltInThemeCount) {
-        return nil;
-    }
     NSDictionary<NSString *, NSString *> *bundled =
         catalog[@"ByIdentifier"][identifier];
     if (bundled) {
@@ -534,10 +529,18 @@ OreoThemeSpecifications(NSBundle *bundle) {
             [OreoThemeCatalogResourceName stringByAppendingPathExtension:@"json"]
         isDirectory:NO];
     struct stat catalogStatus;
+    int catalogStatusResult =
+        lstat(catalogURL.fileSystemRepresentation, &catalogStatus);
     BOOL catalogFileValid =
-        lstat(catalogURL.fileSystemRepresentation, &catalogStatus) == 0 &&
+        catalogStatusResult == 0 &&
         S_ISREG(catalogStatus.st_mode) && catalogStatus.st_size > 0 &&
         (uint64_t)catalogStatus.st_size <= OreoMaximumBuiltInCatalogBytes;
+    if (catalogStatusResult != 0 && errno == ENOENT) {
+        @synchronized (cache) {
+            cache[cacheKey] = @[];
+        }
+        return @[];
+    }
     NSData *catalogData = catalogFileValid
         ? [NSData dataWithContentsOfURL:catalogURL
                                options:NSDataReadingMappedIfSafe
@@ -565,7 +568,8 @@ OreoThemeSpecifications(NSBundle *bundle) {
         CFGetTypeID((__bridge CFTypeRef)schemaVersion) !=
             CFBooleanGetTypeID() &&
         [(NSNumber *)schemaVersion isEqualToNumber:@1] &&
-        entries.count == OreoBuiltInThemeCount &&
+        entries.count > 0 &&
+        entries.count <= OreoMaximumBundledThemes &&
         OreoIsBoundedManifestText(family, 128) &&
         OreoIsBoundedManifestText(author, 512) &&
         OreoIsBoundedManifestText(license, 128) &&
@@ -646,7 +650,7 @@ OreoThemeSpecifications(NSBundle *bundle) {
         [themes removeObjectAtIndex:defaultThemeIndex];
         [themes insertObject:defaultTheme atIndex:0];
     }
-    NSArray *result = rootValid && themes.count == OreoBuiltInThemeCount &&
+    NSArray *result = rootValid && themes.count == entries.count &&
         defaultThemeIndex != NSNotFound ? [themes copy] : @[];
     if (result.count == 0) {
         NSLog(@"Cursor Atelier: built-in theme catalog is invalid or missing.");
@@ -1089,6 +1093,11 @@ OreoGeneratedThemeSpecifications(NSBundle *bundle) {
     if (!manifestURL) {
         return @[];
     }
+    struct stat manifestStatus;
+    if (lstat(manifestURL.fileSystemRepresentation, &manifestStatus) != 0 &&
+        errno == ENOENT) {
+        return @[];
+    }
     NSData *manifestData = [NSData dataWithContentsOfURL:manifestURL
                                                   options:NSDataReadingMappedIfSafe
                                                     error:NULL];
@@ -1453,17 +1462,6 @@ OreoBundledThemeCatalogForBundle(NSBundle *bundle) {
 
     NSArray<NSDictionary<NSString *, NSString *> *> *builtInThemes =
         OreoThemeSpecifications(bundle);
-    if (builtInThemes.count != OreoBuiltInThemeCount) {
-        NSDictionary *empty = @{
-            @"Themes": @[],
-            @"ByIdentifier": @{},
-            @"Identifiers": [NSSet set],
-        };
-        @synchronized (cache) {
-            cache[cacheKey] = empty;
-        }
-        return empty;
-    }
     NSMutableArray<NSDictionary<NSString *, NSString *> *> *themes =
         [builtInThemes mutableCopy];
     NSMutableDictionary<NSString *, NSNumber *> *indexByCanonicalIdentifier =
@@ -1543,9 +1541,6 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *
 OreoThemeSpecificationsForBundle(NSBundle *bundle) {
     NSMutableArray<NSDictionary<NSString *, NSString *> *> *themes =
         [OreoBundledThemeSpecificationsForBundle(bundle) mutableCopy];
-    if (themes.count < OreoBuiltInThemeCount) {
-        return @[];
-    }
     NSSet<NSString *> *bundledIdentifiers = [NSSet setWithArray:
         [themes valueForKey:OreoThemeIdentifierSpecKey]];
     [themes addObjectsFromArray:
@@ -2149,7 +2144,7 @@ OreoThemeCursorsByScalingGeometry(
     if (OreoIsSafeThemeIdentifier(saved)) {
         return saved;
     }
-    return OreoThemeSpecifications(resourceBundle).firstObject[
+    return OreoThemeSpecificationsForBundle(resourceBundle).firstObject[
         OreoThemeIdentifierSpecKey] ?: @"";
 }
 

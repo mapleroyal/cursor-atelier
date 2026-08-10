@@ -74,10 +74,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   updateCursorPreferences: (patch) =>
     electron.ipcRenderer.invoke("preferences:update", patch),
   randomizeCursor: () => electron.ipcRenderer.invoke("cursor:randomize"),
+  getOnboardingState: () => electron.ipcRenderer.invoke("onboarding:get"),
+  startOnboarding: (familyIds) =>
+    electron.ipcRenderer.invoke("onboarding:start", familyIds),
+  retryOnboardingImport: (familyId) =>
+    electron.ipcRenderer.invoke("onboarding:retry", familyId),
   onCursorPreferencesChanged: (callback) =>
     subscribe("preferences:changed", callback),
   onCursorChanged: (callback) => subscribe("cursor:changed", callback),
   onCursorLibraryChanged: (callback) =>
     subscribe("cursor:library-changed", callback),
+  onOnboardingChanged: (callback) => subscribe("onboarding:changed", callback),
   onNavigate: subscribeToNavigation,
 });

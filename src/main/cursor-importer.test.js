@@ -109,6 +109,26 @@ function spinnerFrame(size, phase, delayMs = 50) {
   };
 }
 
+async function vectorCursorFrame(size, delayMs = null) {
+  const svg =
+    Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 64 64">
+    <path d="M8 5 L9 49 L20 38 L29 58 L38 53 L29 34 L45 33 Z" fill="#f3f4f6" stroke="#111827" stroke-width="2.5" stroke-linejoin="round"/>
+  </svg>`);
+  const { data, info } = await sharp(svg)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return {
+    rgba: data,
+    width: info.width,
+    height: info.height,
+    hotspotX: size / 8,
+    hotspotY: size / 12,
+    delayMs,
+    nominalSize: size,
+  };
+}
+
 async function solidPng(width, height, color) {
   return sharp({
     create: {
@@ -346,6 +366,74 @@ describe("cursor importer conversion semantics", () => {
       [96, 96],
       [128, 128],
     ]);
+  });
+
+  it("learns an alpha-aware filter on held-out roles without changing authentic tiers", async () => {
+    const low = await vectorCursorFrame(48);
+    const high = await vectorCursorFrame(64);
+    const sourceFrames = new Map(
+      Array.from({ length: 16 }, (_, index) => [
+        `role-${String(index).padStart(2, "0")}`,
+        new Map([
+          [48, [{ ...low, rgba: Buffer.from(low.rgba) }]],
+          [64, [{ ...high, rgba: Buffer.from(high.rgba) }]],
+        ]),
+      ]),
+    );
+    const arrowGroups = sourceFrames.get("role-00");
+
+    const reconstruction =
+      await __testing.learnXcursorReconstruction(sourceFrames);
+    const { record } = await __testing.buildCursorRecord(arrowGroups);
+    const decoded64 = await sharp(record.Representations[1])
+      .ensureAlpha()
+      .raw()
+      .toBuffer();
+    const sizes = await Promise.all(
+      record.Representations.map(
+        async (representation) =>
+          (await sharp(representation).metadata()).width,
+      ),
+    );
+
+    expect(reconstruction).toMatchObject({
+      method: "learned-filter",
+      pair: [48, 64],
+    });
+    expect(reconstruction.roleCount).toBeGreaterThanOrEqual(12);
+    expect(reconstruction.validation.filteredError).toBeLessThan(
+      reconstruction.validation.baselineError,
+    );
+    expect([...arrowGroups.keys()]).toEqual([48, 64]);
+    expect(sizes).toEqual([32, 64, 96, 128]);
+    expect(decoded64.equals(high.rgba)).toBe(true);
+  });
+
+  it("uses deterministic no-halo reconstruction when a theme cannot train safely", async () => {
+    const source = new Map([[64, [await vectorCursorFrame(64, 75)]]]);
+    const sourceFrames = new Map([["default", source]]);
+
+    const reconstruction =
+      await __testing.learnXcursorReconstruction(sourceFrames);
+    const { record } = await __testing.buildCursorRecord(source);
+    const dimensions = await Promise.all(
+      record.Representations.map(async (representation) => {
+        const metadata = await sharp(representation).metadata();
+        return [metadata.width, metadata.height];
+      }),
+    );
+
+    expect(reconstruction).toEqual({
+      method: "nohalo",
+      reason: "no-compatible-tier-pair",
+    });
+    expect(dimensions).toEqual([
+      [32, 32],
+      [64, 64],
+      [96, 96],
+      [128, 128],
+    ]);
+    expect(record).toMatchObject({ FrameCount: 1, FrameDuration: 1 });
   });
 
   it("emits every animated preview frame with its cursor timing", async () => {
@@ -675,6 +763,107 @@ describe("cursor importer conversion semantics", () => {
 });
 
 describe("cursor importer source safety and packaging", () => {
+  it("stamps narrowly validated trusted catalogue metadata and reports monotonic phases", async () => {
+    const root = temporaryDirectory();
+    const cursorRoot = path.join(root, "Trusted Theme", "cursors");
+    const progress = [];
+    fs.mkdirSync(cursorRoot, { recursive: true });
+    fs.copyFileSync(
+      path.join(remusDirectory, "default"),
+      path.join(cursorRoot, "left_ptr"),
+    );
+
+    const result = await importCursorSource({
+      sourcePath: path.join(root, "Trusted Theme"),
+      stagingDirectory: path.join(root, "staging"),
+      trustedMetadata: {
+        author: "Example Artist",
+        catalogId: "trusted-theme",
+        displayName: "Trusted Theme Blue",
+        family: "Trusted Theme",
+        license: "MIT",
+        licenseUrl: "https://example.test/license",
+        sourceUrl: "https://example.test/source",
+        upstreamVariant: "Blue-upstream",
+        variant: "Blue",
+      },
+      onProgress(value) {
+        progress.push(value);
+      },
+    });
+    const artifact = result.artifacts[0];
+    const manifest = JSON.parse(fs.readFileSync(artifact.manifestPath, "utf8"));
+    const theme = plist.parseBinary(fs.readFileSync(artifact.cursorPath));
+
+    expect(manifest.themes[0]).toMatchObject({
+      Author: "Example Artist",
+      catalogId: "trusted-theme",
+      DisplayName: "Trusted Theme Blue",
+      Group: "Trusted Theme",
+      License: "MIT",
+      LicenseURL: "https://example.test/license",
+      SourceURL: "https://example.test/source",
+      UpstreamVariant: "Blue-upstream",
+      Variant: "Blue",
+      VariantLabel: "Blue",
+    });
+    expect(theme).toMatchObject({
+      Creator: "Example Artist",
+      Group: "Trusted Theme",
+      ThemeName: "Trusted Theme Blue",
+    });
+    expect(progress.at(0)).toEqual({ phase: "preparing", progress: 0 });
+    expect(progress.at(-1)).toEqual({ phase: "completed", progress: 1 });
+    expect(progress.map(({ progress: value }) => value)).toEqual(
+      [...progress]
+        .map(({ progress: value }) => value)
+        .sort((left, right) => left - right),
+    );
+  });
+
+  it("selects one trusted variant from a multi-theme source", async () => {
+    const root = temporaryDirectory();
+    const source = path.join(root, "Source");
+    for (const name of ["First", "Second"]) {
+      const cursorRoot = path.join(source, name, "cursors");
+      fs.mkdirSync(cursorRoot, { recursive: true });
+      fs.copyFileSync(
+        path.join(remusDirectory, "default"),
+        path.join(cursorRoot, "left_ptr"),
+      );
+    }
+
+    const result = await importCursorSource({
+      sourcePath: source,
+      stagingDirectory: path.join(root, "staging"),
+      trustedMetadata: {
+        catalogId: "second-theme",
+        sourceVariant: "Second",
+      },
+    });
+
+    expect(result).toMatchObject({
+      artifactCount: 1,
+      selection: { displayName: "Second" },
+    });
+    expect(result.artifacts[0].entry.catalogId).toBe("second-theme");
+  });
+
+  it("rejects unsafe trusted metadata before conversion", async () => {
+    const root = temporaryDirectory();
+    await expect(
+      importCursorSource({
+        sourcePath: remusDirectory,
+        stagingDirectory: path.join(root, "staging"),
+        trustedMetadata: {
+          catalogId: "bad id",
+          sourceUrl: "file:///private/source",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_OPTIONS" });
+    expect(fs.existsSync(path.join(root, "staging"))).toBe(false);
+  });
+
   it("prefers canonical filenames over aliases in either encounter order and keeps first-wins alias ties", async () => {
     const root = temporaryDirectory();
     const cursorRoot = path.join(root, "Priority Theme", "cursors");

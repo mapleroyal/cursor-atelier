@@ -14,6 +14,21 @@ function createElectronAPI(appearanceMode = "system") {
   return {
     getAppAppearanceMode: vi.fn(() => appearanceMode),
     setAppAppearanceMode: vi.fn(async (mode) => mode),
+    getOnboardingState: vi.fn(async () => ({
+      version: 2,
+      completed: false,
+      jobs: [],
+    })),
+    startOnboarding: vi.fn(async (familyIds) => ({
+      version: 2,
+      completed: true,
+      jobs: familyIds.map((familyId) => ({ familyId, status: "queued" })),
+    })),
+    retryOnboardingImport: vi.fn(async (familyId) => ({
+      version: 2,
+      completed: true,
+      jobs: [{ familyId, status: "queued" }],
+    })),
   };
 }
 
@@ -300,5 +315,90 @@ describe("app store theme behavior", () => {
     expect(toggle).toHaveBeenCalledWith("dark", true);
     expect(element.style.colorScheme).toBe("dark");
     expect(element.style.backgroundColor).toBe("oklch(0.145 0 0)");
+  });
+});
+
+describe("app store onboarding behavior", () => {
+  it("hydrates the persisted first-run state once", async () => {
+    const electronAPI = createElectronAPI();
+    const store = createAppStore({ electronAPI });
+
+    await Promise.all([
+      store.getState().hydrateOnboarding(),
+      store.getState().hydrateOnboarding(),
+    ]);
+
+    expect(electronAPI.getOnboardingState).toHaveBeenCalledTimes(1);
+    expect(store.getState()).toMatchObject({
+      onboardingLoading: false,
+      onboarding: { completed: false, jobs: [] },
+    });
+  });
+
+  it("moves to the library with optimistic jobs before IPC resolves", async () => {
+    const electronAPI = createElectronAPI();
+    let resolveStart;
+    electronAPI.startOnboarding.mockReturnValue(
+      new Promise((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+    const store = createAppStore({ electronAPI });
+
+    const result = store.getState().completeOnboarding(["oreo", "bibata"]);
+    expect(store.getState().onboarding).toMatchObject({
+      completed: true,
+      jobs: [
+        { familyId: "oreo", status: "queued" },
+        { familyId: "bibata", status: "queued" },
+      ],
+    });
+
+    resolveStart({
+      version: 2,
+      completed: true,
+      jobs: [{ familyId: "oreo", status: "downloading" }],
+    });
+    await result;
+    expect(store.getState().onboarding.jobs[0].status).toBe("downloading");
+  });
+
+  it("completes an empty onboarding without creating import jobs", async () => {
+    const electronAPI = createElectronAPI();
+    const store = createAppStore({ electronAPI });
+
+    await store.getState().completeOnboarding([]);
+
+    expect(electronAPI.startOnboarding).toHaveBeenCalledWith([]);
+    expect(store.getState().onboarding).toMatchObject({
+      completed: true,
+      jobs: [],
+    });
+  });
+
+  it("optimistically queues a failed job when retrying", async () => {
+    const electronAPI = createElectronAPI();
+    let resolveRetry;
+    electronAPI.retryOnboardingImport.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRetry = resolve;
+      }),
+    );
+    const store = createAppStore({ electronAPI });
+    store.getState().syncOnboarding({
+      version: 2,
+      completed: true,
+      jobs: [{ familyId: "future", status: "failed" }],
+    });
+
+    const result = store.getState().retryOnboardingImport("future");
+    expect(store.getState().onboarding.jobs[0].status).toBe("queued");
+    resolveRetry({
+      version: 2,
+      completed: true,
+      jobs: [{ familyId: "future", status: "converting" }],
+    });
+    await result;
+    expect(store.getState().onboarding.jobs[0].status).toBe("converting");
   });
 });

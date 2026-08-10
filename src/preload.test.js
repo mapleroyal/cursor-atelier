@@ -61,4 +61,34 @@ describe("sandbox preload", () => {
 
     expect(api.getAppAppearanceMode()).toBe("system");
   });
+
+  it("exposes onboarding commands and a removable state subscription", async () => {
+    const { api, ipcRenderer } = loadPreload();
+    const listener = vi.fn();
+
+    await api.getOnboardingState();
+    await api.startOnboarding(["oreo"]);
+    await api.retryOnboardingImport("oreo");
+    const unsubscribe = api.onOnboardingChanged(listener);
+
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(1, "onboarding:get");
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(2, "onboarding:start", [
+      "oreo",
+    ]);
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      3,
+      "onboarding:retry",
+      "oreo",
+    );
+    expect(ipcRenderer.on).toHaveBeenCalledWith(
+      "onboarding:changed",
+      expect.any(Function),
+    );
+
+    unsubscribe();
+    expect(ipcRenderer.removeListener).toHaveBeenCalledWith(
+      "onboarding:changed",
+      expect.any(Function),
+    );
+  });
 });

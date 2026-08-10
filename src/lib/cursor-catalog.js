@@ -3,20 +3,18 @@ import OREO_CATALOG_MANIFEST from "../../native/oreo/Resources/Themes/catalog.js
 import { CURSOR_DTO_SCHEMA_VERSION } from "./cursor-dto.js";
 
 /**
- * The bundled cursor catalogue is deliberately static. Cursor artwork for
- * these entries is converted and packaged at build time; built-in Oreo
- * identity comes from the same catalog consumed by native code, while this
- * module adds renderer metadata for the remaining upstream families.
+ * The curated cursor catalogue is deliberately static. The app acquires each
+ * selected family's pinned original upstream inputs and runs its source recipe
+ * locally; no converted cursor payload is shipped or separately published.
+ * Oreo identity comes from the same source catalog consumed by the converter,
+ * while this module adds metadata for the remaining upstream families.
  * User imports are not added here: the Electron bridge merges separately
  * validated schema-v2 manifests from the private per-user store at runtime.
  *
- * Every pack has a stable nativeThemeId.  For Oreo those resources are always
- * part of the checked-in native bundle.  The other packs are marked
- * catalogue-only until the build-time converter emits their resource and
- * manifest entry; the Electron bridge upgrades those entries at runtime after
- * validating the packaged manifest.  Keeping the identifier stable across
- * those two states prevents selection/status drift when a pack becomes
- * installable.
+ * Every pack has a stable source nativeThemeId, but no cursor payload ships in
+ * the app. The Electron bridge exposes only locally converted resources in the
+ * private per-user store. Keeping catalog identity stable across source builds
+ * and installation prevents selection/status drift.
  */
 
 /**
@@ -191,8 +189,8 @@ const OREO_CATALOG = OREO_CATALOG_MANIFEST.themes.map((theme) =>
     license: OREO_CATALOG_MANIFEST.license,
     licenseUrl: OREO_CATALOG_MANIFEST.licenseUrl,
     author: OREO_CATALOG_MANIFEST.author,
-    bundled: true,
-    tags: ["oreo", theme.category, "bundled", "macos"],
+    bundled: false,
+    tags: ["oreo", theme.category, "on-demand", "macos"],
   }),
 );
 
@@ -718,6 +716,30 @@ export function normalizeCursorTheme(theme = {}, catalog = CURSOR_CATALOG) {
     "";
   const sha256 = firstThemeValue(theme, ["sha256", "SHA256", "hash"]);
   const uuid = firstThemeValue(theme, ["uuid", "UUID"]);
+  const curatedFamilyIdValue = firstThemeValue(theme, [
+    "curatedFamilyId",
+    "CuratedFamilyId",
+  ]);
+  const sourceFormatValue = firstThemeValue(theme, [
+    "sourceFormat",
+    "SourceFormat",
+  ]);
+  const curatedCatalogSha256Value = firstThemeValue(theme, [
+    "curatedCatalogSha256",
+    "CuratedCatalogSHA256",
+  ]);
+  const curatedFamilyId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(
+    String(curatedFamilyIdValue ?? ""),
+  )
+    ? String(curatedFamilyIdValue)
+    : null;
+  const sourceFormat =
+    sourceFormatValue === "curated-source" ? sourceFormatValue : null;
+  const curatedCatalogSha256 = /^[a-f0-9]{64}$/.test(
+    String(curatedCatalogSha256Value ?? ""),
+  )
+    ? String(curatedCatalogSha256Value)
+    : null;
 
   return {
     schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
@@ -753,6 +775,9 @@ export function normalizeCursorTheme(theme = {}, catalog = CURSOR_CATALOG) {
     author,
     ...(sha256 ? { sha256 } : {}),
     ...(uuid ? { uuid } : {}),
+    ...(curatedFamilyId ? { curatedFamilyId } : {}),
+    ...(sourceFormat ? { sourceFormat } : {}),
+    ...(curatedCatalogSha256 ? { curatedCatalogSha256 } : {}),
     name: String(
       firstThemeValue(theme, ["name", "Name"]) ?? base?.name ?? variant,
     ),

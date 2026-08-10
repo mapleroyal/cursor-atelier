@@ -11,10 +11,10 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const IMPORTED_ROLE_COUNT = 47;
-const MAX_IMPORTED_DIRECTORY_ENTRIES = 512;
+const MAX_IMPORTED_DIRECTORY_ENTRIES = 576;
 const MAX_ARTIFACT_FILES = 256;
 const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
-const MAX_IMPORTED_PACKS = 256;
+const MAX_IMPORTED_PACKS = 512;
 const MAX_IMPORTED_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_IMPORTED_CURSOR_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORTED_CURSOR_BYTES_TOTAL = 512 * 1024 * 1024;
@@ -37,7 +37,7 @@ export const IMPORT_PROMOTION_MANIFEST = ".promotion.json";
 export const IMPORT_PROMOTION_COMMIT = ".promotion-committed.json";
 const TRANSACTION_MARKER_PUBLISHING_SUFFIX = ".publishing";
 const DELETE_TRANSACTION_SCHEMA_VERSION = 1;
-// A phase marker can contain the maximum 256 records, each with two bounded
+// A phase marker can contain the maximum 512 records, each with two bounded
 // 128-byte names, a SHA-256 digest, and JSON framing.
 const MAX_TRANSACTION_MARKER_BYTES = MAX_IMPORTED_PACKS * 1024 + 4 * 1024;
 

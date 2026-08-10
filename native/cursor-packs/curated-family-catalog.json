@@ -1,0 +1,1297 @@
+{
+  "schemaVersion": 1,
+  "themeCount": 240,
+  "sha256": "7ae5a40611f0f76a4615e11ccadc1d49dba0fa94ce030f77b8350b29e3036140",
+  "families": [
+    {
+      "id": "oreo",
+      "name": "Oreo",
+      "variants": [
+        {
+          "identifier": "OreoWhite",
+          "displayName": "Oreo White",
+          "variant": "White"
+        },
+        {
+          "identifier": "OreoGrey",
+          "displayName": "Oreo Gray",
+          "variant": "Gray"
+        },
+        {
+          "identifier": "OreoBlack",
+          "displayName": "Oreo Black",
+          "variant": "Black"
+        },
+        {
+          "identifier": "OreoBlue",
+          "displayName": "Oreo Blue",
+          "variant": "Blue"
+        },
+        {
+          "identifier": "OreoPink",
+          "displayName": "Oreo Pink",
+          "variant": "Pink"
+        },
+        {
+          "identifier": "OreoPurple",
+          "displayName": "Oreo Purple",
+          "variant": "Purple"
+        },
+        {
+          "identifier": "OreoRed",
+          "displayName": "Oreo Red",
+          "variant": "Red"
+        },
+        {
+          "identifier": "OreoTeal",
+          "displayName": "Oreo Teal",
+          "variant": "Teal"
+        },
+        {
+          "identifier": "OreoSparkLite",
+          "displayName": "Oreo Spark Light",
+          "variant": "Spark Light"
+        },
+        {
+          "identifier": "OreoSparkDark",
+          "displayName": "Oreo Spark Dark",
+          "variant": "Spark Dark"
+        },
+        {
+          "identifier": "OreoSparkBlue",
+          "displayName": "Oreo Spark Blue",
+          "variant": "Spark Blue"
+        },
+        {
+          "identifier": "OreoSparkGreen",
+          "displayName": "Oreo Spark Green",
+          "variant": "Spark Green"
+        },
+        {
+          "identifier": "OreoSparkLightPink",
+          "displayName": "Oreo Spark Light Pink",
+          "variant": "Spark Light Pink"
+        },
+        {
+          "identifier": "OreoSparkLime",
+          "displayName": "Oreo Spark Lime",
+          "variant": "Spark Lime"
+        },
+        {
+          "identifier": "OreoSparkOrange",
+          "displayName": "Oreo Spark Orange",
+          "variant": "Spark Orange"
+        },
+        {
+          "identifier": "OreoSparkPink",
+          "displayName": "Oreo Spark Pink",
+          "variant": "Spark Pink"
+        },
+        {
+          "identifier": "OreoSparkPurple",
+          "displayName": "Oreo Spark Purple",
+          "variant": "Spark Purple"
+        },
+        {
+          "identifier": "OreoSparkRed",
+          "displayName": "Oreo Spark Red",
+          "variant": "Spark Red"
+        },
+        {
+          "identifier": "OreoSparkViolet",
+          "displayName": "Oreo Spark Violet",
+          "variant": "Spark Violet"
+        }
+      ]
+    },
+    {
+      "id": "remus",
+      "name": "Remus",
+      "variants": [
+        {
+          "identifier": "Remus",
+          "displayName": "Remus Black",
+          "variant": "Black"
+        },
+        {
+          "identifier": "RemusDark",
+          "displayName": "Remus Dark",
+          "variant": "Dark"
+        },
+        {
+          "identifier": "RemusWhite",
+          "displayName": "Remus White",
+          "variant": "White"
+        }
+      ]
+    },
+    {
+      "id": "drop",
+      "name": "Drop",
+      "variants": [
+        {
+          "identifier": "Drop",
+          "displayName": "Drop Alien",
+          "variant": "Alien"
+        },
+        {
+          "identifier": "DropBlood",
+          "displayName": "Drop Blood",
+          "variant": "Blood"
+        },
+        {
+          "identifier": "DropBlue",
+          "displayName": "Drop Blue",
+          "variant": "Blue"
+        },
+        {
+          "identifier": "DropBlueLayan",
+          "displayName": "Drop Blue Layan",
+          "variant": "Blue Layan"
+        }
+      ]
+    },
+    {
+      "id": "moga",
+      "name": "Moga",
+      "variants": [
+        {
+          "identifier": "MogaCandy",
+          "displayName": "Moga Candy Blue",
+          "variant": "Candy Blue"
+        },
+        {
+          "identifier": "MogaCandyCaramel",
+          "displayName": "Moga Candy Caramel",
+          "variant": "Candy Caramel"
+        },
+        {
+          "identifier": "MogaCandyGreen",
+          "displayName": "Moga Candy Green",
+          "variant": "Candy Green"
+        },
+        {
+          "identifier": "MogaCandyGrey",
+          "displayName": "Moga Candy Grey",
+          "variant": "Candy Grey"
+        },
+        {
+          "identifier": "MogaClassic",
+          "displayName": "Moga Classic Black",
+          "variant": "Classic Black"
+        },
+        {
+          "identifier": "MogaClassicDark",
+          "displayName": "Moga Classic Dark",
+          "variant": "Classic Dark"
+        },
+        {
+          "identifier": "MogaClassicWhite",
+          "displayName": "Moga Classic White",
+          "variant": "Classic White"
+        },
+        {
+          "identifier": "MogaColors",
+          "displayName": "Moga Colors Blue",
+          "variant": "Colors Blue"
+        },
+        {
+          "identifier": "MogaColorsCyan",
+          "displayName": "Moga Colors Cyan",
+          "variant": "Colors Cyan"
+        },
+        {
+          "identifier": "MogaColorsGreen",
+          "displayName": "Moga Colors Green",
+          "variant": "Colors Green"
+        },
+        {
+          "identifier": "MogaColorsGrey",
+          "displayName": "Moga Colors Grey",
+          "variant": "Colors Grey"
+        },
+        {
+          "identifier": "MogaLight",
+          "displayName": "Moga Light Blue",
+          "variant": "Light Blue"
+        },
+        {
+          "identifier": "MogaNeon",
+          "displayName": "Moga Neon Blue",
+          "variant": "Neon Blue"
+        },
+        {
+          "identifier": "MogaNeonButter",
+          "displayName": "Moga Neon Butter",
+          "variant": "Neon Butter"
+        },
+        {
+          "identifier": "MogaNeonCyan",
+          "displayName": "Moga Neon Cyan",
+          "variant": "Neon Cyan"
+        },
+        {
+          "identifier": "MogaNeonGreen",
+          "displayName": "Moga Neon Green",
+          "variant": "Neon Green"
+        }
+      ]
+    },
+    {
+      "id": "volantes",
+      "name": "Volantes",
+      "variants": [
+        {
+          "identifier": "Volantes",
+          "displayName": "Volantes",
+          "variant": "Default"
+        },
+        {
+          "identifier": "VolantesLight",
+          "displayName": "Volantes Light",
+          "variant": "Light"
+        }
+      ]
+    },
+    {
+      "id": "vimix",
+      "name": "Vimix",
+      "variants": [
+        {
+          "identifier": "Vimix",
+          "displayName": "Vimix",
+          "variant": "Default"
+        },
+        {
+          "identifier": "VimixWhite",
+          "displayName": "Vimix White",
+          "variant": "White"
+        }
+      ]
+    },
+    {
+      "id": "qogir",
+      "name": "Qogir",
+      "variants": [
+        {
+          "identifier": "Qogir",
+          "displayName": "Qogir",
+          "variant": "Default"
+        },
+        {
+          "identifier": "QogirDark",
+          "displayName": "Qogir Dark",
+          "variant": "Dark"
+        },
+        {
+          "identifier": "QogirManjaro",
+          "displayName": "Qogir Manjaro",
+          "variant": "Manjaro"
+        },
+        {
+          "identifier": "QogirManjaroDark",
+          "displayName": "Qogir Manjaro Dark",
+          "variant": "Manjaro Dark"
+        },
+        {
+          "identifier": "QogirUbuntu",
+          "displayName": "Qogir Ubuntu",
+          "variant": "Ubuntu"
+        },
+        {
+          "identifier": "QogirUbuntuDark",
+          "displayName": "Qogir Ubuntu Dark",
+          "variant": "Ubuntu Dark"
+        }
+      ]
+    },
+    {
+      "id": "bibata-extra",
+      "name": "Bibata Extra",
+      "variants": [
+        {
+          "identifier": "BibataExtraModernDarkRed",
+          "displayName": "Bibata Extra Modern Dark Red",
+          "variant": "Modern Dark Red"
+        },
+        {
+          "identifier": "BibataExtraModernDodgerBlue",
+          "displayName": "Bibata Extra Modern Dodger Blue",
+          "variant": "Modern Dodger Blue"
+        },
+        {
+          "identifier": "BibataExtraModernPink",
+          "displayName": "Bibata Extra Modern Pink",
+          "variant": "Modern Pink"
+        },
+        {
+          "identifier": "BibataExtraModernTurquoise",
+          "displayName": "Bibata Extra Modern Turquoise",
+          "variant": "Modern Turquoise"
+        },
+        {
+          "identifier": "BibataExtraOriginalDarkRed",
+          "displayName": "Bibata Extra Original Dark Red",
+          "variant": "Original Dark Red"
+        },
+        {
+          "identifier": "BibataExtraOriginalDodgerBlue",
+          "displayName": "Bibata Extra Original Dodger Blue",
+          "variant": "Original Dodger Blue"
+        },
+        {
+          "identifier": "BibataExtraOriginalPink",
+          "displayName": "Bibata Extra Original Pink",
+          "variant": "Original Pink"
+        },
+        {
+          "identifier": "BibataExtraOriginalTurquoise",
+          "displayName": "Bibata Extra Original Turquoise",
+          "variant": "Original Turquoise"
+        }
+      ]
+    },
+    {
+      "id": "google",
+      "name": "Google",
+      "variants": [
+        {
+          "identifier": "Google",
+          "displayName": "Google Black",
+          "variant": "Black"
+        },
+        {
+          "identifier": "GoogleBlue",
+          "displayName": "Google Blue",
+          "variant": "Blue"
+        },
+        {
+          "identifier": "GoogleRed",
+          "displayName": "Google Red",
+          "variant": "Red"
+        },
+        {
+          "identifier": "GoogleWhite",
+          "displayName": "Google White",
+          "variant": "White"
+        }
+      ]
+    },
+    {
+      "id": "simp1e",
+      "name": "Simp1e",
+      "variants": [
+        {
+          "identifier": "Simp1e",
+          "displayName": "Simp1e",
+          "variant": "Default"
+        },
+        {
+          "identifier": "Simp1eAdw",
+          "displayName": "Simp1e Adwaita",
+          "variant": "Adwaita"
+        },
+        {
+          "identifier": "Simp1eAdwDark",
+          "displayName": "Simp1e Adwaita Dark",
+          "variant": "Adwaita Dark"
+        },
+        {
+          "identifier": "Simp1eBreeze",
+          "displayName": "Simp1e Breeze",
+          "variant": "Breeze"
+        },
+        {
+          "identifier": "Simp1eBreezeDark",
+          "displayName": "Simp1e Breeze Dark",
+          "variant": "Breeze Dark"
+        },
+        {
+          "identifier": "Simp1eCatppuccinFrappe",
+          "displayName": "Simp1e Catppuccin Frappé",
+          "variant": "Catppuccin Frappé"
+        },
+        {
+          "identifier": "Simp1eCatppuccinLatte",
+          "displayName": "Simp1e Catppuccin Latte",
+          "variant": "Catppuccin Latte"
+        },
+        {
+          "identifier": "Simp1eCatppuccinMacchiato",
+          "displayName": "Simp1e Catppuccin Macchiato",
+          "variant": "Catppuccin Macchiato"
+        },
+        {
+          "identifier": "Simp1eCatppuccinMocha",
+          "displayName": "Simp1e Catppuccin Mocha",
+          "variant": "Catppuccin Mocha"
+        },
+        {
+          "identifier": "Simp1eDark",
+          "displayName": "Simp1e Dark",
+          "variant": "Dark"
+        },
+        {
+          "identifier": "Simp1eGruvboxDark",
+          "displayName": "Simp1e Gruvbox Dark",
+          "variant": "Gruvbox Dark"
+        },
+        {
+          "identifier": "Simp1eGruvboxLight",
+          "displayName": "Simp1e Gruvbox Light",
+          "variant": "Gruvbox Light"
+        },
+        {
+          "identifier": "Simp1eMixDark",
+          "displayName": "Simp1e Mix Dark",
+          "variant": "Mix Dark"
+        },
+        {
+          "identifier": "Simp1eMixLight",
+          "displayName": "Simp1e Mix Light",
+          "variant": "Mix Light"
+        },
+        {
+          "identifier": "Simp1eNordDark",
+          "displayName": "Simp1e Nord Dark",
+          "variant": "Nord Dark"
+        },
+        {
+          "identifier": "Simp1eNordLight",
+          "displayName": "Simp1e Nord Light",
+          "variant": "Nord Light"
+        },
+        {
+          "identifier": "Simp1eRosePine",
+          "displayName": "Simp1e Rose Pine",
+          "variant": "Rose Pine"
+        },
+        {
+          "identifier": "Simp1eRosePineDawn",
+          "displayName": "Simp1e Rose Pine Dawn",
+          "variant": "Rose Pine Dawn"
+        },
+        {
+          "identifier": "Simp1eRosePineMoon",
+          "displayName": "Simp1e Rose Pine Moon",
+          "variant": "Rose Pine Moon"
+        },
+        {
+          "identifier": "Simp1eSolarizedDark",
+          "displayName": "Simp1e Solarized Dark",
+          "variant": "Solarized Dark"
+        },
+        {
+          "identifier": "Simp1eSolarizedLight",
+          "displayName": "Simp1e Solarized Light",
+          "variant": "Solarized Light"
+        },
+        {
+          "identifier": "Simp1eTokyoNight",
+          "displayName": "Simp1e Tokyo Night",
+          "variant": "Tokyo Night"
+        },
+        {
+          "identifier": "Simp1eTokyoNightLight",
+          "displayName": "Simp1e Tokyo Night Light",
+          "variant": "Tokyo Night Light"
+        },
+        {
+          "identifier": "Simp1eTokyoNightStorm",
+          "displayName": "Simp1e Tokyo Night Storm",
+          "variant": "Tokyo Night Storm"
+        },
+        {
+          "identifier": "Simp1eZenburn",
+          "displayName": "Simp1e Zenburn",
+          "variant": "Zenburn"
+        }
+      ]
+    },
+    {
+      "id": "capitaine",
+      "name": "Capitaine",
+      "variants": [
+        {
+          "identifier": "Capitaine",
+          "displayName": "Capitaine",
+          "variant": "Default"
+        },
+        {
+          "identifier": "CapitaineDark",
+          "displayName": "Capitaine Dark",
+          "variant": "Dark"
+        }
+      ]
+    },
+    {
+      "id": "future",
+      "name": "Future",
+      "variants": [
+        {
+          "identifier": "Future",
+          "displayName": "Future",
+          "variant": "Default"
+        },
+        {
+          "identifier": "FutureCyan",
+          "displayName": "Future Cyan",
+          "variant": "Cyan"
+        }
+      ]
+    },
+    {
+      "id": "nordzy",
+      "name": "Nordzy",
+      "variants": [
+        {
+          "identifier": "Nordzy",
+          "displayName": "Nordzy",
+          "variant": "Default"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeBlue",
+          "displayName": "Nordzy Catppuccin Frappé Blue",
+          "variant": "Catppuccin Frappé Blue"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeBlueLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Blue Left-handed",
+          "variant": "Catppuccin Frappé Blue Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeDark",
+          "displayName": "Nordzy Catppuccin Frappé Dark",
+          "variant": "Catppuccin Frappé Dark"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeDarkLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Dark Left-handed",
+          "variant": "Catppuccin Frappé Dark Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeFlamingo",
+          "displayName": "Nordzy Catppuccin Frappé Flamingo",
+          "variant": "Catppuccin Frappé Flamingo"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeFlamingoLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Flamingo Left-handed",
+          "variant": "Catppuccin Frappé Flamingo Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeGreen",
+          "displayName": "Nordzy Catppuccin Frappé Green",
+          "variant": "Catppuccin Frappé Green"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeGreenLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Green Left-handed",
+          "variant": "Catppuccin Frappé Green Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeLavender",
+          "displayName": "Nordzy Catppuccin Frappé Lavender",
+          "variant": "Catppuccin Frappé Lavender"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeLavenderLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Lavender Left-handed",
+          "variant": "Catppuccin Frappé Lavender Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeLight",
+          "displayName": "Nordzy Catppuccin Frappé Light",
+          "variant": "Catppuccin Frappé Light"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeLightLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Light Left-handed",
+          "variant": "Catppuccin Frappé Light Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeMaroon",
+          "displayName": "Nordzy Catppuccin Frappé Maroon",
+          "variant": "Catppuccin Frappé Maroon"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeMaroonLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Maroon Left-handed",
+          "variant": "Catppuccin Frappé Maroon Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeMauve",
+          "displayName": "Nordzy Catppuccin Frappé Mauve",
+          "variant": "Catppuccin Frappé Mauve"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeMauveLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Mauve Left-handed",
+          "variant": "Catppuccin Frappé Mauve Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappePeach",
+          "displayName": "Nordzy Catppuccin Frappé Peach",
+          "variant": "Catppuccin Frappé Peach"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappePeachLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Peach Left-handed",
+          "variant": "Catppuccin Frappé Peach Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappePink",
+          "displayName": "Nordzy Catppuccin Frappé Pink",
+          "variant": "Catppuccin Frappé Pink"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappePinkLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Pink Left-handed",
+          "variant": "Catppuccin Frappé Pink Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeRed",
+          "displayName": "Nordzy Catppuccin Frappé Red",
+          "variant": "Catppuccin Frappé Red"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeRedLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Red Left-handed",
+          "variant": "Catppuccin Frappé Red Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeRosewater",
+          "displayName": "Nordzy Catppuccin Frappé Rosewater",
+          "variant": "Catppuccin Frappé Rosewater"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeRosewaterLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Rosewater Left-handed",
+          "variant": "Catppuccin Frappé Rosewater Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeSapphire",
+          "displayName": "Nordzy Catppuccin Frappé Sapphire",
+          "variant": "Catppuccin Frappé Sapphire"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeSapphireLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Sapphire Left-handed",
+          "variant": "Catppuccin Frappé Sapphire Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeSky",
+          "displayName": "Nordzy Catppuccin Frappé Sky",
+          "variant": "Catppuccin Frappé Sky"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeSkyLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Sky Left-handed",
+          "variant": "Catppuccin Frappé Sky Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeTeal",
+          "displayName": "Nordzy Catppuccin Frappé Teal",
+          "variant": "Catppuccin Frappé Teal"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeTealLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Teal Left-handed",
+          "variant": "Catppuccin Frappé Teal Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeYellow",
+          "displayName": "Nordzy Catppuccin Frappé Yellow",
+          "variant": "Catppuccin Frappé Yellow"
+        },
+        {
+          "identifier": "NordzyCatppuccinFrappeYellowLefthand",
+          "displayName": "Nordzy Catppuccin Frappé Yellow Left-handed",
+          "variant": "Catppuccin Frappé Yellow Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteBlue",
+          "displayName": "Nordzy Catppuccin Latte Blue",
+          "variant": "Catppuccin Latte Blue"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteBlueLefthand",
+          "displayName": "Nordzy Catppuccin Latte Blue Left-handed",
+          "variant": "Catppuccin Latte Blue Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteDark",
+          "displayName": "Nordzy Catppuccin Latte Dark",
+          "variant": "Catppuccin Latte Dark"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteDarkLefthand",
+          "displayName": "Nordzy Catppuccin Latte Dark Left-handed",
+          "variant": "Catppuccin Latte Dark Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteFlamingo",
+          "displayName": "Nordzy Catppuccin Latte Flamingo",
+          "variant": "Catppuccin Latte Flamingo"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteFlamingoLefthand",
+          "displayName": "Nordzy Catppuccin Latte Flamingo Left-handed",
+          "variant": "Catppuccin Latte Flamingo Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteGreen",
+          "displayName": "Nordzy Catppuccin Latte Green",
+          "variant": "Catppuccin Latte Green"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteGreenLefthand",
+          "displayName": "Nordzy Catppuccin Latte Green Left-handed",
+          "variant": "Catppuccin Latte Green Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteLavender",
+          "displayName": "Nordzy Catppuccin Latte Lavender",
+          "variant": "Catppuccin Latte Lavender"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteLavenderLefthand",
+          "displayName": "Nordzy Catppuccin Latte Lavender Left-handed",
+          "variant": "Catppuccin Latte Lavender Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteLight",
+          "displayName": "Nordzy Catppuccin Latte Light",
+          "variant": "Catppuccin Latte Light"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteLightLefthand",
+          "displayName": "Nordzy Catppuccin Latte Light Left-handed",
+          "variant": "Catppuccin Latte Light Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteMaroon",
+          "displayName": "Nordzy Catppuccin Latte Maroon",
+          "variant": "Catppuccin Latte Maroon"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteMaroonLefthand",
+          "displayName": "Nordzy Catppuccin Latte Maroon Left-handed",
+          "variant": "Catppuccin Latte Maroon Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteMauve",
+          "displayName": "Nordzy Catppuccin Latte Mauve",
+          "variant": "Catppuccin Latte Mauve"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteMauveLefthand",
+          "displayName": "Nordzy Catppuccin Latte Mauve Left-handed",
+          "variant": "Catppuccin Latte Mauve Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLattePeach",
+          "displayName": "Nordzy Catppuccin Latte Peach",
+          "variant": "Catppuccin Latte Peach"
+        },
+        {
+          "identifier": "NordzyCatppuccinLattePeachLefthand",
+          "displayName": "Nordzy Catppuccin Latte Peach Left-handed",
+          "variant": "Catppuccin Latte Peach Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLattePink",
+          "displayName": "Nordzy Catppuccin Latte Pink",
+          "variant": "Catppuccin Latte Pink"
+        },
+        {
+          "identifier": "NordzyCatppuccinLattePinkLefthand",
+          "displayName": "Nordzy Catppuccin Latte Pink Left-handed",
+          "variant": "Catppuccin Latte Pink Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteRed",
+          "displayName": "Nordzy Catppuccin Latte Red",
+          "variant": "Catppuccin Latte Red"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteRedLefthand",
+          "displayName": "Nordzy Catppuccin Latte Red Left-handed",
+          "variant": "Catppuccin Latte Red Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteRosewater",
+          "displayName": "Nordzy Catppuccin Latte Rosewater",
+          "variant": "Catppuccin Latte Rosewater"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteRosewaterLefthand",
+          "displayName": "Nordzy Catppuccin Latte Rosewater Left-handed",
+          "variant": "Catppuccin Latte Rosewater Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteSapphire",
+          "displayName": "Nordzy Catppuccin Latte Sapphire",
+          "variant": "Catppuccin Latte Sapphire"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteSapphireLefthand",
+          "displayName": "Nordzy Catppuccin Latte Sapphire Left-handed",
+          "variant": "Catppuccin Latte Sapphire Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteSky",
+          "displayName": "Nordzy Catppuccin Latte Sky",
+          "variant": "Catppuccin Latte Sky"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteSkyLefthand",
+          "displayName": "Nordzy Catppuccin Latte Sky Left-handed",
+          "variant": "Catppuccin Latte Sky Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteTeal",
+          "displayName": "Nordzy Catppuccin Latte Teal",
+          "variant": "Catppuccin Latte Teal"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteTealLefthand",
+          "displayName": "Nordzy Catppuccin Latte Teal Left-handed",
+          "variant": "Catppuccin Latte Teal Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteYellow",
+          "displayName": "Nordzy Catppuccin Latte Yellow",
+          "variant": "Catppuccin Latte Yellow"
+        },
+        {
+          "identifier": "NordzyCatppuccinLatteYellowLefthand",
+          "displayName": "Nordzy Catppuccin Latte Yellow Left-handed",
+          "variant": "Catppuccin Latte Yellow Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoBlue",
+          "displayName": "Nordzy Catppuccin Macchiato Blue",
+          "variant": "Catppuccin Macchiato Blue"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoBlueLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Blue Left-handed",
+          "variant": "Catppuccin Macchiato Blue Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoDark",
+          "displayName": "Nordzy Catppuccin Macchiato Dark",
+          "variant": "Catppuccin Macchiato Dark"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoDarkLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Dark Left-handed",
+          "variant": "Catppuccin Macchiato Dark Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoFlamingo",
+          "displayName": "Nordzy Catppuccin Macchiato Flamingo",
+          "variant": "Catppuccin Macchiato Flamingo"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoFlamingoLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Flamingo Left-handed",
+          "variant": "Catppuccin Macchiato Flamingo Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoGreen",
+          "displayName": "Nordzy Catppuccin Macchiato Green",
+          "variant": "Catppuccin Macchiato Green"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoGreenLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Green Left-handed",
+          "variant": "Catppuccin Macchiato Green Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoLavender",
+          "displayName": "Nordzy Catppuccin Macchiato Lavender",
+          "variant": "Catppuccin Macchiato Lavender"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoLavenderLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Lavender Left-handed",
+          "variant": "Catppuccin Macchiato Lavender Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoLight",
+          "displayName": "Nordzy Catppuccin Macchiato Light",
+          "variant": "Catppuccin Macchiato Light"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoLightLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Light Left-handed",
+          "variant": "Catppuccin Macchiato Light Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoMaroon",
+          "displayName": "Nordzy Catppuccin Macchiato Maroon",
+          "variant": "Catppuccin Macchiato Maroon"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoMaroonLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Maroon Left-handed",
+          "variant": "Catppuccin Macchiato Maroon Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoMauve",
+          "displayName": "Nordzy Catppuccin Macchiato Mauve",
+          "variant": "Catppuccin Macchiato Mauve"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoMauveLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Mauve Left-handed",
+          "variant": "Catppuccin Macchiato Mauve Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoPeach",
+          "displayName": "Nordzy Catppuccin Macchiato Peach",
+          "variant": "Catppuccin Macchiato Peach"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoPeachLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Peach Left-handed",
+          "variant": "Catppuccin Macchiato Peach Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoPink",
+          "displayName": "Nordzy Catppuccin Macchiato Pink",
+          "variant": "Catppuccin Macchiato Pink"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoPinkLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Pink Left-handed",
+          "variant": "Catppuccin Macchiato Pink Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoRed",
+          "displayName": "Nordzy Catppuccin Macchiato Red",
+          "variant": "Catppuccin Macchiato Red"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoRedLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Red Left-handed",
+          "variant": "Catppuccin Macchiato Red Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoRosewater",
+          "displayName": "Nordzy Catppuccin Macchiato Rosewater",
+          "variant": "Catppuccin Macchiato Rosewater"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoRosewaterLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Rosewater Left-handed",
+          "variant": "Catppuccin Macchiato Rosewater Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoSapphire",
+          "displayName": "Nordzy Catppuccin Macchiato Sapphire",
+          "variant": "Catppuccin Macchiato Sapphire"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoSapphireLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Sapphire Left-handed",
+          "variant": "Catppuccin Macchiato Sapphire Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoSky",
+          "displayName": "Nordzy Catppuccin Macchiato Sky",
+          "variant": "Catppuccin Macchiato Sky"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoSkyLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Sky Left-handed",
+          "variant": "Catppuccin Macchiato Sky Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoTeal",
+          "displayName": "Nordzy Catppuccin Macchiato Teal",
+          "variant": "Catppuccin Macchiato Teal"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoTealLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Teal Left-handed",
+          "variant": "Catppuccin Macchiato Teal Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoYellow",
+          "displayName": "Nordzy Catppuccin Macchiato Yellow",
+          "variant": "Catppuccin Macchiato Yellow"
+        },
+        {
+          "identifier": "NordzyCatppuccinMacchiatoYellowLefthand",
+          "displayName": "Nordzy Catppuccin Macchiato Yellow Left-handed",
+          "variant": "Catppuccin Macchiato Yellow Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaBlue",
+          "displayName": "Nordzy Catppuccin Mocha Blue",
+          "variant": "Catppuccin Mocha Blue"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaBlueLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Blue Left-handed",
+          "variant": "Catppuccin Mocha Blue Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaDark",
+          "displayName": "Nordzy Catppuccin Mocha Dark",
+          "variant": "Catppuccin Mocha Dark"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaDarkLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Dark Left-handed",
+          "variant": "Catppuccin Mocha Dark Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaFlamingo",
+          "displayName": "Nordzy Catppuccin Mocha Flamingo",
+          "variant": "Catppuccin Mocha Flamingo"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaFlamingoLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Flamingo Left-handed",
+          "variant": "Catppuccin Mocha Flamingo Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaGreen",
+          "displayName": "Nordzy Catppuccin Mocha Green",
+          "variant": "Catppuccin Mocha Green"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaGreenLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Green Left-handed",
+          "variant": "Catppuccin Mocha Green Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaLavender",
+          "displayName": "Nordzy Catppuccin Mocha Lavender",
+          "variant": "Catppuccin Mocha Lavender"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaLavenderLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Lavender Left-handed",
+          "variant": "Catppuccin Mocha Lavender Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaLight",
+          "displayName": "Nordzy Catppuccin Mocha Light",
+          "variant": "Catppuccin Mocha Light"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaLightLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Light Left-handed",
+          "variant": "Catppuccin Mocha Light Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaMaroon",
+          "displayName": "Nordzy Catppuccin Mocha Maroon",
+          "variant": "Catppuccin Mocha Maroon"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaMaroonLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Maroon Left-handed",
+          "variant": "Catppuccin Mocha Maroon Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaMauve",
+          "displayName": "Nordzy Catppuccin Mocha Mauve",
+          "variant": "Catppuccin Mocha Mauve"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaMauveLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Mauve Left-handed",
+          "variant": "Catppuccin Mocha Mauve Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaPeach",
+          "displayName": "Nordzy Catppuccin Mocha Peach",
+          "variant": "Catppuccin Mocha Peach"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaPeachLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Peach Left-handed",
+          "variant": "Catppuccin Mocha Peach Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaPink",
+          "displayName": "Nordzy Catppuccin Mocha Pink",
+          "variant": "Catppuccin Mocha Pink"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaPinkLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Pink Left-handed",
+          "variant": "Catppuccin Mocha Pink Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaRed",
+          "displayName": "Nordzy Catppuccin Mocha Red",
+          "variant": "Catppuccin Mocha Red"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaRedLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Red Left-handed",
+          "variant": "Catppuccin Mocha Red Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaRosewater",
+          "displayName": "Nordzy Catppuccin Mocha Rosewater",
+          "variant": "Catppuccin Mocha Rosewater"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaRosewaterLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Rosewater Left-handed",
+          "variant": "Catppuccin Mocha Rosewater Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaSapphire",
+          "displayName": "Nordzy Catppuccin Mocha Sapphire",
+          "variant": "Catppuccin Mocha Sapphire"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaSapphireLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Sapphire Left-handed",
+          "variant": "Catppuccin Mocha Sapphire Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaSky",
+          "displayName": "Nordzy Catppuccin Mocha Sky",
+          "variant": "Catppuccin Mocha Sky"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaSkyLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Sky Left-handed",
+          "variant": "Catppuccin Mocha Sky Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaTeal",
+          "displayName": "Nordzy Catppuccin Mocha Teal",
+          "variant": "Catppuccin Mocha Teal"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaTealLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Teal Left-handed",
+          "variant": "Catppuccin Mocha Teal Left-handed"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaYellow",
+          "displayName": "Nordzy Catppuccin Mocha Yellow",
+          "variant": "Catppuccin Mocha Yellow"
+        },
+        {
+          "identifier": "NordzyCatppuccinMochaYellowLefthand",
+          "displayName": "Nordzy Catppuccin Mocha Yellow Left-handed",
+          "variant": "Catppuccin Mocha Yellow Left-handed"
+        },
+        {
+          "identifier": "NordzyCursors",
+          "displayName": "Nordzy",
+          "variant": "Default"
+        },
+        {
+          "identifier": "NordzyCursorsLefthand",
+          "displayName": "Nordzy Left-handed",
+          "variant": "Left-handed"
+        },
+        {
+          "identifier": "NordzyCursorsWhite",
+          "displayName": "Nordzy White",
+          "variant": "White"
+        },
+        {
+          "identifier": "NordzyCursorsWhiteLefthand",
+          "displayName": "Nordzy White Left-handed",
+          "variant": "White Left-handed"
+        }
+      ]
+    },
+    {
+      "id": "colloid",
+      "name": "Colloid",
+      "variants": [
+        {
+          "identifier": "Colloid",
+          "displayName": "Colloid",
+          "variant": "Default"
+        },
+        {
+          "identifier": "ColloidDark",
+          "displayName": "Colloid Dark",
+          "variant": "Dark"
+        }
+      ]
+    },
+    {
+      "id": "bibata",
+      "name": "Bibata",
+      "variants": [
+        {
+          "identifier": "BibataModernAmber",
+          "displayName": "Bibata Modern Amber",
+          "variant": "Modern Amber"
+        },
+        {
+          "identifier": "BibataModernAmberRight",
+          "displayName": "Bibata Modern Amber Right",
+          "variant": "Modern Amber Right"
+        },
+        {
+          "identifier": "BibataModernClassic",
+          "displayName": "Bibata Modern Classic",
+          "variant": "Modern Classic"
+        },
+        {
+          "identifier": "BibataModernClassicRight",
+          "displayName": "Bibata Modern Classic Right",
+          "variant": "Modern Classic Right"
+        },
+        {
+          "identifier": "BibataModernIce",
+          "displayName": "Bibata Modern Ice",
+          "variant": "Modern Ice"
+        },
+        {
+          "identifier": "BibataModernIceRight",
+          "displayName": "Bibata Modern Ice Right",
+          "variant": "Modern Ice Right"
+        },
+        {
+          "identifier": "BibataOriginalAmber",
+          "displayName": "Bibata Original Amber",
+          "variant": "Original Amber"
+        },
+        {
+          "identifier": "BibataOriginalAmberRight",
+          "displayName": "Bibata Original Amber Right",
+          "variant": "Original Amber Right"
+        },
+        {
+          "identifier": "BibataOriginalClassic",
+          "displayName": "Bibata Original Classic",
+          "variant": "Original Classic"
+        },
+        {
+          "identifier": "BibataOriginalClassicRight",
+          "displayName": "Bibata Original Classic Right",
+          "variant": "Original Classic Right"
+        },
+        {
+          "identifier": "BibataOriginalIce",
+          "displayName": "Bibata Original Ice",
+          "variant": "Original Ice"
+        },
+        {
+          "identifier": "BibataOriginalIceRight",
+          "displayName": "Bibata Original Ice Right",
+          "variant": "Original Ice Right"
+        }
+      ]
+    }
+  ]
+}

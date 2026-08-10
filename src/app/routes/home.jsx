@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
+  Alert02Icon,
   ArrowUpRight01Icon,
   ArrowRight01Icon,
   ArrowReloadHorizontalIcon,
@@ -82,6 +83,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SettingsScreen } from "@/components/settings-screen";
+import { OnboardingScreen } from "@/components/onboarding-screen";
 import * as catalog from "@/lib/cursor-catalog";
 import { CURSOR_DTO_SCHEMA_VERSION } from "@/lib/cursor-dto";
 import {
@@ -126,6 +128,15 @@ import {
   setCursorThemeSize,
 } from "@/lib/cursor-ui";
 import { cn } from "@/lib/utils";
+import {
+  ONBOARDING_FAMILIES,
+  ONBOARDING_FAMILIES_BY_ID,
+} from "@/lib/onboarding-catalog";
+import {
+  getOnboardingJobLabel,
+  groupCursorFamilies,
+  isOnboardingJobVisible,
+} from "@/lib/onboarding";
 import {
   getSystemTheme,
   subscribeToSystemTheme,
@@ -322,14 +333,6 @@ function normalisePack(pack = {}) {
       )?.src ??
       null,
   };
-}
-
-function getCatalogue() {
-  const source = Array.isArray(catalog.CURSOR_CATALOG)
-    ? catalog.CURSOR_CATALOG
-    : [];
-
-  return source.map(normalisePack);
 }
 
 async function getNativeStatus() {
@@ -582,7 +585,7 @@ function FamilyContextActions({
 }) {
   const canDelete =
     familyPacks.length > 0 &&
-    familyPacks.every((pack) => pack.imported === true);
+    familyPacks.some((pack) => pack.imported === true);
 
   return (
     <ContextMenu>
@@ -757,6 +760,36 @@ function PackRailShortcut({
   );
 }
 
+function FamilyJobStatus({ job }) {
+  const failed = job.status === "failed";
+  const label = getOnboardingJobLabel(job);
+
+  return (
+    <span
+      className={cn(
+        "flex min-w-0 shrink-0 items-center gap-1.5 text-[0.65rem] font-normal tracking-normal",
+        failed ? "text-destructive" : "text-muted-foreground/80",
+      )}
+      title={failed ? (job.error ?? "Import failed.") : job.currentVariant}
+    >
+      {failed ? (
+        <HugeiconsIcon
+          icon={Alert02Icon}
+          strokeWidth={2}
+          className="size-3.5"
+          aria-hidden="true"
+        />
+      ) : (
+        <span
+          aria-hidden="true"
+          className="size-3 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground"
+        />
+      )}
+      <span className="max-w-24 truncate">{label}</span>
+    </span>
+  );
+}
+
 function PackRail({
   packs,
   allPacks = packs,
@@ -774,6 +807,8 @@ function PackRail({
   onToggleFamilyFavorite,
   onAssignAppearanceCursor,
   libraryActions = {},
+  familyJobs = [],
+  onRetryFamily,
   loadError,
   onClose,
   className,
@@ -785,19 +820,13 @@ function PackRail({
     () => new Set(["light", "dark"]),
   );
   const searchActive = Boolean(search.trim());
-  const groups = useMemo(() => {
-    const grouped = new Map();
-    for (const pack of packs) {
-      if (!grouped.has(pack.family)) {
-        grouped.set(pack.family, []);
-      }
-      grouped.get(pack.family).push(pack);
-    }
-    return [...grouped.entries()];
-  }, [packs]);
+  const groups = useMemo(
+    () => groupCursorFamilies(packs, familyJobs, search),
+    [familyJobs, packs, search],
+  );
   const visiblePacks = useMemo(
     () =>
-      groups.flatMap(([family, familyPacks]) =>
+      groups.flatMap(({ family, familyPacks }) =>
         searchActive || expandedFamilies.has(family) ? familyPacks : [],
       ),
     [expandedFamilies, groups, searchActive],
@@ -984,11 +1013,13 @@ function PackRail({
                   verifiedActive && "bg-primary",
                 )}
               />
-              {!engineAvailable
-                ? "Unavailable"
-                : verifiedActive
-                  ? "Active"
-                  : "Off"}
+              {familyJobs.some((job) => job.status !== "failed")
+                ? "Adding"
+                : !engineAvailable
+                  ? "Unavailable"
+                  : verifiedActive
+                    ? "Active"
+                    : "Off"}
             </span>
           )}
         </div>
@@ -1030,7 +1061,7 @@ function PackRail({
         data-testid="pack-rail-scroll"
         className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pb-3 sm:px-3"
       >
-        {!loadError ? (
+        {!loadError && allPacks.length ? (
           <nav aria-label="Cursor shortcuts" className="pb-2">
             {currentEntries.length ? (
               <div>
@@ -1287,14 +1318,15 @@ function PackRail({
           </nav>
         ) : null}
 
-        {loadError ? (
+        {loadError && !groups.length ? (
           <p className="px-3 py-8 text-center text-body-sm text-muted-foreground">
             Unavailable
           </p>
         ) : groups.length ? (
           <nav aria-label="Cursor packs">
-            {groups.map(([family, familyPacks]) => {
+            {groups.map(({ family, familyPacks, job }) => {
               const expanded = searchActive || expandedFamilies.has(family);
+              const familyFailed = job?.status === "failed";
               const familyActive = familyPacks.some(
                 (pack) =>
                   verifiedActive && matchesCursorPack(pack, effectiveId),
@@ -1330,9 +1362,13 @@ function PackRail({
                       aria-label="Contains current cursor"
                     />
                   ) : null}
-                  <span className="type-numeric text-[0.65rem] font-normal text-muted-foreground/75">
-                    {familyPacks.length}
-                  </span>
+                  {job ? (
+                    <FamilyJobStatus job={job} />
+                  ) : (
+                    <span className="type-numeric text-[0.65rem] font-normal text-muted-foreground/75">
+                      {familyPacks.length}
+                    </span>
+                  )}
                 </>
               );
               return (
@@ -1365,20 +1401,48 @@ function PackRail({
                       onDelete={libraryActions.onDeleteFamily}
                       onToggleFavorite={onToggleFamilyFavorite}
                     >
-                      {searchActive ? (
-                        <div className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground">
-                          {familyHeading}
-                        </div>
-                      ) : (
-                        <CollapsibleTrigger asChild>
-                          <button
-                            type="button"
-                            className="group flex w-full min-w-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                      <div className="flex min-w-0 items-center">
+                        {searchActive ? (
+                          <div
+                            className={cn(
+                              "flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground",
+                              job && !familyFailed && "opacity-60",
+                              familyFailed && "text-destructive",
+                            )}
                           >
                             {familyHeading}
-                          </button>
-                        </CollapsibleTrigger>
-                      )}
+                          </div>
+                        ) : (
+                          <CollapsibleTrigger asChild>
+                            <button
+                              type="button"
+                              className={cn(
+                                "group flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+                                job && !familyFailed && "opacity-60",
+                                familyFailed && "text-destructive",
+                              )}
+                            >
+                              {familyHeading}
+                            </button>
+                          </CollapsibleTrigger>
+                        )}
+                        {familyFailed ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            className="mr-1 shrink-0 text-destructive hover:text-destructive"
+                            onClick={() => onRetryFamily(job.familyId)}
+                            aria-label={`Retry ${family}`}
+                          >
+                            <HugeiconsIcon
+                              icon={ArrowReloadHorizontalIcon}
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                          </Button>
+                        ) : null}
+                      </div>
                     </FamilyContextActions>
                     <CollapsibleContent>
                       <div className="min-w-0 space-y-0.5 pb-1">
@@ -1466,7 +1530,7 @@ function PackRail({
           </nav>
         ) : (
           <p className="px-3 py-8 text-center text-body-sm text-muted-foreground">
-            No matches
+            {searchActive ? "No matches" : "No cursor packs"}
           </p>
         )}
       </div>
@@ -2018,17 +2082,40 @@ function CatalogueFailure({ onRetry, retrying }) {
   );
 }
 
+function EmptyLibrary({ adding = false }) {
+  return (
+    <section className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-8 text-center">
+      <div className="grid justify-items-center gap-2 text-muted-foreground">
+        <HugeiconsIcon
+          icon={Cursor01Icon}
+          strokeWidth={1.6}
+          className="size-7 opacity-60"
+          aria-hidden="true"
+        />
+        <p className="text-body-md">
+          {adding ? "Adding cursor packs…" : "No cursor packs"}
+        </p>
+      </div>
+    </section>
+  );
+}
+
 export function HomeRoute() {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const themeMode = useAppStore((state) => state.themeMode);
   const themeError = useAppStore((state) => state.themeError);
   const setThemeMode = useAppStore((state) => state.setThemeMode);
-  const initialCatalogue = useMemo(() => getCatalogue(), []);
-  const [view, setView] = useState("catalog");
-  const [selectedId, setSelectedId] = useState(
-    () => initialCatalogue[0]?.id ?? "",
+  const onboarding = useAppStore((state) => state.onboarding);
+  const onboardingLoading = useAppStore((state) => state.onboardingLoading);
+  const hydrateOnboarding = useAppStore((state) => state.hydrateOnboarding);
+  const completeOnboarding = useAppStore((state) => state.completeOnboarding);
+  const retryOnboardingImport = useAppStore(
+    (state) => state.retryOnboardingImport,
   );
+  const syncOnboarding = useAppStore((state) => state.syncOnboarding);
+  const [view, setView] = useState("catalog");
+  const [selectedId, setSelectedId] = useState("");
   const [search, setSearch] = useState("");
   const [operation, setOperation] = useState("idle");
   const [operationTargetPackId, setOperationTargetPackId] = useState(null);
@@ -2085,6 +2172,17 @@ export function HomeRoute() {
     () => subscribeToSystemTheme(setSystemAppearance),
     [setSystemAppearance],
   );
+
+  useEffect(() => {
+    const unsubscribe =
+      window.electronAPI?.onOnboardingChanged?.(syncOnboarding);
+    void hydrateOnboarding();
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
+  }, [hydrateOnboarding, syncOnboarding]);
 
   useEffect(() => {
     const api = window.electronAPI;
@@ -2226,15 +2324,10 @@ export function HomeRoute() {
         isError: nativeThemeQueryError,
         isSuccess: nativeThemeQuerySuccess,
       },
-      initialCatalogue,
+      [],
     );
     return source.map(normalisePack);
-  }, [
-    initialCatalogue,
-    nativeThemeData,
-    nativeThemeQueryError,
-    nativeThemeQuerySuccess,
-  ]);
+  }, [nativeThemeData, nativeThemeQueryError, nativeThemeQuerySuccess]);
 
   const statusQuery = useQuery({
     queryKey: ["cursor-status"],
@@ -2259,10 +2352,7 @@ export function HomeRoute() {
   const nativeThemeListAvailable = Boolean(
     Array.isArray(nativeThemeData) && nativeThemeData.length,
   );
-  const catalogueLoadError = Boolean(
-    nativeThemeQueryError ||
-    (!nativeThemeListAvailable && nativeThemeQuerySuccess),
-  );
+  const catalogueLoadError = nativeThemeQueryError;
   const nativeEngineAvailable = Boolean(
     !statusUnavailable &&
     authoritativeStatus?.bridgeAvailable &&
@@ -2316,6 +2406,23 @@ export function HomeRoute() {
     }
     return catalog.filterCursorCatalog(packs, query);
   }, [packs, search]);
+  const onboardingFamilyJobs = useMemo(
+    () =>
+      onboarding.jobs
+        .filter(isOnboardingJobVisible)
+        .map((job) => {
+          const representative = ONBOARDING_FAMILIES_BY_ID.get(job.familyId);
+          if (!representative) {
+            return null;
+          }
+          return {
+            ...job,
+            family: representative.family,
+          };
+        })
+        .filter(Boolean),
+    [onboarding.jobs],
+  );
 
   const nativeSelection = packs.find(
     (pack) =>
@@ -2724,7 +2831,7 @@ export function HomeRoute() {
         scope: "randomization",
         type: "success",
         message: randomizedPack
-          ? `${randomizedPack.variant} is active.`
+          ? `${randomizedPack.family} ${randomizedPack.variant} is active.`
           : "A new random cursor is active.",
       });
     } catch (error) {
@@ -3074,19 +3181,18 @@ export function HomeRoute() {
   }, []);
 
   const handleRequestFamilyDeletion = useCallback((family, familyPacks) => {
-    if (
-      !family ||
-      !familyPacks?.length ||
-      familyPacks.some((pack) => pack.imported !== true)
-    ) {
+    const importedPacks = (familyPacks ?? []).filter(
+      (pack) => pack.imported === true,
+    );
+    if (!family || !importedPacks.length) {
       return;
     }
     setDeleteTarget({
       kind: "family",
       label: family,
       family,
-      identifiers: familyPacks.map((pack) => pack.nativeThemeId ?? pack.id),
-      count: familyPacks.length,
+      identifiers: importedPacks.map((pack) => pack.nativeThemeId ?? pack.id),
+      count: importedPacks.length,
     });
   }, []);
 
@@ -3208,7 +3314,10 @@ export function HomeRoute() {
   const libraryActions = useMemo(
     () => ({
       familyNames,
-      managementDisabled: operation !== "idle" || pendingPreferenceCount > 0,
+      managementDisabled:
+        operation !== "idle" ||
+        pendingPreferenceCount > 0 ||
+        onboardingFamilyJobs.some((job) => job.status !== "failed"),
       preferencesSaving: pendingPreferenceCount > 0,
       onAssignFamily: (pack, family) => {
         void handleAssignFamily(pack, family);
@@ -3223,10 +3332,30 @@ export function HomeRoute() {
       handleRequestCursorDeletion,
       handleRequestFamilyDeletion,
       familyNames,
+      onboardingFamilyJobs,
       operation,
       pendingPreferenceCount,
     ],
   );
+
+  if (onboardingLoading || onboarding.completed === null) {
+    return (
+      <main className="h-dvh w-full overflow-hidden bg-background">
+        <div className="titlebar-drag h-12" />
+      </main>
+    );
+  }
+
+  if (!onboarding.completed) {
+    return (
+      <OnboardingScreen
+        families={ONBOARDING_FAMILIES}
+        onContinue={(familyIds) => {
+          void completeOnboarding(familyIds);
+        }}
+      />
+    );
+  }
 
   return (
     <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background">
@@ -3346,6 +3475,10 @@ export function HomeRoute() {
                     onToggleFamilyFavorite={handleToggleFamilyFavorite}
                     onAssignAppearanceCursor={handleAssignAppearanceCursor}
                     libraryActions={libraryActions}
+                    familyJobs={onboardingFamilyJobs}
+                    onRetryFamily={(familyId) =>
+                      void retryOnboardingImport(familyId)
+                    }
                     loadError={catalogueLoadError}
                     onClose={() => setRailOpen(false)}
                   />
@@ -3418,6 +3551,8 @@ export function HomeRoute() {
               onToggleFamilyFavorite={handleToggleFamilyFavorite}
               onAssignAppearanceCursor={handleAssignAppearanceCursor}
               libraryActions={libraryActions}
+              familyJobs={onboardingFamilyJobs}
+              onRetryFamily={(familyId) => void retryOnboardingImport(familyId)}
               loadError={catalogueLoadError}
             />
           </aside>
@@ -3476,10 +3611,7 @@ export function HomeRoute() {
               libraryActions={libraryActions}
             />
           ) : (
-            <CatalogueFailure
-              onRetry={() => void nativeThemesQuery.refetch()}
-              retrying={nativeThemesQuery.isFetching}
-            />
+            <EmptyLibrary adding={onboardingFamilyJobs.length > 0} />
           )}
         </div>
       )}

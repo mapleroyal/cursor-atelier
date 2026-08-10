@@ -155,6 +155,18 @@ const MACURSOR_UUID_NAMESPACE = "193513ce-4c25-4e1a-9e28-878e5850bb6e";
 const XCURSOR_IMAGE_TYPE = 0xfffd0002;
 const XCURSOR_VERSION = 0x00010000;
 const MAX_NATIVE_CURSOR_BYTES = 32 * 1024 * 1024;
+const XCURSOR_UPSCALE_TARGET = 128;
+const XCURSOR_FILTER_HOLDOUT_FRACTION = 0.2;
+const XCURSOR_FILTER_MAX_FRAMES_PER_ROLE = 4;
+const XCURSOR_FILTER_MIN_ROLES = 8;
+const XCURSOR_FILTER_MIN_HOLDOUT_ROLES = 4;
+const XCURSOR_FILTER_RIDGE = 1e-4;
+
+// Maps decoded Xcursor role tiers to a reconstruction strategy without
+// changing their authentic frame/tier inventory. This lets conversion sample
+// at most the 24 frames macOS can consume instead of materializing a new
+// 128 px copy of every source animation frame.
+const XCURSOR_RECONSTRUCTION = new WeakMap();
 
 export const DEFAULT_IMPORT_LIMITS = Object.freeze({
   maxArchiveBytes: 512 * 1024 * 1024,
@@ -262,6 +274,90 @@ function safeText(value, fallback, maximum = 96) {
     .replace(/\s+/g, " ")
     .trim();
   return [...(cleaned || fallback)].slice(0, maximum).join("");
+}
+
+function safeMetadataUrl(value, key) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length > 2_048) {
+    fail("INVALID_OPTIONS", `Invalid import metadata: ${key}.`);
+  }
+  try {
+    const parsed = new URL(value);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.href.length > 2_048
+    ) {
+      throw new Error("unsupported URL");
+    }
+    return parsed.href;
+  } catch {
+    fail("INVALID_OPTIONS", `Invalid import metadata: ${key}.`);
+  }
+}
+
+function normalizeImportMetadata(value) {
+  if (value === undefined) {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail("INVALID_OPTIONS", "Import metadata must be an object.");
+  }
+  const allowed = new Set([
+    "author",
+    "catalogId",
+    "displayName",
+    "family",
+    "group",
+    "license",
+    "licenseUrl",
+    "sourceUrl",
+    "sourceVariant",
+    "upstreamVariant",
+    "variant",
+  ]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    fail("INVALID_OPTIONS", "Import metadata contains an unsupported field.");
+  }
+  const result = {};
+  if (value.catalogId !== undefined) {
+    if (
+      typeof value.catalogId !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.catalogId)
+    ) {
+      fail("INVALID_OPTIONS", "Invalid import metadata: catalogId.");
+    }
+    result.catalogId = value.catalogId;
+  }
+  for (const [key, maximum] of [
+    ["author", 160],
+    ["displayName", 96],
+    ["family", 96],
+    ["group", 96],
+    ["license", 96],
+    ["sourceVariant", 160],
+    ["upstreamVariant", 160],
+    ["variant", 96],
+  ]) {
+    if (value[key] !== undefined) {
+      if (typeof value[key] !== "string" || !value[key].trim()) {
+        fail("INVALID_OPTIONS", `Invalid import metadata: ${key}.`);
+      }
+      const normalized = safeText(value[key], "", maximum);
+      if (!normalized) {
+        fail("INVALID_OPTIONS", `Invalid import metadata: ${key}.`);
+      }
+      result[key] = normalized;
+    }
+  }
+  result.sourceUrl = safeMetadataUrl(value.sourceUrl, "sourceUrl");
+  result.licenseUrl = safeMetadataUrl(value.licenseUrl, "licenseUrl");
+  return Object.fromEntries(
+    Object.entries(result).filter(([, entry]) => entry !== undefined),
+  );
 }
 
 function titleFromName(value) {
@@ -1455,6 +1551,9 @@ function framesNearestSize(groups, targetSize) {
 }
 
 function representationSizes(groups) {
+  if (XCURSOR_RECONSTRUCTION.has(groups)) {
+    return [...VECTOR_REPRESENTATION_SIZES];
+  }
   const sizes = new Set(BASE_REPRESENTATION_SIZES);
   const sourceSizes = [...groups.keys()];
   if (Math.max(...sourceSizes) >= 128) {
@@ -1474,43 +1573,161 @@ function clearTransparentRgb(buffer) {
   return buffer;
 }
 
-async function resizeFrame(frame, size) {
-  if (frame.width === size && frame.height === size) {
+function squareFrameRgba(frame) {
+  const canvasSize = Math.max(frame.width, frame.height);
+  if (frame.width === canvasSize && frame.height === canvasSize) {
     return Buffer.from(frame.rgba);
   }
-  const canvasSize = Math.max(frame.width, frame.height);
-  let squareRgba = frame.rgba;
-  if (frame.width !== canvasSize || frame.height !== canvasSize) {
-    squareRgba = Buffer.alloc(canvasSize * canvasSize * 4);
-    const sourceRowBytes = frame.width * 4;
-    const targetRowBytes = canvasSize * 4;
-    for (let row = 0; row < frame.height; row += 1) {
-      frame.rgba.copy(
-        squareRgba,
-        row * targetRowBytes,
-        row * sourceRowBytes,
-        row * sourceRowBytes + sourceRowBytes,
-      );
-    }
+  const squareRgba = Buffer.alloc(canvasSize * canvasSize * 4);
+  const sourceRowBytes = frame.width * 4;
+  const targetRowBytes = canvasSize * 4;
+  for (let row = 0; row < frame.height; row += 1) {
+    frame.rgba.copy(
+      squareRgba,
+      row * targetRowBytes,
+      row * sourceRowBytes,
+      row * sourceRowBytes + sourceRowBytes,
+    );
   }
-  const output = await sharp(squareRgba, {
+  return squareRgba;
+}
+
+async function resizeRawRgba(rgba, sourceSize, targetSize, nohalo = false) {
+  if (sourceSize === targetSize) {
+    return Buffer.from(rgba);
+  }
+  const pipeline = sharp(rgba, {
     raw: {
-      width: canvasSize,
-      height: canvasSize,
+      width: sourceSize,
+      height: sourceSize,
       channels: 4,
     },
-  })
-    .resize(size, size, { kernel: sharp.kernel.lanczos3 })
-    .raw()
-    .toBuffer();
+  });
+  const output = nohalo
+    ? await pipeline
+        .affine(
+          [
+            [targetSize / sourceSize, 0],
+            [0, targetSize / sourceSize],
+          ],
+          {
+            interpolator: sharp.interpolators.nohalo,
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+          },
+        )
+        .raw()
+        .toBuffer({ resolveWithObject: true })
+    : await pipeline
+        .resize(targetSize, targetSize, { kernel: sharp.kernel.lanczos3 })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+  if (output.info.width !== targetSize || output.info.height !== targetSize) {
+    fail("INVALID_CURSOR", "A reconstructed cursor tier has invalid geometry.");
+  }
+  return clearTransparentRgb(output.data);
+}
+
+async function resizeFrame(frame, size) {
+  const canvasSize = Math.max(frame.width, frame.height);
+  return resizeRawRgba(squareFrameRgba(frame), canvasSize, size, false);
+}
+
+function premultipliedRgba(rgba) {
+  const output = new Float64Array(rgba.length);
+  for (let offset = 0; offset < rgba.length; offset += 4) {
+    const alpha = rgba[offset + 3] / 255;
+    output[offset] = (rgba[offset] / 255) * alpha;
+    output[offset + 1] = (rgba[offset + 1] / 255) * alpha;
+    output[offset + 2] = (rgba[offset + 2] / 255) * alpha;
+    output[offset + 3] = alpha;
+  }
+  return output;
+}
+
+function filterFeatures(pixels, size, x, y, channel) {
+  const at = (column, row) =>
+    pixels[
+      (Math.min(size - 1, Math.max(0, row)) * size +
+        Math.min(size - 1, Math.max(0, column))) *
+        4 +
+        channel
+    ];
+  return [
+    at(x, y),
+    (at(x - 1, y) + at(x + 1, y) + at(x, y - 1) + at(x, y + 1)) / 4,
+    (at(x - 1, y - 1) +
+      at(x + 1, y - 1) +
+      at(x - 1, y + 1) +
+      at(x + 1, y + 1)) /
+      4,
+  ];
+}
+
+function applyReconstructionFilter(rgba, size, filter) {
+  const source = premultipliedRgba(rgba);
+  const output = Buffer.allocUnsafe(rgba.length);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const offset = (y * size + x) * 4;
+      const alphaFeatures = filterFeatures(source, size, x, y, 3);
+      const alpha = Math.min(
+        1,
+        Math.max(
+          0,
+          alphaFeatures.reduce(
+            (sum, value, index) => sum + value * filter.alpha[index],
+            0,
+          ),
+        ),
+      );
+      output[offset + 3] = Math.round(alpha * 255);
+      for (let channel = 0; channel < 3; channel += 1) {
+        const features = filterFeatures(source, size, x, y, channel);
+        const premultiplied = Math.min(
+          alpha,
+          Math.max(
+            0,
+            features.reduce(
+              (sum, value, index) => sum + value * filter.color[index],
+              0,
+            ),
+          ),
+        );
+        output[offset + channel] =
+          alpha > 1 / 255 ? Math.round((premultiplied / alpha) * 255) : 0;
+      }
+    }
+  }
   return clearTransparentRgb(output);
 }
 
-async function composeRepresentation(frames, indices, size) {
+async function reconstructFrame(frame, size, reconstruction) {
+  const canvasSize = Math.max(frame.width, frame.height);
+  if (canvasSize >= size) {
+    return resizeFrame(frame, size);
+  }
+  const baseline = await resizeRawRgba(
+    squareFrameRgba(frame),
+    canvasSize,
+    size,
+    true,
+  );
+  return reconstruction?.filter
+    ? applyReconstructionFilter(baseline, size, reconstruction.filter)
+    : baseline;
+}
+
+async function composeRepresentation(frames, indices, size, reconstruction) {
   const bytesPerFrame = size * size * 4;
   const sheet = Buffer.alloc(bytesPerFrame * indices.length);
   for (let outputIndex = 0; outputIndex < indices.length; outputIndex += 1) {
-    const resized = await resizeFrame(frames[indices[outputIndex]], size);
+    const resized = reconstruction
+      ? await reconstructFrame(
+          frames[indices[outputIndex]],
+          size,
+          reconstruction,
+        )
+      : await resizeFrame(frames[indices[outputIndex]], size);
     resized.copy(sheet, outputIndex * bytesPerFrame);
   }
   return sharp(sheet, {
@@ -1522,6 +1739,405 @@ async function composeRepresentation(frames, indices, size) {
   })
     .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer();
+}
+
+function compatibleCalibrationFrames(lowFrames, highFrames, lowSize, highSize) {
+  if (
+    !lowFrames ||
+    !highFrames ||
+    lowFrames.length !== highFrames.length ||
+    lowFrames.length === 0
+  ) {
+    return false;
+  }
+  const lowCycle = sourceCycleDuration(lowFrames);
+  const highCycle = sourceCycleDuration(highFrames);
+  if (
+    lowFrames.length > 1 &&
+    Math.abs(lowCycle - highCycle) / Math.max(1, lowCycle, highCycle) > 0.1
+  ) {
+    return false;
+  }
+  return lowFrames.every((lowFrame, index) => {
+    const highFrame = highFrames[index];
+    const lowCanvas = Math.max(lowFrame.width, lowFrame.height);
+    const highCanvas = Math.max(highFrame.width, highFrame.height);
+    const hotspotDifference = Math.hypot(
+      (lowFrame.hotspotX * 32) / lowCanvas -
+        (highFrame.hotspotX * 32) / highCanvas,
+      (lowFrame.hotspotY * 32) / lowCanvas -
+        (highFrame.hotspotY * 32) / highCanvas,
+    );
+    return (
+      lowCanvas === lowSize &&
+      highCanvas === highSize &&
+      hotspotDifference <= 1.5
+    );
+  });
+}
+
+function visualReconstructionError(left, right) {
+  let union = 0;
+  let intersection = 0;
+  let difference = 0;
+  for (let offset = 0; offset < left.length; offset += 4) {
+    const leftAlpha = left[offset + 3] / 255;
+    const rightAlpha = right[offset + 3] / 255;
+    union += Math.max(leftAlpha, rightAlpha);
+    intersection += Math.min(leftAlpha, rightAlpha);
+    for (const background of [0, 0.5, 1]) {
+      for (let channel = 0; channel < 3; channel += 1) {
+        const leftComposite =
+          (left[offset + channel] / 255) * leftAlpha +
+          background * (1 - leftAlpha);
+        const rightComposite =
+          (right[offset + channel] / 255) * rightAlpha +
+          background * (1 - rightAlpha);
+        difference += Math.abs(leftComposite - rightComposite);
+      }
+    }
+  }
+  return {
+    error: union > 0 ? difference / (union * 9) : 0,
+    alphaOverlap: union > 0 ? intersection / union : 1,
+  };
+}
+
+function normalEquations() {
+  return {
+    xx: new Float64Array(9),
+    xy: new Float64Array(3),
+    sampleCount: 0,
+  };
+}
+
+function addNormalSample(equations, features, target) {
+  for (let row = 0; row < 3; row += 1) {
+    equations.xy[row] += features[row] * target;
+    for (let column = 0; column < 3; column += 1) {
+      equations.xx[row * 3 + column] += features[row] * features[column];
+    }
+  }
+  equations.sampleCount += 1;
+}
+
+function accumulateFilterSamples(equations, baseline, reference, size) {
+  const source = premultipliedRgba(baseline);
+  const target = premultipliedRgba(reference);
+  const stride = Math.max(1, Math.floor(size / 96));
+  for (let y = 0; y < size; y += stride) {
+    for (let x = 0; x < size; x += stride) {
+      const offset = (y * size + x) * 4;
+      const alphaFeatures = filterFeatures(source, size, x, y, 3);
+      if (
+        target[offset + 3] <= 1 / 255 &&
+        alphaFeatures.every((value) => value <= 1 / 255)
+      ) {
+        continue;
+      }
+      addNormalSample(equations.alpha, alphaFeatures, target[offset + 3]);
+      for (let channel = 0; channel < 3; channel += 1) {
+        addNormalSample(
+          equations.color,
+          filterFeatures(source, size, x, y, channel),
+          target[offset + channel],
+        );
+      }
+    }
+  }
+}
+
+function solveThreeByThree(equations) {
+  const count = Math.max(1, equations.sampleCount);
+  const penalty = XCURSOR_FILTER_RIDGE * count;
+  const rows = Array.from({ length: 3 }, (_, row) => [
+    ...Array.from(
+      { length: 3 },
+      (_, column) =>
+        equations.xx[row * 3 + column] + (row === column ? penalty : 0),
+    ),
+    equations.xy[row] + (row === 0 ? penalty : 0),
+  ]);
+  for (let column = 0; column < 3; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < 3; row += 1) {
+      if (Math.abs(rows[row][column]) > Math.abs(rows[pivot][column])) {
+        pivot = row;
+      }
+    }
+    [rows[column], rows[pivot]] = [rows[pivot], rows[column]];
+    if (Math.abs(rows[column][column]) < 1e-12) {
+      return null;
+    }
+    const divisor = rows[column][column];
+    for (let index = column; index < 4; index += 1) {
+      rows[column][index] /= divisor;
+    }
+    for (let row = 0; row < 3; row += 1) {
+      if (row === column) {
+        continue;
+      }
+      const multiplier = rows[row][column];
+      for (let index = column; index < 4; index += 1) {
+        rows[row][index] -= multiplier * rows[column][index];
+      }
+    }
+  }
+  const weights = rows.map((row) => row[3]);
+  return weights.every(Number.isFinite) &&
+    weights.every((weight) => Math.abs(weight) <= 4) &&
+    weights.reduce((sum, weight) => sum + Math.abs(weight), 0) <= 8
+    ? weights
+    : null;
+}
+
+function fitReconstructionFilter(samples) {
+  const equations = {
+    alpha: normalEquations(),
+    color: normalEquations(),
+  };
+  for (const sample of samples) {
+    accumulateFilterSamples(
+      equations,
+      sample.baseline,
+      sample.reference,
+      sample.size,
+    );
+  }
+  const alpha = solveThreeByThree(equations.alpha);
+  const color = solveThreeByThree(equations.color);
+  return alpha && color ? { alpha, color } : null;
+}
+
+function evaluateReconstructionSamples(samples, filter) {
+  const roles = new Map();
+  let improved = 0;
+  let largestRegression = 0;
+  for (const sample of samples) {
+    const baseline = visualReconstructionError(
+      sample.baseline,
+      sample.reference,
+    ).error;
+    const filtered = visualReconstructionError(
+      applyReconstructionFilter(sample.baseline, sample.size, filter),
+      sample.reference,
+    ).error;
+    const role = roles.get(sample.role) ?? {
+      baselineError: 0,
+      filteredError: 0,
+      sampleCount: 0,
+    };
+    role.baselineError += baseline;
+    role.filteredError += filtered;
+    role.sampleCount += 1;
+    roles.set(sample.role, role);
+    improved += Number(filtered < baseline);
+    largestRegression = Math.max(largestRegression, filtered - baseline);
+  }
+  const roleResults = [...roles.values()].map((role) => ({
+    baselineError: role.baselineError / role.sampleCount,
+    filteredError: role.filteredError / role.sampleCount,
+  }));
+  return {
+    baselineError:
+      roleResults.reduce((sum, role) => sum + role.baselineError, 0) /
+      roleResults.length,
+    filteredError:
+      roleResults.reduce((sum, role) => sum + role.filteredError, 0) /
+      roleResults.length,
+    improved,
+    improvedRoleCount: roleResults.filter(
+      (role) => role.filteredError < role.baselineError,
+    ).length,
+    largestRegression,
+    roleCount: roleResults.length,
+    sampleCount: samples.length,
+  };
+}
+
+function selectCalibrationPair(sourceFrames) {
+  const roleEntries = [...sourceFrames.entries()].filter(
+    ([, groups]) => groups instanceof Map && groups.size > 1,
+  );
+  const masterSizes = roleEntries.map(([, groups]) =>
+    Math.max(...groups.keys()),
+  );
+  const variantMaster = median(masterSizes);
+  if (
+    !Number.isFinite(variantMaster) ||
+    variantMaster >= XCURSOR_UPSCALE_TARGET
+  ) {
+    return null;
+  }
+  const tiers = [
+    ...new Set(roleEntries.flatMap(([, groups]) => [...groups.keys()])),
+  ]
+    .filter((size) => size < XCURSOR_UPSCALE_TARGET)
+    .sort((left, right) => left - right);
+  const desiredRatio = XCURSOR_UPSCALE_TARGET / variantMaster;
+  const candidates = [];
+  for (let lowIndex = 0; lowIndex + 1 < tiers.length; lowIndex += 1) {
+    for (
+      let highIndex = lowIndex + 1;
+      highIndex < tiers.length;
+      highIndex += 1
+    ) {
+      const lowSize = tiers[lowIndex];
+      const highSize = tiers[highIndex];
+      const ratio = highSize / lowSize;
+      if (
+        ratio < 1.15 ||
+        ratio > 2.1 ||
+        (variantMaster < 96 && highSize !== variantMaster)
+      ) {
+        continue;
+      }
+      const roles = roleEntries.filter(([, groups]) =>
+        compatibleCalibrationFrames(
+          groups.get(lowSize),
+          groups.get(highSize),
+          lowSize,
+          highSize,
+        ),
+      );
+      if (roles.length >= XCURSOR_FILTER_MIN_ROLES) {
+        candidates.push({
+          lowSize,
+          highSize,
+          roles,
+          ratioDifference:
+            variantMaster < 96
+              ? (variantMaster - lowSize) / variantMaster
+              : Math.abs(Math.log(ratio) - Math.log(desiredRatio)),
+        });
+      }
+    }
+  }
+  return candidates.sort(
+    (left, right) =>
+      left.ratioDifference - right.ratioDifference ||
+      right.highSize - left.highSize,
+  )[0];
+}
+
+async function calibrationSamples(pair) {
+  const samples = [];
+  for (const [role, groups] of pair.roles) {
+    const lowFrames = groups.get(pair.lowSize);
+    const highFrames = groups.get(pair.highSize);
+    const indices = selectedFrameIndices(
+      lowFrames.length,
+      XCURSOR_FILTER_MAX_FRAMES_PER_ROLE,
+    );
+    for (const index of indices) {
+      const baseline = await resizeRawRgba(
+        squareFrameRgba(lowFrames[index]),
+        pair.lowSize,
+        pair.highSize,
+        true,
+      );
+      const reference = squareFrameRgba(highFrames[index]);
+      const quality = visualReconstructionError(baseline, reference);
+      if (quality.alphaOverlap >= 0.55 && quality.error <= 0.2) {
+        samples.push({
+          baseline,
+          reference,
+          role,
+          size: pair.highSize,
+        });
+      }
+    }
+  }
+  return samples;
+}
+
+function nohaloReconstruction(groups) {
+  return {
+    filter: null,
+    masterSize: Math.max(...groups.keys()),
+    method: "nohalo",
+  };
+}
+
+async function learnXcursorReconstruction(sourceFrames) {
+  const pair = selectCalibrationPair(sourceFrames);
+  const fallback = (reason, details) => {
+    for (const groups of sourceFrames.values()) {
+      XCURSOR_RECONSTRUCTION.set(groups, nohaloReconstruction(groups));
+    }
+    return { method: "nohalo", reason, ...(details ? { details } : {}) };
+  };
+  if (!pair) {
+    return fallback("no-compatible-tier-pair");
+  }
+  const samples = await calibrationSamples(pair);
+  const roles = [...new Set(samples.map((sample) => sample.role))].sort(
+    (a, b) => a.localeCompare(b, "en"),
+  );
+  const holdoutCount = Math.max(
+    XCURSOR_FILTER_MIN_HOLDOUT_ROLES,
+    Math.ceil(roles.length * XCURSOR_FILTER_HOLDOUT_FRACTION),
+  );
+  if (roles.length - holdoutCount < XCURSOR_FILTER_MIN_ROLES) {
+    return fallback("insufficient-calibration-roles", {
+      eligibleRoleCount: roles.length,
+    });
+  }
+  const holdoutRoles = new Set(
+    Array.from(
+      { length: holdoutCount },
+      (_, index) =>
+        roles[
+          Math.min(
+            roles.length - 1,
+            Math.floor(((index + 0.5) * roles.length) / holdoutCount),
+          )
+        ],
+    ),
+  );
+  const training = samples.filter((sample) => !holdoutRoles.has(sample.role));
+  const holdout = samples.filter((sample) => holdoutRoles.has(sample.role));
+  const filter = fitReconstructionFilter(training);
+  if (!filter || holdout.length < XCURSOR_FILTER_MIN_HOLDOUT_ROLES) {
+    return fallback("filter-fit-failed", {
+      holdoutSampleCount: holdout.length,
+    });
+  }
+  const validation = evaluateReconstructionSamples(holdout, filter);
+  if (
+    validation.filteredError >= validation.baselineError * 0.99 ||
+    validation.improvedRoleCount / validation.roleCount < 0.6 ||
+    validation.largestRegression > 0.01
+  ) {
+    return fallback("held-out-regression", {
+      pair: [pair.lowSize, pair.highSize],
+      validation,
+    });
+  }
+
+  const acceptedRoles = new Set();
+  for (const role of roles) {
+    const roleSamples = samples.filter((sample) => sample.role === role);
+    const result = evaluateReconstructionSamples(roleSamples, filter);
+    if (
+      result.filteredError < result.baselineError * 0.995 &&
+      result.largestRegression <= 0.005
+    ) {
+      acceptedRoles.add(role);
+    }
+  }
+  for (const [role, groups] of sourceFrames) {
+    XCURSOR_RECONSTRUCTION.set(groups, {
+      ...nohaloReconstruction(groups),
+      ...(acceptedRoles.has(role) ? { filter, method: "learned-filter" } : {}),
+    });
+  }
+  return {
+    method: "learned-filter",
+    pair: [pair.lowSize, pair.highSize],
+    roleCount: acceptedRoles.size,
+    validation,
+  };
 }
 
 function sourceGroups(source) {
@@ -1645,6 +2261,7 @@ async function buildCursorRecord(source, _limits = DEFAULT_IMPORT_LIMITS) {
     frameDuration = Math.max(0.001, sourceCycleSeconds / outputCount);
   }
   const representations = [];
+  const reconstruction = XCURSOR_RECONSTRUCTION.get(groups);
   for (const size of sizes) {
     const frames = framesForSize(groups, size);
     representations.push(
@@ -1652,6 +2269,7 @@ async function buildCursorRecord(source, _limits = DEFAULT_IMPORT_LIMITS) {
         frames,
         sampledFrameIndices(frames, outputCount),
         size,
+        reconstruction,
       ),
     );
   }
@@ -1897,6 +2515,8 @@ async function visuallyEquivalentWaitProgress(waitSource, progressSource) {
 async function synthesizeProgressSource(defaultSource, waitSource) {
   const defaultGroups = sourceGroups(defaultSource);
   const waitGroups = sourceGroups(waitSource);
+  const defaultReconstruction = XCURSOR_RECONSTRUCTION.get(defaultGroups);
+  const waitReconstruction = XCURSOR_RECONSTRUCTION.get(waitGroups);
   const progressGroups = new Map();
   const outputCount = Math.min(
     MAX_MACOS_FRAMES,
@@ -1912,13 +2532,23 @@ async function synthesizeProgressSource(defaultSource, waitSource) {
     for (let index = 0; index < outputCount; index += 1) {
       const waitFrame = waitFrames[waitIndices[index]];
       const pointerFrame = pointerFrames[pointerIndices[index]];
-      const canvasSize = Math.max(waitFrame.width, waitFrame.height);
+      const canvasSize = waitReconstruction
+        ? size
+        : Math.max(waitFrame.width, waitFrame.height);
       const pointerCanvasSize = Math.max(
         pointerFrame.width,
         pointerFrame.height,
       );
-      const base = await resizeFrame(pointerFrame, canvasSize);
-      const waitCanvas = await resizeFrame(waitFrame, canvasSize);
+      const base = defaultReconstruction
+        ? await reconstructFrame(
+            pointerFrame,
+            canvasSize,
+            defaultReconstruction,
+          )
+        : await resizeFrame(pointerFrame, canvasSize);
+      const waitCanvas = waitReconstruction
+        ? await reconstructFrame(waitFrame, canvasSize, waitReconstruction)
+        : await resizeFrame(waitFrame, canvasSize);
       const spinnerSize = Math.min(
         canvasSize,
         Math.max(8, Math.round(canvasSize * 0.42)),
@@ -2098,7 +2728,7 @@ async function buildTheme(sourceFrames, metadata, limits) {
       MACURSOR_UUID_NAMESPACE,
       `cursor-atelier:${metadata.identifier}`,
     ),
-    Group: "Imported",
+    Group: metadata.group || "Imported",
   };
   return { bindings, theme, warnings };
 }
@@ -2361,7 +2991,15 @@ function parseIndexTheme(text) {
         separator > 0 &&
         line.slice(0, separator).trim().toLowerCase() === "name"
       ) {
-        return line.slice(separator + 1).trim();
+        const value = line.slice(separator + 1).trim();
+        if (
+          value.length >= 2 &&
+          ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'")))
+        ) {
+          return value.slice(1, -1).trim();
+        }
+        return value;
       }
     }
   }
@@ -2468,11 +3106,13 @@ async function loadXcursorVariant(cursorDirectory, files, limits) {
     }
     sourceFrames.set(role, frameCache.get(file.digest));
   }
+  const reconstruction = await learnXcursorReconstruction(sourceFrames);
   const displayName = await displayNameForXcursorDirectory(cursorDirectory);
   return {
     author: "Imported by Cursor Atelier",
     digest: variantHash.digest("hex"),
     displayName,
+    reconstruction,
     sourceFrames,
     sourceLabel: path.basename(path.dirname(cursorDirectory)),
   };
@@ -2648,8 +3288,12 @@ async function writeArtifact(
   sharedWarnings,
   limits,
   maximumGeneratedBytes,
+  importMetadata,
 ) {
-  const displayName = safeText(variant.displayName, "Imported Cursor");
+  const displayName = safeText(
+    importMetadata?.displayName ?? variant.displayName,
+    "Imported Cursor",
+  );
   const identifier = `${slugIdentifier(displayName)}-${variant.digest.slice(0, 16)}`;
   const artifactRoot = path.join(stagingRoot, identifier);
   assertSafeOutputRoot(stagingRoot, artifactRoot);
@@ -2681,8 +3325,9 @@ async function writeArtifact(
     const built = await buildTheme(
       variant.sourceFrames,
       {
-        author: variant.author,
+        author: importMetadata?.author ?? variant.author,
         displayName,
+        group: importMetadata?.family ?? importMetadata?.group,
         identifier,
       },
       limits,
@@ -2750,10 +3395,29 @@ async function writeArtifact(
       SHA256: cursorDigest,
       UUID: built.theme.UUID,
       ThemeName: displayName,
-      Group: "Imported",
+      Group: importMetadata?.family ?? importMetadata?.group ?? "Imported",
       Author: built.theme.Creator,
       ImportDigest: variant.digest,
       SourceFormat: variant.format ?? sourceFormat,
+      ...(importMetadata?.catalogId
+        ? { catalogId: importMetadata.catalogId }
+        : {}),
+      ...(importMetadata?.variant
+        ? {
+            Variant: importMetadata.variant,
+            VariantLabel: importMetadata.variant,
+          }
+        : {}),
+      ...(importMetadata?.upstreamVariant
+        ? { UpstreamVariant: importMetadata.upstreamVariant }
+        : {}),
+      ...(importMetadata?.sourceUrl
+        ? { SourceURL: importMetadata.sourceUrl }
+        : {}),
+      ...(importMetadata?.license ? { License: importMetadata.license } : {}),
+      ...(importMetadata?.licenseUrl
+        ? { LicenseURL: importMetadata.licenseUrl }
+        : {}),
       preview: assets.get("default"),
       rolePreviews,
       ...(warnings.length > 0 ? { ImportWarnings: warnings } : {}),
@@ -2782,6 +3446,7 @@ async function writeArtifact(
         directory: artifactRoot,
         manifestPath,
         cursorPath,
+        reconstruction: variant.reconstruction,
         sourceFormat: entry.SourceFormat,
         sourceLabel: variant.sourceLabel,
         warnings,
@@ -2838,14 +3503,38 @@ async function directPlistVariant(sourcePath, format, limits) {
  * Convert a downloaded cursor pack into self-contained, atomically installable
  * artifacts below a caller-owned staging directory.
  */
+function importProgressReporter(callback) {
+  if (callback !== undefined && typeof callback !== "function") {
+    fail("INVALID_OPTIONS", "The import progress callback must be a function.");
+  }
+  let lastProgress = -1;
+  return (phase, progress) => {
+    const boundedProgress = Math.min(1, Math.max(lastProgress, progress));
+    lastProgress = boundedProgress;
+    if (!callback) {
+      return;
+    }
+    try {
+      callback({ phase, progress: boundedProgress });
+    } catch {
+      // Observers must not be able to interrupt an otherwise valid import.
+    }
+  };
+}
+
 export async function importCursorSource({
   sourcePath,
   stagingDirectory,
   limits: limitOverrides,
+  onProgress,
+  trustedMetadata,
 }) {
   if (!sourcePath || typeof sourcePath !== "string") {
     fail("INVALID_OPTIONS", "A cursor source path is required.");
   }
+  const reportProgress = importProgressReporter(onProgress);
+  const importMetadata = normalizeImportMetadata(trustedMetadata);
+  reportProgress("preparing", 0);
   const limits = mergedLimits(limitOverrides);
   const resolvedSource = path.resolve(sourcePath);
   let sourceStat;
@@ -2890,6 +3579,16 @@ export async function importCursorSource({
   const duplicateWarnings = [];
   let generatedBytes = 0;
   const consumeVariant = async (variant, metadata) => {
+    if (
+      importMetadata?.sourceVariant &&
+      ![variant.sourceLabel, variant.displayName].some(
+        (candidate) =>
+          String(candidate).toLocaleLowerCase("en-US") ===
+          importMetadata.sourceVariant.toLocaleLowerCase("en-US"),
+      )
+    ) {
+      return;
+    }
     const identityKey = `${slugIdentifier(variant.displayName)}-${variant.digest.slice(0, 16)}`;
     if (seen.has(identityKey)) {
       if (seen.get(identityKey) !== variant.digest) {
@@ -2903,7 +3602,14 @@ export async function importCursorSource({
       );
       return;
     }
+    if (importMetadata?.catalogId && artifacts.length > 0) {
+      fail(
+        "AMBIGUOUS_METADATA",
+        "Catalog metadata matched more than one cursor variant; specify sourceVariant.",
+      );
+    }
     seen.set(identityKey, variant.digest);
+    reportProgress("converting", 0.55);
     const written = await writeArtifact(
       stagingRoot,
       variant,
@@ -2911,12 +3617,14 @@ export async function importCursorSource({
       metadata.warnings,
       limits,
       limits.maxGeneratedBytes - generatedBytes,
+      importMetadata,
     );
     generatedBytes += written.generatedBytes;
     artifacts.push(written.artifact);
   };
   try {
     if (sourceStat.isDirectory()) {
+      reportProgress("discovering", 0.25);
       discovered = await discoverVariants(
         await scanDirectory(sourceRealPath, limits),
         "xcursor-directory",
@@ -2934,6 +3642,7 @@ export async function importCursorSource({
         path.join(os.tmpdir(), "cursor-atelier-import-"),
       );
       await fsPromises.chmod(temporaryRoot, 0o700);
+      reportProgress("extracting", 0.1);
       const pinnedArchive = path.join(temporaryRoot, "source.archive");
       await fsPromises.copyFile(
         sourceRealPath,
@@ -2970,6 +3679,7 @@ export async function importCursorSource({
           compression,
         );
       }
+      reportProgress("discovering", 0.3);
       discovered = await discoverVariants(
         await scanDirectory(extractionRoot, limits),
         "xcursor-archive",
@@ -2977,6 +3687,7 @@ export async function importCursorSource({
         consumeVariant,
       );
     } else if (sourceStat.isFile() && extension === ".cursor") {
+      reportProgress("discovering", 0.25);
       discovered = {
         format: "native-cursor",
         variants: [],
@@ -2994,6 +3705,7 @@ export async function importCursorSource({
         discovered,
       );
     } else if (sourceStat.isFile() && extension === ".cape") {
+      reportProgress("discovering", 0.25);
       discovered = {
         format: "mousecape",
         variants: [],
@@ -3019,7 +3731,8 @@ export async function importCursorSource({
         "The source contained no distinct cursor variants.",
       );
     }
-    return {
+    reportProgress("finalizing", 0.95);
+    const result = {
       sourceFormat: discovered.format,
       sourcePath: sourceRealPath,
       artifactCount: artifacts.length,
@@ -3030,6 +3743,18 @@ export async function importCursorSource({
         displayName: artifacts[0].displayName,
       },
     };
+    reportProgress("completed", 1);
+    return result;
+  } catch (error) {
+    for (const artifact of artifacts) {
+      if (path.dirname(artifact.directory) === stagingRoot) {
+        await fsPromises.rm(artifact.directory, {
+          recursive: true,
+          force: true,
+        });
+      }
+    }
+    throw error;
   } finally {
     if (temporaryRoot) {
       const temporaryParent = path.resolve(os.tmpdir());
@@ -3056,6 +3781,7 @@ export const __testing = Object.freeze({
   buildCursorRecord,
   canonicalRole,
   discoverVariants,
+  learnXcursorReconstruction,
   parseXcursorBuffer,
   preflightTar,
   preflightZip,
@@ -3064,6 +3790,7 @@ export const __testing = Object.freeze({
   scanDirectory,
   selectedFrameIndices,
   synthesizeProgressSource,
+  visualReconstructionError,
   waitProgressThumbnail,
   WAIT_PROGRESS_THUMBNAIL_SIZE,
   visuallyEquivalentWaitProgress,

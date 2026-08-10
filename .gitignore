@@ -30,7 +30,31 @@ native/cursor-packs/sources/*
 !native/cursor-packs/sources/GNOME-LOOK-PROVENANCE.md
 !native/cursor-packs/sources/github-pack-provenance.json
 !native/cursor-packs/sources/pinned-sources.json
-native/cursor-packs/generated/
+!native/cursor-packs/sources/curated-source-catalog.json
+# The generated corpus is never shipped. Keep only the 45 tiny, static images
+# used by the first-run family chooser.
+native/cursor-packs/generated/*
+!native/cursor-packs/generated/previews/
+native/cursor-packs/generated/previews/*
+!native/cursor-packs/generated/previews/OreoWhite/
+!native/cursor-packs/generated/previews/Remus/
+!native/cursor-packs/generated/previews/DropBlue/
+!native/cursor-packs/generated/previews/MogaClassic/
+!native/cursor-packs/generated/previews/Volantes/
+!native/cursor-packs/generated/previews/Vimix/
+!native/cursor-packs/generated/previews/Qogir/
+!native/cursor-packs/generated/previews/BibataExtraModernDodgerBlue/
+!native/cursor-packs/generated/previews/GoogleBlue/
+!native/cursor-packs/generated/previews/Simp1e/
+!native/cursor-packs/generated/previews/Capitaine/
+!native/cursor-packs/generated/previews/Future/
+!native/cursor-packs/generated/previews/Nordzy/
+!native/cursor-packs/generated/previews/Colloid/
+!native/cursor-packs/generated/previews/BibataModernIce/
+native/cursor-packs/generated/previews/*/*
+!native/cursor-packs/generated/previews/*/default.png
+!native/cursor-packs/generated/previews/*/pointer.png
+!native/cursor-packs/generated/previews/*/text.png
 native/cursor-packs/test-output/
 
 # Logs and temporary files

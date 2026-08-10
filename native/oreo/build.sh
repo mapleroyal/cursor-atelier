@@ -10,8 +10,6 @@ binary_path="$contents_path/MacOS/OreoCursor"
 helper_path="$contents_path/Library/LoginItems/Oreo Cursor Login Helper.app"
 helper_contents_path="$helper_path/Contents"
 helper_binary_path="$helper_contents_path/MacOS/OreoCursorLoginHelper"
-generated_themes_path="$script_dir/../cursor-packs/generated"
-staged_themes_path="$contents_path/Resources/Themes"
 package_json_path="$script_dir/../../package.json"
 sign_identity=${OREO_SIGN_IDENTITY:-}
 sign_flags=(--force --options runtime --sign "$sign_identity")
@@ -72,19 +70,19 @@ from pathlib import Path
 catalog_path, themes_path = map(Path, sys.argv[1:])
 catalog = json.loads(catalog_path.read_text())
 themes = catalog.get("themes")
-if catalog.get("schemaVersion") != 1 or not isinstance(themes, list) or len(themes) != 19:
-    raise SystemExit("Built-in Oreo catalog must contain exactly 19 schema-v1 themes.")
+if catalog.get("schemaVersion") != 1 or not isinstance(themes, list) or not themes:
+    raise SystemExit("The source Oreo catalog must contain schema-v1 themes.")
 resources = {path.name for path in themes_path.glob("*.cursor")}
 declared = {str(theme.get("resourceFile", "")) for theme in themes}
 if resources != declared:
-    raise SystemExit("Built-in Oreo catalog and cursor resources differ.")
+    raise SystemExit("The source Oreo catalog and cursor resources differ.")
 identifiers = set()
 default_theme_id = catalog.get("defaultThemeId")
 for theme in themes:
     identifier = str(theme.get("nativeThemeId", ""))
     resource = themes_path / str(theme.get("resourceFile", ""))
     if not identifier or identifier in identifiers:
-        raise SystemExit("Built-in Oreo catalog contains an invalid identifier.")
+        raise SystemExit("The source Oreo catalog contains an invalid identifier.")
     identifiers.add(identifier)
     data = resource.read_bytes()
     cursor = plistlib.loads(data)
@@ -96,7 +94,7 @@ for theme in themes:
     ):
         raise SystemExit(f"{identifier} differs from catalog.json.")
 if default_theme_id not in identifiers:
-    raise SystemExit("Built-in Oreo catalog defaultThemeId is invalid.")
+    raise SystemExit("The source Oreo catalog defaultThemeId is invalid.")
 PY
 
 cleanup() {
@@ -157,46 +155,11 @@ common_flags=(
     "$helper_contents_path/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_version" \
     "$helper_contents_path/Info.plist"
-/usr/bin/ditto "$script_dir/Resources/Themes" \
-    "$staged_themes_path"
 
-# External packs are converted at build time into signed macOS .cursor
-# property lists. The converter writes one machine-readable manifest beside
-# those resources; copy both into the signed native bundle without mutating
-# the checked-in Oreo resources. A manifest is required whenever generated
-# resources are present so no cursor can be applied without an allowlisted
-# metadata record and SHA-256 integrity entry.
-if [[ -d "$generated_themes_path" ]]; then
-    generated_manifest="$generated_themes_path/manifest.json"
-    generated_cursor_count=$(find "$generated_themes_path" \
-        -maxdepth 1 -type f -name '*.cursor' | wc -l | tr -d ' ')
-    if [[ "$generated_cursor_count" != "0" && ! -f "$generated_manifest" ]]; then
-        print -u2 "Generated cursor resources require manifest.json."
-        exit 1
-    fi
-    if [[ -f "$generated_manifest" ]]; then
-        if [[ "$generated_cursor_count" == "0" ]]; then
-            print -u2 "Generated manifest.json has no .cursor resources."
-            exit 1
-        fi
-        /usr/bin/ditto "$generated_manifest" \
-            "$staged_themes_path/manifest.json"
-        while IFS= read -r generated_resource; do
-            generated_filename=${generated_resource:t}
-            destination="$staged_themes_path/$generated_filename"
-            if [[ -e "$destination" ]]; then
-                print -u2 "Generated cursor collides with bundled resource: $generated_filename"
-                exit 1
-            fi
-            /usr/bin/ditto "$generated_resource" "$destination"
-        done < <(find "$generated_themes_path" -maxdepth 1 -type f \
-            -name '*.cursor' -print | sort)
-        if [[ -d "$generated_themes_path/previews" ]]; then
-            /usr/bin/ditto "$generated_themes_path/previews" \
-                "$staged_themes_path/previews"
-        fi
-    fi
-fi
+# The checked-in resources above remain the source-of-truth for curated
+# on-demand assets, but the installed native bridge starts with no cursor
+# payload. Imported packs live in the private Application Support store and
+# are discovered independently of a bundled catalog.
 /usr/bin/ditto "$script_dir/Resources/Oreo-GPL-2.0.txt" \
     "$contents_path/Resources/Oreo-GPL-2.0.txt"
 /usr/bin/ditto "$script_dir/Resources/Oreo-AUTHORS.txt" \
@@ -207,6 +170,12 @@ fi
     "$contents_path/Resources/LICENSE-CODE.txt"
 /usr/bin/ditto "$script_dir/THIRD-PARTY-NOTICES.md" \
     "$contents_path/Resources/THIRD-PARTY-NOTICES.md"
+
+if [[ -d "$contents_path/Resources/Themes" ]] ||
+   [[ -n "$(find "$staging_path" -type f -name '*.cursor' -print -quit)" ]]; then
+    print -u2 "The native app must not stage bundled cursor payloads."
+    exit 1
+fi
 
 /usr/bin/codesign "${sign_flags[@]}" "$helper_path"
 /usr/bin/codesign --verify --strict --verbose=2 "$helper_path"

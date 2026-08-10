@@ -5,23 +5,36 @@ provides search, real cursor previews, light/dark cursor assignments, and Restor
 the signed Objective-C component owns the private CoreGraphics/AppKit work.
 
 This repository currently targets one personal installation. Distribution
-signing, notarization, update delivery, and redistribution review are deferred
-release concerns, not blockers for the local build.
+signing, notarization, update delivery, and the Remus, Drop, and Moga licensing
+review described in [CURSOR_PACK_NOTICES.md](CURSOR_PACK_NOTICES.md) remain
+release concerns.
 
 ## What is included
 
-- 240 locked bundled variants: 19 Oreo themes and 221 conversions from the
-  requested external families. The catalogue can also include locally imported
-  user themes.
-- All 47 native cursor identifiers for every bundled variant, with 9,328
-  generated PNG preview assets derived from the converted resources. Imports
-  are normalized to the same 47-role contract.
+- No `.cursor` resources or bulk preview corpus in the signed app. The native
+  bridge starts with an empty library and discovers packs from the private
+  Application Support store.
+- A first-run chooser for 15 curated families. It embeds only three small
+  static previews per family (45 PNGs total). The representative artwork is
+  preview-only: selecting a family obtains and converts every curated variant
+  in that family.
+- A locked catalogue of original upstream source inputs. The app authenticates
+  pinned repository/source archives, then runs the existing source-specific,
+  maximum-quality recipes locally. Cursor Atelier does not host or download
+  preconverted `.cursor` derivatives.
+- Local import for compiled Xcursor directories and ZIP/tar archives,
+  compatible Mousecape `.cape` files, and compiled macOS `.cursor` themes.
+  Low-resolution Xcursor artwork is conservatively reconstructed while genuine
+  source tiers, hotspots, animation order, and timing are preserved.
+- Build recipes and provenance for the full 240-variant source corpus: 19 Oreo
+  themes and 221 external conversions. The released converter contains the
+  recipes, not the generated cursor payloads.
+- All 47 native cursor identifiers for every installed pack. Imports are
+  normalized to the same 47-role contract and receive local PNG/APNG previews.
 - Looping APNG previews for animated states, using source-cycle-preserving
   timing from the applied cursor (rounded to APNG milliseconds).
 - A searchable two-pane workspace with independently scrolling rail/detail
   panes, restrained surfaces, and consistent squircle controls.
-- Local import for compiled Xcursor directories and ZIP/tar archives,
-  compatible Mousecape `.cape` files, and compiled macOS `.cursor` themes.
 - A persisted Light/System/Dark appearance selector.
 - Truthful selected, requested, and live-verified active states. Preview mode
   never mutates macOS or presents a selection as active.
@@ -46,16 +59,16 @@ The app has one renderer route and does not use React Router.
 ## Local build
 
 Requirements are macOS 13 or newer, Node.js/npm, Xcode or the Xcode Command
-Line Tools, Python 3 with the pinned Pillow dependency, librsvg, and a stable
-Apple-issued development signing identity.
+Line Tools, and a stable Apple-issued development signing identity. Python,
+Pillow, and librsvg are developer requirements for rebuilding/comparing the
+full source corpus; the packaged app's converter is self-contained.
 
 ```sh
 brew install librsvg
 npm install
 python3 -m pip install -r native/oreo/ArtworkSource/requirements.txt
-python3 native/cursor-packs/acquire_sources.py
-npm run native:packs
 OREO_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" npm run native:build
+npm run curated:build
 npm start
 ```
 
@@ -67,9 +80,9 @@ On the first packaged launch after replacement, Cursor Atelier reconciles its
 registered login helper so code resident from the prior build is terminated
 and the current helper is registered before cursor controls are used.
 
-The source-acquisition command populates an ignored build cache. It verifies
-pinned Git revisions and archive digests and is not used at app runtime. Once
-the cache exists, verify it without fetching with:
+The older developer corpus command can still populate and verify all upstream
+inputs at once for equivalence testing. The released app instead uses the
+locked JavaScript acquisition layer to fetch only user-selected families:
 
 ```sh
 python3 native/cursor-packs/acquire_sources.py --verify-only
@@ -79,6 +92,7 @@ For the personal packaged app:
 
 ```sh
 npm run native:preflight
+npm run curated:verify
 npm run package
 npm run make
 ```
@@ -127,10 +141,14 @@ migrate the proof of concept's preferences, snapshots, or login item.
 ## Native availability
 
 The production bridge lives in the nested signed app outside `app.asar`. When
-that component is absent or invalid, the catalogue remains available as a
-read-only preview, cursor assignment and Restore are unavailable, and the UI
-does not claim a system cursor is active. Cursor Atelier never downloads cursor
-artwork; local imports are initiated explicitly through the system file picker.
+that component is absent or invalid, cursor assignment and Restore are
+unavailable and the UI does not claim a system cursor is active.
+
+On first run, Cursor Atelier obtains only the curated families selected by the
+user. It downloads their pinned original upstream inputs over HTTPS, verifies
+them, runs the bundled source-specific converter locally, and transactionally
+installs each completed variant. Arbitrary user imports instead use the general
+compiled Xcursor pipeline described below.
 
 See [native/README.md](native/README.md) for the build and manifest contract.
 
@@ -150,10 +168,13 @@ Mousecape versions, Cursor Atelier prefers Xcursor so it can preserve the
 source's native resolution tiers and hotspots.
 
 The importer tolerates conventional nesting, Xcursor aliases, resolution
-tiers, animation lengths/timing, and harmless canvas variation. It normalizes
-each variant to the same 47-role native contract as a bundled theme, generates
-static PNG or looping APNG role previews, verifies the resource and manifest,
-and atomically installs the result under
+tiers, animation lengths/timing, and harmless canvas variation. Authentic
+tiers are never replaced. If an Xcursor pack stops below the app's 128px tier,
+the importer uses an alpha-safe no-halo reconstruction baseline and adopts a
+pack-learned filter only when held-out roles prove it improves quality; roles
+that regress retain the baseline. It then normalizes each variant to the same
+47-role native contract, generates static PNG or looping APNG role previews,
+verifies the resource and manifest, and atomically installs the result under
 `~/Library/Application Support/Cursor Atelier/ImportedPacks`. Imported packs
 are revalidated by both the Electron bridge and native cursor engine before
 they are exposed or applied.
@@ -171,10 +192,12 @@ npm run lint
 npm run test:run
 python3 -m unittest discover -s native/cursor-packs -p 'test_*.py'
 python3 -m unittest discover -s native/oreo -p 'test_*.py'
+npm run curated:build
+npm run curated:verify
 npm run native:preflight
 npm run test:e2e
 ```
 
 `npm run test:e2e` rebuilds the Forge package, runs the UI suite in safe
-preview mode, and performs a read-only smoke test against the real packaged
-native bundle.
+preview mode, verifies the empty native library, and converts a pinned local
+Future source fixture inside isolated temporary user state.

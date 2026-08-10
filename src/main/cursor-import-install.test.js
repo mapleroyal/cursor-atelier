@@ -1655,7 +1655,7 @@ describe("imported cursor installation", () => {
 
   it("refuses to exceed the native imported-pack store limit", async () => {
     const data = fixture();
-    for (let index = 0; index < 256; index += 1) {
+    for (let index = 0; index < 512; index += 1) {
       fs.mkdirSync(path.join(data.store, `Existing-${index}`), { mode: 0o700 });
     }
 

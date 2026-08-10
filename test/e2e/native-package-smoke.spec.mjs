@@ -1,59 +1,46 @@
 import { chromium, expect, test } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { listPackage } from "@electron/asar";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as tar from "tar";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
+const packagedApp = path.join(
+  projectRoot,
+  "out.noindex",
+  `Cursor Atelier-darwin-${process.arch}`,
+  "Cursor Atelier.app",
+);
+const packagedExecutable = path.join(
+  packagedApp,
+  "Contents",
+  "MacOS",
+  "Cursor Atelier",
+);
+const packagedResources = path.join(packagedApp, "Contents", "Resources");
+const nativeApp = path.join(packagedResources, "Oreo Cursor.app");
+const converterExecutable = path.join(
+  packagedResources,
+  "curated-cursor-converter",
+  "curated-cursor-converter",
+);
+const outerBundleId = "com.cursoratelier.CursorAtelier";
+const profilePrefix = "cursor-atelier-native-smoke-";
+const futureRevision = "587c14d2f5bd2dc34095a4efbb1a729eb72a1d36";
 
-function loadBundledThemeIds() {
-  const manifestPath = path.join(
-    projectRoot,
-    "native",
-    "cursor-packs",
-    "generated",
-    "manifest.json",
-  );
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  const identifiers = manifest.themes?.map((theme) => theme.Identifier);
-  if (
-    manifest.schemaVersion !== 2 ||
-    !Array.isArray(identifiers) ||
-    identifiers.length !== 240 ||
-    identifiers.some(
-      (identifier) => typeof identifier !== "string" || identifier.length === 0,
-    ) ||
-    new Set(identifiers).size !== identifiers.length
-  ) {
+function requirePackagedApp() {
+  if (!fs.existsSync(packagedExecutable)) {
     throw new Error(
-      `Expected ${manifestPath} to describe 240 unique schema-v2 themes.`,
+      "No packaged Cursor Atelier executable was found. Run `npm run package` first.",
     );
   }
-  return Object.freeze(identifiers.toSorted());
-}
-
-const bundledThemeIds = loadBundledThemeIds();
-const bundledThemeIdSet = new Set(bundledThemeIds);
-
-function findPackagedExecutable() {
-  const executable = path.join(
-    projectRoot,
-    "out.noindex",
-    `Cursor Atelier-darwin-${process.arch}`,
-    "Cursor Atelier.app",
-    "Contents",
-    "MacOS",
-    "Cursor Atelier",
-  );
-  if (fs.existsSync(executable)) {
-    return executable;
-  }
-  throw new Error("No packaged Cursor Atelier executable was found.");
 }
 
 function reserveLoopbackPort() {
@@ -79,14 +66,18 @@ function reserveLoopbackPort() {
   });
 }
 
-function waitForExit(child, timeout = 7_500) {
+function waitForExit(child, timeout = 10_000, output = []) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.removeListener("exit", onExit);
-      reject(new Error("The packaged app did not exit after SIGTERM."));
+      reject(
+        new Error(
+          `The packaged app did not exit after the quit request.\n${output.join("")}`,
+        ),
+      );
     }, timeout);
     const onExit = () => {
       clearTimeout(timer);
@@ -96,124 +87,371 @@ function waitForExit(child, timeout = 7_500) {
   });
 }
 
-async function removeTemporaryUserData(directory) {
+async function removeTemporaryProfile(directory) {
   const resolvedDirectory = fs.realpathSync(directory);
   const temporaryRoot = fs.realpathSync(os.tmpdir());
   if (
     path.dirname(resolvedDirectory) !== temporaryRoot ||
-    !path.basename(resolvedDirectory).startsWith("cursor-atelier-native-smoke-")
+    !path.basename(resolvedDirectory).startsWith(profilePrefix)
   ) {
     throw new Error(`Refusing to remove unexpected path: ${resolvedDirectory}`);
   }
   await fs.promises.rm(resolvedDirectory, { recursive: true });
 }
 
+async function collectBundleEntries(root, predicate, entries = []) {
+  for (const entry of await fs.promises.readdir(root, {
+    withFileTypes: true,
+  })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isSymbolicLink()) {
+      continue;
+    }
+    if (predicate(entryPath, entry)) {
+      entries.push(entryPath);
+    }
+    if (entry.isDirectory()) {
+      await collectBundleEntries(entryPath, predicate, entries);
+    }
+  }
+  return entries;
+}
+
+async function launchPackagedApp({
+  profileDirectory,
+  environment: environmentOverrides = {},
+} = {}) {
+  requirePackagedApp();
+  const ownedProfile = !profileDirectory;
+  const profile =
+    profileDirectory ??
+    (await fs.promises.mkdtemp(path.join(os.tmpdir(), profilePrefix)));
+  const environment = { ...process.env };
+  delete environment.CURSOR_NATIVE_BRIDGE;
+  delete environment.CURSOR_PACK_MANIFEST;
+  delete environment.CURSOR_ATELIER_CURATED_ARCHIVE_ROOT;
+  environment.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION = "1";
+  environment.HOME = profile;
+  environment.CFFIXED_USER_HOME = profile;
+  Object.assign(environment, environmentOverrides);
+
+  const debuggingPort = await reserveLoopbackPort();
+  const debugUrl = `http://127.0.0.1:${debuggingPort}`;
+  const output = [];
+  const child = spawn(
+    packagedExecutable,
+    [
+      `--user-data-dir=${profile}`,
+      `--remote-debugging-port=${debuggingPort}`,
+      "--remote-debugging-address=127.0.0.1",
+    ],
+    { env: environment, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  child.stdout.on("data", (chunk) => output.push(chunk.toString()));
+  child.stderr.on("data", (chunk) => output.push(chunk.toString()));
+
+  let browser;
+  try {
+    await expect
+      .poll(
+        async () => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            throw new Error(
+              `The packaged app exited before exposing CDP.\n${output.join("")}`,
+            );
+          }
+          try {
+            const response = await fetch(`${debugUrl}/json/version`);
+            return response.ok;
+          } catch {
+            return false;
+          }
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+    browser = await chromium.connectOverCDP(debugUrl);
+    const context = browser.contexts()[0];
+    await expect.poll(() => context.pages().length).toBeGreaterThan(0);
+    const page = context.pages()[0];
+    await page.waitForLoadState("domcontentloaded");
+    await expect(page).toHaveTitle("Cursor Atelier");
+
+    return {
+      browser,
+      child,
+      environment,
+      output,
+      page,
+      profileDirectory: profile,
+      async cleanup() {
+        if (child.exitCode === null && child.signalCode === null) {
+          const quit = spawnSync(
+            "/usr/bin/osascript",
+            ["-e", `tell application id "${outerBundleId}" to quit`],
+            { encoding: "utf8", timeout: 5_000 },
+          );
+          if (quit.status !== 0) {
+            throw new Error(
+              `Could not request a normal application quit: ${quit.stderr.trim()}`,
+            );
+          }
+        }
+        await waitForExit(child, 10_000, output);
+        await browser?.close().catch(() => undefined);
+        if (ownedProfile) {
+          await removeTemporaryProfile(profile);
+        }
+      },
+    };
+  } catch (error) {
+    await browser?.close();
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+    await waitForExit(child, 10_000, output).catch(() => undefined);
+    if (ownedProfile) {
+      await removeTemporaryProfile(profile);
+    }
+    throw error;
+  }
+}
+
+async function createFutureArchiveRoot(profileDirectory) {
+  const sourceDirectory = path.join(
+    projectRoot,
+    "native",
+    "cursor-packs",
+    "sources",
+    "Future-cursors",
+  );
+  for (const requiredPath of [
+    "LICENSE",
+    "src/config",
+    "src/svg",
+    "src/svg-cyan",
+  ]) {
+    if (!fs.existsSync(path.join(sourceDirectory, requiredPath))) {
+      throw new Error(
+        "The pinned Future source cache is unavailable. Run the source acquisition step before the packaged conversion smoke.",
+      );
+    }
+  }
+
+  const archiveRoot = path.join(profileDirectory, "curated-archives");
+  await fs.promises.mkdir(archiveRoot, { recursive: true, mode: 0o700 });
+  const archivePath = path.join(archiveRoot, "future.tar.gz");
+  await tar.create(
+    {
+      cwd: sourceDirectory,
+      file: archivePath,
+      gzip: true,
+      noMtime: true,
+      portable: true,
+      prefix: `Future-cursors-${futureRevision}/`,
+    },
+    ["LICENSE", "src/config", "src/svg", "src/svg-cyan"],
+  );
+  await fs.promises.chmod(archivePath, 0o600);
+  return archiveRoot;
+}
+
+function onboardingRows(page) {
+  return page
+    .getByRole("group", { name: "Starter cursor packs" })
+    .getByRole("button");
+}
+
+async function chooseOnlyFuture(page) {
+  await page.getByRole("button", { name: "Deselect all" }).click();
+  const future = onboardingRows(page).filter({ hasText: "Future" });
+  await future.getByText("Future", { exact: true }).click();
+  await expect(future).toHaveAttribute("aria-pressed", "true");
+}
+
 test.describe("packaged native integration", () => {
   test.skip(process.platform !== "darwin", "Cursor Atelier is macOS-only.");
 
-  test("discovers the signed native bundle without changing cursors", async () => {
-    const userDataDirectory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cursor-atelier-native-smoke-"),
+  test("packages the converter but no converted cursor payload", async () => {
+    requirePackagedApp();
+    const cursorFiles = await collectBundleEntries(
+      packagedResources,
+      (entryPath, entry) =>
+        entry.isFile() && path.extname(entryPath).toLowerCase() === ".cursor",
     );
-    const environment = { ...process.env };
-    delete environment.CURSOR_NATIVE_BRIDGE;
-    delete environment.CURSOR_PACK_MANIFEST;
-    // This is a read-only discovery smoke, not a launch-at-login exercise.
-    environment.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION = "1";
-    environment.HOME = userDataDirectory;
-    environment.CFFIXED_USER_HOME = userDataDirectory;
-    const debuggingPort = await reserveLoopbackPort();
-    const debugUrl = `http://127.0.0.1:${debuggingPort}`;
-    const output = [];
-    const app = spawn(
-      findPackagedExecutable(),
-      [
-        `--user-data-dir=${userDataDirectory}`,
-        `--remote-debugging-port=${debuggingPort}`,
-        "--remote-debugging-address=127.0.0.1",
-      ],
-      { env: environment, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    app.stdout.on("data", (chunk) => output.push(chunk.toString()));
-    app.stderr.on("data", (chunk) => output.push(chunk.toString()));
-    let browser;
+    expect(cursorFiles).toEqual([]);
+    expect(
+      listPackage(path.join(packagedResources, "app.asar")).filter(
+        (entry) => path.extname(entry).toLowerCase() === ".cursor",
+      ),
+    ).toEqual([]);
+    expect(
+      fs.existsSync(path.join(nativeApp, "Contents", "Resources", "Themes")),
+    ).toBe(false);
+
+    const converterStat = fs.statSync(converterExecutable);
+    expect(converterStat.isFile()).toBe(true);
+    expect(converterStat.size).toBeGreaterThan(0);
+    expect(converterStat.mode & 0o111).not.toBe(0);
+  });
+
+  test("discovers a valid empty native library without changing cursors", async () => {
+    const launch = await launchPackagedApp();
     try {
-      await expect
-        .poll(
-          async () => {
-            if (app.exitCode !== null || app.signalCode !== null) {
-              throw new Error(
-                `The packaged app exited before exposing CDP.\n${output.join("")}`,
-              );
-            }
-            try {
-              const response = await fetch(`${debugUrl}/json/version`);
-              return response.ok;
-            } catch {
-              return false;
-            }
-          },
-          { timeout: 15_000 },
-        )
-        .toBe(true);
-      browser = await chromium.connectOverCDP(debugUrl);
-      const context = browser.contexts()[0];
-      await expect.poll(() => context.pages().length).toBeGreaterThan(0);
-      const page = context.pages()[0];
-      await page.waitForLoadState("domcontentloaded");
+      const { child, environment, page, profileDirectory } = launch;
+      await expect(
+        page.getByRole("heading", { name: "Start with any cursor packs?" }),
+      ).toBeVisible();
+      await expect(onboardingRows(page)).toHaveCount(15);
+
+      const statusBefore = await page.evaluate(() =>
+        window.electronAPI.getCursorStatus(),
+      );
+      expect(statusBefore).toMatchObject({
+        previewMode: false,
+        bridgeAvailable: true,
+        statusAvailable: true,
+        effectiveApplied: false,
+      });
+      const restoreAvailable = [
+        "desiredEnabled",
+        "persistedEffectiveApplied",
+        "effectiveApplied",
+        "launchAtLoginDesired",
+        "loginItemRegistrationCurrent",
+        "transactionPending",
+      ].some((key) => statusBefore[key] === true || statusBefore[key] === 1);
+      expect(
+        await page.evaluate(() => window.electronAPI.listCursorThemes()),
+      ).toEqual([]);
+
+      await page.getByRole("button", { name: "Deselect all" }).click();
+      await page.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(
+        page
+          .getByTestId("pack-rail-scroll")
+          .getByText("No cursor packs", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Apply", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Restore", exact: true }),
+      ).toHaveAttribute("aria-disabled", String(!restoreAvailable));
+
+      const statusAfter = await page.evaluate(() =>
+        window.electronAPI.getCursorStatus(),
+      );
+      expect({
+        effectiveApplied: statusAfter.effectiveApplied,
+        effectiveVariantId: statusAfter.effectiveVariantId,
+        selectedVariantId: statusAfter.selectedVariantId,
+      }).toEqual({
+        effectiveApplied: statusBefore.effectiveApplied,
+        effectiveVariantId: statusBefore.effectiveVariantId,
+        selectedVariantId: statusBefore.selectedVariantId,
+      });
 
       const secondInstance = spawn(
-        findPackagedExecutable(),
+        packagedExecutable,
         [
-          `--user-data-dir=${path.join(userDataDirectory, "alternate-user-data")}`,
+          `--user-data-dir=${path.join(profileDirectory, "alternate-user-data")}`,
         ],
         { env: environment, stdio: "ignore" },
       );
       await waitForExit(secondInstance, 5_000);
       expect(secondInstance.exitCode).toBe(0);
+      expect(child.exitCode).toBeNull();
+    } finally {
+      await launch.cleanup();
+    }
+  });
 
-      const status = await page.evaluate(() =>
-        window.electronAPI.getCursorStatus(),
-      );
-      expect(status).toMatchObject({
-        previewMode: false,
-        bridgeAvailable: true,
-        statusAvailable: true,
+  test("converts every Future variant locally into one collapsed family", async () => {
+    test.setTimeout(360_000);
+    const profileDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), profilePrefix),
+    );
+    let launch;
+    try {
+      const archiveRoot = await createFutureArchiveRoot(profileDirectory);
+      launch = await launchPackagedApp({
+        profileDirectory,
+        environment: {
+          CURSOR_ATELIER_CURATED_ARCHIVE_ROOT: archiveRoot,
+        },
       });
+      const { page } = launch;
+      await page.evaluate(() => {
+        window.__cursorAtelierOnboardingStates = [];
+        window.__cursorAtelierUnsubscribe =
+          window.electronAPI.onOnboardingChanged((state) => {
+            window.__cursorAtelierOnboardingStates.push(state);
+          });
+      });
+      await chooseOnlyFuture(page);
+      await page.getByRole("button", { name: "Continue", exact: true }).click();
 
+      const rail = page.getByRole("navigation", { name: "Cursor packs" });
+      const futureFamily = rail
+        .locator("button[aria-expanded]")
+        .filter({ hasText: "Future" })
+        .first();
+      await expect(futureFamily).toBeVisible();
+      await expect(futureFamily).toHaveAttribute("aria-expanded", "false");
+      await expect(rail.locator("button[data-pack-option]")).toHaveCount(0);
+
+      await expect
+        .poll(
+          async () => {
+            const state = await page.evaluate(() =>
+              window.electronAPI.getOnboardingState(),
+            );
+            return state.jobs.find((job) => job.familyId === "future")?.status;
+          },
+          { timeout: 300_000 },
+        )
+        .toMatch(/^(completed|failed)$/);
+      const state = await page.evaluate(() =>
+        window.electronAPI.getOnboardingState(),
+      );
+      const futureJob = state.jobs.find((job) => job.familyId === "future");
+      expect(
+        futureJob?.status,
+        `${futureJob?.error ?? "Future conversion failed"}\n${launch.output.join("")}`,
+      ).toBe("completed");
+      expect(futureJob?.installedVariantIds.toSorted()).toEqual([
+        "Future",
+        "FutureCyan",
+      ]);
+
+      const stateHistory = await page.evaluate(
+        () => window.__cursorAtelierOnboardingStates,
+      );
+      const futureHistory = stateHistory
+        .map((snapshot) =>
+          snapshot.jobs.find((job) => job.familyId === "future"),
+        )
+        .filter(Boolean);
+      expect(
+        futureHistory.some((job) =>
+          ["downloading", "converting", "installing"].includes(job.status),
+        ),
+      ).toBe(true);
+
+      await expect
+        .poll(() => page.evaluate(() => window.electronAPI.listCursorThemes()))
+        .toHaveLength(2);
       const themes = await page.evaluate(() =>
         window.electronAPI.listCursorThemes(),
       );
-      expect(themes.length).toBeGreaterThanOrEqual(bundledThemeIds.length);
-      expect(new Set(themes.map((theme) => theme.nativeThemeId)).size).toBe(
-        themes.length,
-      );
-      await expect(
-        page.getByRole("button", { name: /^(Apply|Reapply)$/ }),
-      ).toBeVisible();
-
-      const bundledThemes = themes.filter((theme) =>
-        bundledThemeIdSet.has(theme.nativeThemeId),
-      );
-      expect(
-        bundledThemes.map((theme) => theme.nativeThemeId).toSorted(),
-      ).toEqual(bundledThemeIds);
-      for (const theme of bundledThemes) {
+      expect(themes.map((theme) => theme.nativeThemeId).toSorted()).toEqual([
+        "Future",
+        "FutureCyan",
+      ]);
+      for (const theme of themes) {
         expect(theme).toMatchObject({
-          availability: "bundled",
-          canApply: true,
-          imported: false,
-          nativeListed: true,
-          resourceAvailable: true,
-        });
-        expect(theme.rolePreviews).toHaveLength(47);
-      }
-
-      const importedThemes = themes.filter(
-        (theme) => !bundledThemeIdSet.has(theme.nativeThemeId),
-      );
-      for (const theme of importedThemes) {
-        expect(theme).toMatchObject({
+          family: "Future",
           availability: "imported",
           canApply: true,
           imported: true,
@@ -221,224 +459,26 @@ test.describe("packaged native integration", () => {
           resourceAvailable: true,
         });
         expect(theme.rolePreviews).toHaveLength(47);
-        expect(theme.preview).toMatch(/^cursor-preview:\/\/asset\//);
       }
 
-      const animatedWait = bundledThemes
-        .find((theme) => theme.nativeThemeId === "BibataExtraModernDarkRed")
-        ?.rolePreviews.find(
-          (role) => role.macIdentifier === "com.apple.coregraphics.Wait",
-        );
-      expect(animatedWait).toMatchObject({ frameCount: 24 });
-      expect(animatedWait.frameCount * animatedWait.frameDuration).toBeCloseTo(
-        3.03,
-        2,
-      );
-      const encodedFrameDuration =
-        Math.round(animatedWait.frameDuration * 1_000) / 1_000;
-      const animation = await page.evaluate(async (source) => {
-        const response = await fetch(source);
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        const expectedSignature = [137, 80, 78, 71, 13, 10, 26, 10];
-        if (expectedSignature.some((byte, index) => bytes[index] !== byte)) {
-          throw new Error("Animated preview does not have a PNG signature.");
-        }
+      await expect(futureFamily).toHaveAttribute("aria-expanded", "false");
+      await expect(rail.locator(":scope > section")).toHaveCount(1);
+      await futureFamily.click();
+      const variants = rail.locator("button[data-pack-option]");
+      await expect(variants).toHaveCount(2);
+      await expect(variants.filter({ hasText: "Default" })).toHaveCount(1);
+      await expect(variants.filter({ hasText: "Cyan" })).toHaveCount(1);
 
-        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
-        const chunkTypes = [];
-        const frameControls = [];
-        let animationControl = null;
-        let canvas = null;
-        let offset = expectedSignature.length;
-        while (offset < bytes.length) {
-          if (offset + 12 > bytes.length) {
-            throw new Error("Truncated PNG chunk header.");
-          }
-          const length = view.getUint32(offset);
-          const type = String.fromCharCode(
-            ...bytes.slice(offset + 4, offset + 8),
-          );
-          const dataOffset = offset + 8;
-          const nextOffset = dataOffset + length + 4;
-          if (nextOffset > bytes.length) {
-            throw new Error(`Truncated ${type} PNG chunk.`);
-          }
-          chunkTypes.push(type);
-
-          if (type === "IHDR") {
-            if (length !== 13 || canvas) {
-              throw new Error("Invalid PNG image header chunk.");
-            }
-            canvas = {
-              height: view.getUint32(dataOffset + 4),
-              width: view.getUint32(dataOffset),
-            };
-          } else if (type === "acTL") {
-            if (length !== 8 || animationControl) {
-              throw new Error("Invalid APNG animation control chunk.");
-            }
-            animationControl = {
-              frameCount: view.getUint32(dataOffset),
-              playCount: view.getUint32(dataOffset + 4),
-            };
-          } else if (type === "fcTL") {
-            if (length !== 26) {
-              throw new Error("Invalid APNG frame control chunk.");
-            }
-            const delayNumerator = view.getUint16(dataOffset + 20);
-            const encodedDenominator = view.getUint16(dataOffset + 22);
-            const delayDenominator = encodedDenominator || 100;
-            frameControls.push({
-              delay: delayNumerator / delayDenominator,
-              height: view.getUint32(dataOffset + 8),
-              sequenceNumber: view.getUint32(dataOffset),
-              width: view.getUint32(dataOffset + 4),
-              xOffset: view.getUint32(dataOffset + 12),
-              yOffset: view.getUint32(dataOffset + 16),
-            });
-          }
-          offset = nextOffset;
-        }
-
-        return {
-          ok: response.ok,
-          animationControl,
-          canvas,
-          chunkTypes,
-          frameControls,
-        };
-      }, animatedWait.src);
-      expect(animation.ok).toBe(true);
-      expect(animation.animationControl).toEqual({
-        frameCount: animatedWait.frameCount,
-        playCount: 0,
-      });
-      expect(animation.canvas).toEqual({ height: 96, width: 96 });
-      expect(animation.chunkTypes[0]).toBe("IHDR");
-      expect(animation.chunkTypes.at(-1)).toBe("IEND");
-      expect(animation.chunkTypes).toContain("IDAT");
-      expect(animation.chunkTypes).toContain("fdAT");
-      expect(animation.chunkTypes.indexOf("acTL")).toBeLessThan(
-        animation.chunkTypes.indexOf("IDAT"),
+      const status = await page.evaluate(() =>
+        window.electronAPI.getCursorStatus(),
       );
-      expect(animation.frameControls).toHaveLength(animatedWait.frameCount);
-      expect(animation.frameControls[0].sequenceNumber).toBe(0);
-      for (const [index, frame] of animation.frameControls.entries()) {
-        expect(frame.height).toBeGreaterThan(0);
-        expect(frame.width).toBeGreaterThan(0);
-        expect(frame.xOffset + frame.width).toBeLessThanOrEqual(
-          animation.canvas.width,
-        );
-        expect(frame.yOffset + frame.height).toBeLessThanOrEqual(
-          animation.canvas.height,
-        );
-        expect(frame.delay).toBeCloseTo(encodedFrameDuration, 3);
-        if (index > 0) {
-          expect(frame.sequenceNumber).toBeGreaterThan(
-            animation.frameControls[index - 1].sequenceNumber,
-          );
-        }
-      }
-      expect(
-        animation.frameControls.reduce(
-          (total, frame) => total + frame.delay,
-          0,
-        ),
-      ).toBeCloseTo(animatedWait.frameCount * encodedFrameDuration, 3);
-      await page.evaluate(
-        (source) =>
-          new Promise((resolve, reject) => {
-            const image = document.createElement("img");
-            image.dataset.animationSmoke = "true";
-            image.alt = "Animated cursor playback smoke test";
-            image.style.cssText =
-              "position:fixed;left:0;top:0;width:96px;height:96px;background:white;z-index:2147483647";
-            image.onload = resolve;
-            image.onerror = () =>
-              reject(new Error("APNG preview did not load."));
-            image.src = source;
-            document.body.append(image);
-          }),
-        animatedWait.src,
-      );
-      const animatedImage = page.locator('img[data-animation-smoke="true"]');
-      const playbackFrameA = await animatedImage.screenshot();
-      await page.waitForTimeout(encodedFrameDuration * 1_000 * 5);
-      const playbackFrameB = await animatedImage.screenshot();
-      expect(playbackFrameA.equals(playbackFrameB)).toBe(false);
-      await animatedImage.evaluate((image) => image.remove());
-      const previewSources = [
-        "OreoWhite",
-        "BibataModernClassic",
-        "MogaClassic",
-        "Qogir",
-        "Nordzy",
-      ].map(
-        (identifier) =>
-          themes.find((theme) => theme.nativeThemeId === identifier)?.preview,
-      );
-      expect(previewSources).toEqual(
-        previewSources.map(() =>
-          expect.stringMatching(/^cursor-preview:\/\/asset\//),
-        ),
-      );
-      const decodedPreviews = await page.evaluate(
-        (sources) =>
-          Promise.all(
-            sources.map(
-              (source) =>
-                new Promise((resolve) => {
-                  const image = new Image();
-                  image.onload = () =>
-                    resolve({
-                      height: image.naturalHeight,
-                      loaded: true,
-                      width: image.naturalWidth,
-                    });
-                  image.onerror = () => resolve({ loaded: false });
-                  image.src = source;
-                }),
-            ),
-          ),
-        previewSources,
-      );
-      for (const preview of decodedPreviews) {
-        expect(preview).toMatchObject({
-          height: 96,
-          loaded: true,
-          width: 96,
-        });
-      }
-
-      await page.waitForFunction(() =>
-        [...document.querySelectorAll("figure img")]
-          .slice(0, 5)
-          .every((image) => image.complete && image.naturalWidth > 0),
-      );
-      const rolePreviewLayout = await page.evaluate(() =>
-        [...document.querySelectorAll("figure img")]
-          .slice(0, 5)
-          .map((image) => {
-            const bounds = image.getBoundingClientRect();
-            return {
-              naturalWidth: image.naturalWidth,
-              physicalWidth: bounds.width * window.devicePixelRatio,
-            };
-          }),
-      );
-      expect(rolePreviewLayout).toHaveLength(5);
-      for (const preview of rolePreviewLayout) {
-        expect(preview.naturalWidth).toBeGreaterThanOrEqual(
-          preview.physicalWidth,
-        );
-      }
+      expect(status.effectiveApplied).toBe(false);
     } finally {
-      await browser?.close();
-      if (app.exitCode === null && app.signalCode === null) {
-        app.kill("SIGTERM");
+      try {
+        await launch?.cleanup();
+      } finally {
+        await removeTemporaryProfile(profileDirectory);
       }
-      await waitForExit(app);
-      await removeTemporaryUserData(userDataDirectory);
     }
   });
 });

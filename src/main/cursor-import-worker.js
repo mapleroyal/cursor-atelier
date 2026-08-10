@@ -14,8 +14,17 @@ function serializedError(error) {
   };
 }
 
-void importCursorSource(workerData).then(
-  (result) => parentPort?.postMessage({ ok: true, result }),
+void importCursorSource({
+  ...workerData,
+  onProgress(progress) {
+    parentPort?.postMessage({ type: "progress", progress });
+  },
+}).then(
+  (result) => parentPort?.postMessage({ type: "result", ok: true, result }),
   (error) =>
-    parentPort?.postMessage({ ok: false, error: serializedError(error) }),
+    parentPort?.postMessage({
+      type: "result",
+      ok: false,
+      error: serializedError(error),
+    }),
 );

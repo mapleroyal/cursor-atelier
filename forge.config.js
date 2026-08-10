@@ -8,6 +8,7 @@ const {
 } = require("@electron-forge/plugin-auto-unpack-natives");
 const { FuseV1Options, FuseVersion } = require("@electron/fuses");
 const productVersion = require("./package.json").version;
+const curatedFamilyCatalog = require("./native/cursor-packs/curated-family-catalog.json");
 
 const rootDirectory = __dirname;
 // A packaged app is only a staging artifact. Keep it out of Spotlight so it
@@ -28,6 +29,18 @@ const nativeAppPath = path.join(
   "build",
   "Release",
   nativeAppName,
+);
+const curatedConverterDirectory = path.join(
+  rootDirectory,
+  "native",
+  "cursor-packs",
+  "build",
+  "curated-converter",
+  "curated-cursor-converter",
+);
+const curatedConverterPath = path.join(
+  curatedConverterDirectory,
+  "curated-cursor-converter",
 );
 const electronEntitlementsPath = path.join(
   rootDirectory,
@@ -100,6 +113,34 @@ function hasMatchingFile(directory, predicate) {
     }
   }
   return false;
+}
+
+function verifyCuratedConverter(executable, arch) {
+  if (!fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
+    throw new Error("The curated source converter is missing.");
+  }
+  fs.accessSync(executable, fs.constants.X_OK);
+  const expectedArchitecture = arch === "x64" ? "x86_64" : arch;
+  const architectures = execFileSync("/usr/bin/lipo", ["-archs", executable], {
+    encoding: "utf8",
+  })
+    .trim()
+    .split(/\s+/);
+  if (architectures.length !== 1 || architectures[0] !== expectedArchitecture) {
+    throw new Error("The curated source converter has the wrong architecture.");
+  }
+  const result = JSON.parse(
+    execFileSync(executable, ["self-test"], { encoding: "utf8" }).trim(),
+  );
+  if (
+    result.type !== "self-test" ||
+    result.ok !== true ||
+    result.themeCount !== 240 ||
+    result.roleCount !== 47 ||
+    result.catalogSha256 !== curatedFamilyCatalog.sha256
+  ) {
+    throw new Error("The curated source converter failed its self-test.");
+  }
 }
 
 function removeUnusedElectronMetadata(
@@ -254,6 +295,14 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
         "The packaged cursor importer is missing a required unpacked native dependency.",
       );
     }
+    const packagedConverter = path.join(
+      appPath,
+      "Contents",
+      "Resources",
+      "curated-cursor-converter",
+      "curated-cursor-converter",
+    );
+    verifyCuratedConverter(packagedConverter, arch);
     const packagedNativeApp = path.join(
       appPath,
       "Contents",
@@ -271,10 +320,26 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
       errorOnExist: true,
       force: false,
     });
-    // Electron Packager signs the Electron code graph before this large native
-    // resource is staged. Re-sealing only the outer bundle preserves the
-    // native app/helper's stable ServiceManagement signature and avoids asking
-    // osx-sign to inspect thousands of non-code preview PNGs.
+    const packagedThemes = path.join(
+      packagedNativeApp,
+      "Contents",
+      "Resources",
+      "Themes",
+    );
+    if (
+      fs.existsSync(packagedThemes) ||
+      hasMatchingFile(
+        appPath,
+        (filePath) => path.extname(filePath).toLowerCase() === ".cursor",
+      )
+    ) {
+      throw new Error(
+        "The packaged app unexpectedly contains bundled cursor payloads.",
+      );
+    }
+    // Electron Packager signs the Electron code graph before the resident
+    // native app is staged. Re-sealing only the outer bundle preserves the
+    // native app/helper's stable ServiceManagement signature.
     execFileSync(
       "/usr/bin/codesign",
       [
@@ -366,9 +431,11 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
     const outerSignature = codesignDetails(appPath);
     const nativeSignature = codesignDetails(packagedNativeApp);
     const helperSignature = codesignDetails(packagedHelperApp);
+    const converterSignature = codesignDetails(packagedConverter);
     const outerAuthority = codesignAuthority(outerSignature);
     const nativeAuthority = codesignAuthority(nativeSignature);
     const helperAuthority = codesignAuthority(helperSignature);
+    const converterAuthority = codesignAuthority(converterSignature);
     const outerTeamIdentifier = codesignTeamIdentifier(outerSignature);
     const nativeTeamIdentifier = codesignTeamIdentifier(nativeSignature);
     const helperTeamIdentifier = codesignTeamIdentifier(helperSignature);
@@ -381,6 +448,11 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
     ) {
       throw new Error(
         "The outer application does not have the stable native-app signing identity.",
+      );
+    }
+    if (!converterAuthority || converterAuthority !== nativeAuthority) {
+      throw new Error(
+        "The curated source converter has an inconsistent signing identity.",
       );
     }
     if (
@@ -466,6 +538,12 @@ function runPackagePreflight() {
     [path.join(rootDirectory, "scripts", "native-preflight.mjs")],
     { cwd: rootDirectory, stdio: "inherit" },
   );
+  execFileSync(
+    path.join(rootDirectory, "scripts", "build-curated-converter.sh"),
+    [],
+    { cwd: rootDirectory, stdio: "inherit" },
+  );
+  verifyCuratedConverter(curatedConverterPath, process.arch);
 }
 
 module.exports = {
@@ -520,6 +598,7 @@ module.exports = {
     extraResource: [
       path.join(rootDirectory, "assets", "MenuBarIconTemplate.png"),
       path.join(rootDirectory, "assets", "MenuBarIconTemplate@2x.png"),
+      curatedConverterDirectory,
     ],
     afterCopyExtraResources: [removeUnusedElectronMetadata],
   },

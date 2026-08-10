@@ -1,9 +1,13 @@
 # Cursor pack provenance
 
-The personal local bundle contains 240 cursor variants: 19 Oreo resources and
-221 conversions from the requested external sources. Repositories and
-GNOME-Look archives are pinned build inputs in an ignored acquisition cache;
-they are not copied into Electron and are never downloaded at runtime.
+Cursor Atelier's curated catalogue describes 240 variants: 19 Oreo themes and
+221 themes from the external sources below. The signed app does not contain
+their installable `.cursor` resources or the upstream source archives. It
+contains the conversion runtime, locked source metadata, and three small
+representative preview images per family. When a user chooses a family, the app
+downloads its pinned original upstream input, verifies it, converts every
+variant locally, installs the results in the user's private library, and then
+removes the verified source cache after a successful conversion.
 
 The variant count and license identifiers below match the schema-v2 manifest.
 
@@ -39,7 +43,8 @@ Git revisions, consumed asset roots, and license files are locked by
 provenance notes. Each generated manifest row retains its author, source URL,
 license identifier/URL, stable UUID, resource digest, and upstream variant.
 
-This milestone is for personal use. A future distributable build would need a
-separate redistribution review—particularly for converted CC BY-NC-ND
-artwork—and a complete, license-appropriate source/notice bundle. That work is
-deliberately deferred and does not block local use.
+The GNOME-Look licenses still apply to the downloaded artwork, locally
+converted resources, and representative preview images. Downloading and local
+conversion do not turn CC BY-NC-ND material into open-source artwork or remove
+its noncommercial/no-derivatives restrictions. Any public distribution must
+review those seven packs and the bundled representative previews separately.

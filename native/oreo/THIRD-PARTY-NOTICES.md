@@ -1,13 +1,15 @@
 # Third-party notices
 
-This notice accompanies Cursor Atelier's nested native runtime. The current
-personal bundle contains 19 Oreo resources and 221 generated external
-resources. Exact per-variant author, source, upstream label, license URL, UUID,
-and SHA-256 values are recorded in the schema-v2 manifest.
+This notice accompanies Cursor Atelier's native runtime. The signed app does
+not contain the 240 installable cursor resources or the original upstream
+archives. The outer app carries a self-contained conversion runtime, locked
+source metadata, and three small representative preview images per family. It
+downloads a selected family's pinned original source, verifies it, and creates
+the installable resources locally on the user's Mac.
 
 ## Oreo cursors
 
-The 19 files originating in `Resources/Themes/` are macOS conversions of the
+The 19 curated Oreo themes are macOS conversions of the
 [Oreo cursor artwork](https://github.com/varlesh/oreo-cursors) by Alexey
 Varfolomeev (`varlesh`), with generator colors by Sourav Goswami.
 
@@ -29,9 +31,10 @@ The vendored source snapshot also includes 19 generated SVG color directories
 from `generator/colours.conf`; its `index.theme` comment was normalized to
 remove a workstation path.
 
-Reproduce the 19 resources, then validate them from the repository root with
-`npm run native:preflight`. The canonical catalog is
-`native/oreo/Resources/Themes/catalog.json`.
+The source-specific runtime recipe reproduces the same 19 resources. The
+canonical metadata remains in `native/oreo/Resources/Themes/catalog.json`, but
+`native/oreo/build.sh` deliberately stages no Themes payload in the signed
+native app.
 
 ```sh
 ArtworkSource/generate_all_themes.sh Resources/Themes
@@ -41,10 +44,10 @@ npm run native:preflight
 
 ## Generated external cursor packs
 
-`native/cursor-packs/build_all.py` generates 221 resources from pinned
-upstream inputs. These are format conversions produced for Cursor Atelier;
-they do not include the upstream Linux installation scripts in the runtime
-bundle.
+`native/cursor-packs/build_all.py` defines source-specific recipes for 221
+resources. The released converter runs only the selected recipes against
+verified upstream input; neither the generated resources nor upstream Linux
+installation scripts are bundled in the app.
 
 - Remus (3), Drop (4), and Moga Classic/Candy/Colors/Neon/Light (16 total):
   MOYASH/Moyash GNOME-Look artwork, whose embedded ReadMe files specify CC
@@ -60,18 +63,19 @@ license-file locations are recorded under `native/cursor-packs/sources`.
 `CURSOR_PACK_NOTICES.md` is the concise family-level map. Upstream author names
 and source URLs are retained as provenance.
 
-The GNOME archive license restricts derivatives and redistribution. This
-project records that restriction without reinterpreting it. The current work
-is a personal local build; permission/review and a complete distributable
-notice/source corpus are intentionally deferred release gates.
+The GNOME archive license restricts derivatives and commercial use. Runtime
+download and local conversion do not remove those restrictions. Public
+distribution must separately review the seven GNOME-Look packs and the small
+representative preview images bundled for their onboarding rows.
 
 ## License map
 
 - MIT: Cursor Atelier application/helper code, build and conversion scripts,
   and project documentation.
-- GPL-2.0-only: the complete vendored Oreo artwork tree, generated Oreo SVG
-  variants, and converted Oreo resources.
-- External resources: the licenses listed above and in their manifest rows.
+- GPL-2.0-only: the vendored developer-source Oreo artwork tree and locally
+  generated Oreo resources.
+- External artwork and local conversions: the licenses listed above and in
+  their manifest rows.
 
 ## MaCursor research
 

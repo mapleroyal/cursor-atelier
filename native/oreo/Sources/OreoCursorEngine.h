@@ -51,8 +51,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (nullable NSURL *)themePreviewURLForTheme:
     (NSDictionary<NSString *, id> *)theme;
 
-/// Returns the saved allowlisted theme, defaulting to the catalog's declared
-/// theme in the main bundle.
+/// Returns the saved syntactically safe theme, defaulting to the first
+/// currently available bundled or installed theme in the main bundle.
 + (NSString *)selectedThemeIdentifier;
 
 /// Equivalent lookup using an explicit resource bundle. The embedded login

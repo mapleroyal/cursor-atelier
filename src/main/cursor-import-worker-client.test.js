@@ -62,6 +62,45 @@ describe("cursor import worker client", () => {
     });
   });
 
+  it("forwards progress without attempting to clone its callback", async () => {
+    const onProgress = vi.fn();
+    const importing = importCursorSourceInWorker(
+      {
+        sourcePath: "/source",
+        stagingDirectory: "/staging",
+        trustedMetadata: { catalogId: "trusted-pack" },
+        onProgress,
+      },
+      {
+        WorkerConstructor: FakeWorker,
+        workerPath: "/build/cursor-import-worker.js",
+      },
+    );
+
+    expect(FakeWorker.instance.options).toEqual({
+      workerData: {
+        sourcePath: "/source",
+        stagingDirectory: "/staging",
+        trustedMetadata: { catalogId: "trusted-pack" },
+      },
+    });
+    FakeWorker.instance.emit("message", {
+      type: "progress",
+      progress: { phase: "converting", progress: 0.55 },
+    });
+    expect(onProgress).toHaveBeenCalledWith({
+      phase: "converting",
+      progress: 0.55,
+    });
+
+    FakeWorker.instance.emit("message", {
+      type: "result",
+      ok: true,
+      result: { artifactCount: 1 },
+    });
+    await expect(importing).resolves.toEqual({ artifactCount: 1 });
+  });
+
   it("terminates and rejects a worker that never replies", async () => {
     let timeoutCallback;
     const timeoutHandle = { unref: vi.fn() };

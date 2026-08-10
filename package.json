@@ -12,6 +12,8 @@
     "native:packs": "python3 native/cursor-packs/build_all.py",
     "native:build": "native/oreo/build.sh",
     "native:preflight": "node scripts/native-preflight.mjs",
+    "curated:build": "scripts/build-curated-converter.sh",
+    "curated:verify": "native/cursor-packs/build/curated-converter/curated-cursor-converter/curated-cursor-converter self-test",
     "icon:build": "scripts/build-icon.sh",
     "format": "prettier --write .",
     "lint": "eslint .",

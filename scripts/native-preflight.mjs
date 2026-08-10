@@ -12,12 +12,6 @@ const projectRoot = path.resolve(
 const packageJson = JSON.parse(
   fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
 );
-const inventoryLock = JSON.parse(
-  fs.readFileSync(
-    path.join(projectRoot, "native", "cursor-packs", "inventory-lock.json"),
-    "utf8",
-  ),
-);
 const nativeApp = path.join(
   projectRoot,
   "native",
@@ -44,12 +38,18 @@ const appInfo = path.join(contents, "Info.plist");
 const brandMarkSource = path.join(projectRoot, "assets", "BrandMark.svg");
 const bundledBrandMark = path.join(contents, "Resources", "BrandMark.svg");
 const themesDirectory = path.join(contents, "Resources", "Themes");
-const manifestPath = path.join(themesDirectory, "manifest.json");
-const builtInCatalogPath = path.join(themesDirectory, "catalog.json");
+const sourceThemesDirectory = path.join(
+  projectRoot,
+  "native",
+  "oreo",
+  "Resources",
+  "Themes",
+);
+const sourceCatalogPath = path.join(sourceThemesDirectory, "catalog.json");
 
 function fail(message) {
   throw new Error(
-    `${message}\nRun \`npm run native:packs\`, then \`OREO_SIGN_IDENTITY="<Apple Development identity>" npm run native:build\`.`,
+    `${message}\nRun \`OREO_SIGN_IDENTITY="<Apple Development identity>" npm run native:build\`.`,
   );
 }
 
@@ -61,43 +61,17 @@ function plistValue(plist, key) {
   ).trim();
 }
 
-function safeManifestAsset(relativePath, extension) {
-  if (
-    typeof relativePath !== "string" ||
-    !relativePath ||
-    path.isAbsolute(relativePath) ||
-    relativePath.includes("\0") ||
-    path.extname(relativePath).toLocaleLowerCase() !== extension
-  ) {
-    return null;
-  }
-  const resolved = path.resolve(themesDirectory, relativePath);
-  const relative = path.relative(themesDirectory, resolved);
-  if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    return null;
-  }
-  try {
-    const canonicalRoot = fs.realpathSync(themesDirectory);
-    const canonicalFile = fs.realpathSync(resolved);
-    const canonicalRelative = path.relative(canonicalRoot, canonicalFile);
-    if (
-      canonicalRelative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(canonicalRelative)
-    ) {
-      return null;
+function regularFilesWithin(directory) {
+  const files = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...regularFilesWithin(entryPath));
+    } else if (entry.isFile()) {
+      files.push(entryPath);
     }
-    return canonicalFile;
-  } catch {
-    return null;
   }
-}
-
-function identifierDigest(identifiers) {
-  const payload = [...identifiers]
-    .sort()
-    .map((identifier) => `${identifier}\n`)
-    .join("");
-  return crypto.createHash("sha256").update(payload).digest("hex");
+  return files;
 }
 
 function withIsolatedNativeUserState(callback) {
@@ -133,9 +107,6 @@ try {
   fs.accessSync(bridge, fs.constants.X_OK);
 } catch {
   fail("The native cursor bridge is missing or is not executable.");
-}
-if (!fs.existsSync(manifestPath)) {
-  fail("The generated cursor manifest is missing from the native bundle.");
 }
 if (
   !fs.existsSync(brandMarkSource) ||
@@ -229,158 +200,125 @@ if (
   );
 }
 
-const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-const builtInCatalog = JSON.parse(fs.readFileSync(builtInCatalogPath, "utf8"));
-if (Number(manifest.schemaVersion) < 2 || !Array.isArray(manifest.themes)) {
-  fail("The native bundle requires a schema-v2 generated manifest.");
-}
-if (
-  builtInCatalog.schemaVersion !== 1 ||
-  typeof builtInCatalog.family !== "string" ||
-  typeof builtInCatalog.defaultThemeId !== "string" ||
-  !Array.isArray(builtInCatalog.themes)
-) {
-  fail("The native bundle requires a schema-v1 built-in catalog.");
-}
-if (
-  inventoryLock.schemaVersion !== 1 ||
-  inventoryLock.externalThemeCount !== 221 ||
-  inventoryLock.builtInThemeCount !== 19 ||
-  inventoryLock.unifiedThemeCount !== 240 ||
-  inventoryLock.roleCount !== 47
-) {
-  fail("The checked-in cursor inventory lock is inconsistent.");
-}
-if (
-  manifest.themes.length !== inventoryLock.unifiedThemeCount ||
-  manifest.roleCount !== inventoryLock.roleCount
-) {
-  fail("The bundled cursor manifest does not match the locked corpus shape.");
-}
-const manifestIdentifiers = manifest.themes.map(
-  (theme) => theme.Identifier ?? theme.identifier,
+const nativePayloadFiles = regularFilesWithin(nativeApp).filter(
+  (filePath) => path.extname(filePath).toLowerCase() === ".cursor",
 );
-const builtInIdentifiers = manifest.themes
-  .filter((theme) => (theme.Group ?? theme.group) === builtInCatalog.family)
-  .map((theme) => theme.Identifier ?? theme.identifier);
-const externalIdentifiers = manifest.themes
-  .filter((theme) => (theme.Group ?? theme.group) !== builtInCatalog.family)
-  .map((theme) => theme.Identifier ?? theme.identifier);
-const catalogIdentifiers = builtInCatalog.themes.map(
-  (theme) => theme.nativeThemeId,
-);
-if (
-  builtInIdentifiers.length !== inventoryLock.builtInThemeCount ||
-  externalIdentifiers.length !== inventoryLock.externalThemeCount ||
-  catalogIdentifiers.length !== inventoryLock.builtInThemeCount ||
-  !catalogIdentifiers.includes(builtInCatalog.defaultThemeId) ||
-  JSON.stringify([...builtInIdentifiers].sort()) !==
-    JSON.stringify([...catalogIdentifiers].sort()) ||
-  identifierDigest(externalIdentifiers) !==
-    inventoryLock.externalIdentifierSHA256 ||
-  identifierDigest(manifestIdentifiers) !==
-    inventoryLock.unifiedIdentifierSHA256
-) {
-  fail("The bundled cursor identifiers differ from the locked inventory.");
-}
-const identifiers = new Set();
-const resources = new Set();
-for (const theme of manifest.themes) {
-  const identifier = theme.Identifier ?? theme.identifier;
-  const resource = theme.Resource ?? theme.resource;
-  if (!identifier || identifiers.has(identifier)) {
-    fail("The generated manifest contains a missing or duplicate theme ID.");
-  }
-  if (!resource || resources.has(resource)) {
-    fail("The generated manifest contains a missing or duplicate resource.");
-  }
-  identifiers.add(identifier);
-  resources.add(resource);
-
-  const resourcePath = safeManifestAsset(resource, ".cursor");
-  if (!resourcePath || !fs.existsSync(resourcePath)) {
-    fail(`The resource for ${identifier} is missing or escapes the bundle.`);
-  }
-  const actualDigest = crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(resourcePath))
-    .digest("hex");
-  if (
-    actualDigest !== String(theme.SHA256 ?? theme.sha256 ?? "").toLowerCase()
-  ) {
-    fail(`The resource digest for ${identifier} is stale.`);
-  }
-
-  if (
-    !Array.isArray(theme.rolePreviews) ||
-    theme.rolePreviews.length !== inventoryLock.roleCount
-  ) {
-    fail(`${identifier} does not have the required role previews.`);
-  }
-  const previewAssets = [
-    theme.preview,
-    ...theme.rolePreviews.map((preview) => preview.asset ?? preview.src),
-  ];
-  for (const preview of previewAssets) {
-    const previewPath = safeManifestAsset(preview, ".png");
-    if (!previewPath || !fs.existsSync(previewPath)) {
-      fail(`A preview asset for ${identifier} is missing or unsafe.`);
-    }
-  }
+if (fs.existsSync(themesDirectory) || nativePayloadFiles.length > 0) {
+  fail("The signed native app contains bundled cursor or preview payloads.");
 }
 
-const bundledCursorCount = fs
-  .readdirSync(themesDirectory, { withFileTypes: true })
-  .filter((entry) => entry.isFile() && entry.name.endsWith(".cursor")).length;
-const nativeValidation = withIsolatedNativeUserState((environment) => ({
-  listedThemes: JSON.parse(
-    execFileSync(bridge, ["--list-themes"], {
+function runBridge(arguments_, environment, timeout = 30_000) {
+  return JSON.parse(
+    execFileSync(bridge, arguments_, {
       encoding: "utf8",
-      timeout: 15_000,
-      maxBuffer: 4 * 1024 * 1024,
-      env: environment,
-    }),
-  ),
-  validation: JSON.parse(
-    execFileSync(bridge, ["--validate-themes"], {
-      encoding: "utf8",
-      timeout: 90_000,
+      timeout,
       maxBuffer: 8 * 1024 * 1024,
       env: environment,
     }),
-  ),
-  fallbackValidation: JSON.parse(
-    execFileSync(bridge, ["--validate-system-fallbacks"], {
-      encoding: "utf8",
-      timeout: 30_000,
-      maxBuffer: 4 * 1024 * 1024,
-      env: environment,
-    }),
-  ),
-}));
-const { listedThemes, validation, fallbackValidation } = nativeValidation;
-if (
-  !Array.isArray(listedThemes) ||
-  listedThemes.length !== bundledCursorCount ||
-  listedThemes.length !== manifest.themes.length
-) {
-  fail(
-    "The native allowlist, manifest, and bundled resources are inconsistent.",
   );
 }
 
+const cleanValidation = withIsolatedNativeUserState((environment) => ({
+  listedThemes: runBridge(["--list-themes"], environment, 15_000),
+  validation: runBridge(["--validate-themes"], environment, 30_000),
+  fallbackValidation: runBridge(
+    ["--validate-system-fallbacks"],
+    environment,
+    30_000,
+  ),
+}));
 if (
-  !validation.valid ||
-  validation.invalidCount !== 0 ||
-  validation.themeCount !== listedThemes.length
+  !Array.isArray(cleanValidation.listedThemes) ||
+  cleanValidation.listedThemes.length !== 0 ||
+  !cleanValidation.validation.valid ||
+  cleanValidation.validation.invalidCount !== 0 ||
+  cleanValidation.validation.themeCount !== 0
 ) {
-  fail("Native cursor resource validation failed.");
+  fail("A clean native installation must expose a valid empty theme library.");
 }
-
-if (!fallbackValidation.valid) {
+if (!cleanValidation.fallbackValidation.valid) {
   fail("Apple cursor fallback validation failed.");
 }
 
+const sourceCatalog = JSON.parse(fs.readFileSync(sourceCatalogPath, "utf8"));
+const sourceFixture = sourceCatalog.themes?.find(
+  (theme) => theme.nativeThemeId === sourceCatalog.defaultThemeId,
+);
+const sourceFixturePath = sourceFixture
+  ? path.join(sourceThemesDirectory, sourceFixture.resourceFile)
+  : null;
+if (
+  !sourceFixture ||
+  !sourceFixturePath ||
+  !fs.existsSync(sourceFixturePath) ||
+  crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(sourceFixturePath))
+    .digest("hex") !== sourceFixture.sha256
+) {
+  fail("The native import preflight fixture is missing or stale.");
+}
+
+const importedValidation = withIsolatedNativeUserState((environment) => {
+  const dataDirectory = path.join(
+    environment.HOME,
+    "Library",
+    "Application Support",
+    "Cursor Atelier",
+  );
+  const importedDirectory = path.join(dataDirectory, "ImportedPacks");
+  const packDirectory = path.join(importedDirectory, "native-preflight");
+  fs.mkdirSync(packDirectory, { recursive: true, mode: 0o700 });
+  for (const directory of [dataDirectory, importedDirectory, packDirectory]) {
+    fs.chmodSync(directory, 0o700);
+  }
+  const resourcePath = path.join(packDirectory, sourceFixture.resourceFile);
+  fs.copyFileSync(sourceFixturePath, resourcePath, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(resourcePath, 0o600);
+  const manifestPath = path.join(packDirectory, "manifest.json");
+  fs.writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      schemaVersion: 2,
+      themes: [
+        {
+          Identifier: sourceFixture.nativeThemeId,
+          DisplayName: sourceFixture.name,
+          Resource: sourceFixture.resourceFile,
+          SHA256: sourceFixture.sha256,
+          UUID: sourceFixture.uuid,
+          ThemeName: sourceFixture.plistName,
+          Group: "Preflight",
+        },
+      ],
+    })}\n`,
+    { encoding: "utf8", mode: 0o600, flag: "wx" },
+  );
+  return {
+    listedThemes: runBridge(["--list-themes"], environment, 30_000),
+    validation: runBridge(["--validate-themes"], environment, 90_000),
+    directValidation: runBridge(
+      ["--validate-theme", sourceFixture.nativeThemeId],
+      environment,
+      90_000,
+    ),
+  };
+});
+if (
+  !Array.isArray(importedValidation.listedThemes) ||
+  importedValidation.listedThemes.length !== 1 ||
+  importedValidation.listedThemes[0].Identifier !==
+    sourceFixture.nativeThemeId ||
+  importedValidation.listedThemes[0].ImportedPackIdentifier !==
+    "native-preflight" ||
+  !importedValidation.validation.valid ||
+  importedValidation.validation.invalidCount !== 0 ||
+  importedValidation.validation.themeCount !== 1 ||
+  !importedValidation.directValidation.valid
+) {
+  fail("An installed theme did not enumerate and fully validate on demand.");
+}
+
 console.warn(
-  `Native preflight passed: ${listedThemes.length} manifest themes, signed bridge ${packageJson.version} (${nativeBuildVersion}).`,
+  `Native preflight passed: zero bundled themes, imported-theme validation, signed bridge ${packageJson.version} (${nativeBuildVersion}).`,
 );

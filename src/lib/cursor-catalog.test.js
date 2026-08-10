@@ -131,6 +131,30 @@ describe("cursor catalogue", () => {
     });
   });
 
+  it("exposes only valid curated-source resume markers", () => {
+    const digest = "a".repeat(64);
+    const normalized = normalizeCursorTheme({
+      Identifier: "Future",
+      CuratedFamilyId: "future",
+      SourceFormat: "curated-source",
+      CuratedCatalogSHA256: digest,
+    });
+
+    expect(normalized).toMatchObject({
+      curatedFamilyId: "future",
+      sourceFormat: "curated-source",
+      curatedCatalogSha256: digest,
+    });
+    expect(
+      normalizeCursorTheme({
+        Identifier: "Future",
+        CuratedFamilyId: "not valid",
+        SourceFormat: "xcursor-archive",
+        CuratedCatalogSHA256: "short",
+      }),
+    ).not.toHaveProperty("curatedFamilyId");
+  });
+
   it("does not expose raw role-preview manifest fields", () => {
     const [role] = normalizeRolePreviews([
       {

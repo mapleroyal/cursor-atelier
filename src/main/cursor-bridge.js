@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 
 import {
   CURSOR_CATALOG,
-  DEFAULT_CURSOR_NATIVE_THEME_ID,
   getCursorCatalogEntry,
   normalizeCursorTheme,
 } from "../lib/cursor-catalog.js";
@@ -35,8 +34,8 @@ const UUID_PATTERN =
 const SAFE_RESOURCE_PATTERN = /^[A-Za-z0-9._-]{7,192}$/;
 const SAFE_PATH_COMPONENT_PATTERN = /^[A-Za-z0-9._-]{1,192}$/;
 // Keep the shared artifact boundary in lockstep with OreoCursorEngine.m.
-const MAX_IMPORTED_DIRECTORY_ENTRIES = 512;
-const MAX_IMPORTED_PACKS = 256;
+const MAX_IMPORTED_DIRECTORY_ENTRIES = 576;
+const MAX_IMPORTED_PACKS = 512;
 const MAX_IMPORTED_THEMES_PER_PACK = 64;
 const MAX_IMPORTED_THEMES = 512;
 const MAX_IMPORTED_MANIFEST_BYTES = 16 * 1024 * 1024;
@@ -162,7 +161,7 @@ function requiredThemeIdentifierAlias(object, keys) {
     const value = object[key];
     if (
       typeof value !== "string" ||
-      !IDENTIFIER_PATTERN.test(value) ||
+      (value !== "" && !IDENTIFIER_PATTERN.test(value)) ||
       (result !== null && result !== value)
     ) {
       return null;
@@ -209,7 +208,7 @@ function requiredNativeStatus(raw) {
     "nativeThemeId",
     "NativeThemeID",
   ]);
-  if (!selectedThemeIdentifier) {
+  if (selectedThemeIdentifier === null) {
     return null;
   }
   result.selectedThemeIdentifier = selectedThemeIdentifier;
@@ -1040,6 +1039,9 @@ function canonicalThemeDto(theme) {
     tags: Array.isArray(theme.tags) ? [...theme.tags] : [],
     sha256: theme.sha256,
     uuid: theme.uuid,
+    curatedFamilyId: theme.curatedFamilyId ?? null,
+    sourceFormat: theme.sourceFormat ?? null,
+    curatedCatalogSha256: theme.curatedCatalogSha256 ?? null,
     imported: Boolean(theme.imported),
     importedPackIdentifier: theme.importedPackIdentifier ?? null,
     sizePercentage: theme.sizePercentage,
@@ -1544,10 +1546,10 @@ export function createCursorBridge({
       return unavailableNativeStatus();
     }
     ensureManifestIndex();
-    const selectedNativeThemeId = nativeStatus.selectedThemeIdentifier;
+    const selectedNativeThemeId = nativeStatus.selectedThemeIdentifier || null;
     const selectedVariantId = selectedNativeThemeId
       ? catalogIdentifier(selectedNativeThemeId)
-      : fallbackState.selectedVariantId;
+      : null;
     const {
       currentSentinelsMatchTheme,
       desiredEnabled,
@@ -1579,11 +1581,13 @@ export function createCursorBridge({
       firstThemeValue(raw, ["themeSizePercentage", "ThemeSizePercentage"]),
       DEFAULT_THEME_SIZE_PERCENTAGE,
     );
-    const themeDisplayName = String(
-      firstThemeValue(raw, ["themeDisplayName", "ThemeDisplayName"]) ??
-        selectedTheme?.displayName ??
-        "",
-    );
+    const themeDisplayName = selectedNativeThemeId
+      ? String(
+          firstThemeValue(raw, ["themeDisplayName", "ThemeDisplayName"]) ??
+            selectedTheme?.displayName ??
+            "",
+        )
+      : null;
     fallbackState = {
       ...fallbackState,
       schemaVersion: CURSOR_DTO_SCHEMA_VERSION,
@@ -1755,17 +1759,7 @@ export function createCursorBridge({
       return result;
     }
 
-    return CURSOR_CATALOG.map((theme) =>
-      canonicalThemeDto({
-        ...theme,
-        sizePercentage: DEFAULT_THEME_SIZE_PERCENTAGE,
-        resourceAvailable: Boolean(theme.availability === "bundled"),
-        resourceInstalled: Boolean(theme.availability === "bundled"),
-        canApply: false,
-        nativeListed: false,
-        status: theme.availability === "bundled" ? "preview" : "unavailable",
-      }),
-    );
+    return [];
   };
 
   const serializeMutation = (operation) => {
@@ -1973,6 +1967,7 @@ export function createCursorBridge({
     let previousTransactionPending = false;
     let shouldTeardown = false;
     let shouldSelectFallback = false;
+    let fallbackIdentifier = null;
 
     if (bridgePath) {
       const currentStatus = await status();
@@ -2084,6 +2079,18 @@ export function createCursorBridge({
         error.code = "NATIVE_RECOVERY_UNSUPPORTED";
         throw error;
       }
+      if (shouldSelectFallback) {
+        const replacement = (await listThemes()).find(
+          (theme) =>
+            theme.canApply === true &&
+            ![theme.nativeThemeId, theme.id]
+              .filter(Boolean)
+              .some((identifier) =>
+                targets.has(String(identifier).toLowerCase()),
+              ),
+        );
+        fallbackIdentifier = replacement?.nativeThemeId ?? null;
+      }
     }
 
     const nativeRecovery =
@@ -2113,11 +2120,12 @@ export function createCursorBridge({
         await runNative("--teardown");
         restoredToMacOS = true;
       }
-      if (shouldSelectFallback) {
+      if (fallbackIdentifier) {
         // Teardown intentionally leaves SelectedThemeIdentifier untouched. A
-        // valid bundled fallback must be persisted before the quarantined files
-        // are disposed or later native status would target a missing theme.
-        await runNative("--select-theme", [DEFAULT_CURSOR_NATIVE_THEME_ID]);
+        // remaining installed theme can replace a selection whose files are
+        // about to be disposed. If this is the last installed theme, teardown
+        // has already restored Apple cursors and no replacement is required.
+        await runNative("--select-theme", [fallbackIdentifier]);
         selectionReassigned = true;
       }
       await removal.markCommitted();
@@ -2229,16 +2237,17 @@ export function createCursorBridge({
         error.code = "FAMILY_NOT_FOUND";
         throw error;
       }
-      if (members.some((theme) => !theme.imported)) {
+      const importedMembers = members.filter((theme) => theme.imported);
+      if (!importedMembers.length) {
         const error = new Error(
-          "A family containing built-in cursor packs cannot be deleted.",
+          "That cursor family has no installed cursor packs to delete.",
         );
-        error.code = "MIXED_FAMILY";
+        error.code = "NOT_IMPORTED";
         throw error;
       }
       return deleteImportedThemeRecords(
         importedThemesForIdentifiers(
-          members.map((theme) => theme.nativeThemeId),
+          importedMembers.map((theme) => theme.nativeThemeId),
         ),
       );
     });

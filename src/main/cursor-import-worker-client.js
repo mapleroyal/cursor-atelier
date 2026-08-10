@@ -33,6 +33,13 @@ export function importCursorSourceInWorker(
   } = {},
 ) {
   return new Promise((resolve, reject) => {
+    const { onProgress, ...workerOptions } = options ?? {};
+    if (onProgress !== undefined && typeof onProgress !== "function") {
+      const error = new TypeError("onProgress must be a function.");
+      error.code = "INVALID_OPTIONS";
+      reject(error);
+      return;
+    }
     let settled = false;
     let worker;
     let timeoutHandle;
@@ -58,12 +65,20 @@ export function importCursorSourceInWorker(
     };
 
     try {
-      worker = new WorkerConstructor(workerPath, { workerData: options });
+      worker = new WorkerConstructor(workerPath, { workerData: workerOptions });
     } catch (error) {
       void finish(reject, error);
       return;
     }
-    worker.once("message", (message) => {
+    worker.on("message", (message) => {
+      if (message?.type === "progress") {
+        try {
+          onProgress?.(message.progress);
+        } catch {
+          // Progress observers cannot cancel or fail the conversion worker.
+        }
+        return;
+      }
       if (message?.ok === true) {
         void finish(resolve, message.result);
       } else {
