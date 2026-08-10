@@ -35,7 +35,6 @@ import {
   registerCursorIpc,
   validateImportedPacksRoot,
 } from "./main/cursor-bridge";
-import { syncDockIcon } from "./main/dock-icon";
 import {
   createCursorImportStaging,
   installImportedArtifacts,
@@ -163,21 +162,6 @@ function syncWindowBackgrounds() {
     backgroundColor: getWindowBackgroundColor(),
     onWindowError: (error) =>
       console.error("Could not update a window background.", error),
-  });
-}
-
-function syncDockAppearanceIcon() {
-  const resourcesRoot = app.isPackaged
-    ? process.resourcesPath
-    : path.join(app.getAppPath(), "assets");
-  syncDockIcon({
-    isMacOS: process.platform === "darwin",
-    appearance: getSystemAppearance(),
-    resourcesRoot,
-    dock: app.dock,
-    nativeImage,
-    onError: (error) =>
-      console.error("Could not update the Dock app icon.", error),
   });
 }
 
@@ -782,7 +766,6 @@ async function startApplication() {
   });
   getSystemAppearance();
   nativeTheme.themeSource = preferencesStore.getAppAppearanceMode();
-  syncDockAppearanceIcon();
   let automation = null;
   let mainLoginItemReconciler = null;
   const persistPendingThemeSizeCleanup = (identifiers) => {
@@ -1025,7 +1008,6 @@ async function startApplication() {
     applyAppearanceMode: (mode) => {
       nativeTheme.themeSource = mode;
       syncWindowBackgrounds();
-      syncDockAppearanceIcon();
     },
     syncMainLoginItem: (preferences) =>
       mainLoginItemReconciler?.sync(
@@ -1469,14 +1451,9 @@ async function startApplication() {
   syncTray(initialPreferences);
   installApplicationMenu();
 
-  const handleNativeThemeUpdated = () => {
-    syncWindowBackgrounds();
-    syncDockAppearanceIcon();
-  };
-  const handleSystemAppearanceUpdated = () => {
-    syncDockAppearanceIcon();
+  const handleNativeThemeUpdated = () => syncWindowBackgrounds();
+  const handleSystemAppearanceUpdated = () =>
     void automation.appearanceChanged();
-  };
   const handleWake = () => void automation.wake();
   nativeTheme.on("updated", handleNativeThemeUpdated);
   powerMonitor.on("resume", handleWake);

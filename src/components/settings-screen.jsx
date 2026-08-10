@@ -693,6 +693,18 @@ export function SettingsScreen({
                 />
               </Field>
 
+              <Field orientation="responsive">
+                <FieldContent>
+                  <p className="text-body-md font-medium leading-snug text-foreground">
+                    App Icon
+                  </p>
+                </FieldContent>
+                <p className="max-w-md text-body-sm text-muted-foreground sm:text-right">
+                  Follows System Settings → Appearance → Icon &amp; widget style
+                  → Dark → Auto
+                </p>
+              </Field>
+
               <Field orientation="horizontal">
                 <FieldContent>
                   <FieldLabel htmlFor="startup-run-in-background">

@@ -180,6 +180,15 @@ test.describe("Cursor Atelier packaged UI", () => {
       await expect(
         page.getByRole("heading", { name: "Start with any cursor packs?" }),
       ).toBeVisible();
+      await expect(
+        page.getByText(
+          "All are selected by default. Click any pack to deselect it.",
+          { exact: true },
+        ),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Skip", exact: true }),
+      ).toBeVisible();
 
       const chooser = page.getByRole("group", {
         name: "Starter cursor packs",
@@ -216,7 +225,7 @@ test.describe("Cursor Atelier packaged UI", () => {
         ),
       ).toBe(true);
 
-      await page.getByRole("button", { name: "Deselect all" }).click();
+      await page.getByRole("button", { name: "Select none" }).click();
       expect(
         await rows.evaluateAll((entries) =>
           entries.every(
@@ -236,12 +245,11 @@ test.describe("Cursor Atelier packaged UI", () => {
     }
   });
 
-  test("continues with no selections into a persistent empty library", async () => {
+  test("skips into a persistent empty library", async () => {
     const launch = await launchCursorAtelier({ onboardingState: null });
     try {
       const page = await firstWindow(launch.app);
-      await page.getByRole("button", { name: "Deselect all" }).click();
-      await page.getByRole("button", { name: "Continue", exact: true }).click();
+      await page.getByRole("button", { name: "Skip", exact: true }).click();
 
       await expect(
         page.getByText("Cursor packs", { exact: true }),
@@ -301,6 +309,13 @@ test.describe("Cursor Atelier packaged UI", () => {
     for (const label of ["Light", "System", "Dark"]) {
       await expect(page.getByRole("radio", { name: label })).toBeVisible();
     }
+    await expect(page.getByText("App Icon", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "Follows System Settings → Appearance → Icon & widget style → Dark → Auto",
+        { exact: true },
+      ),
+    ).toBeVisible();
 
     const dark = page.getByRole("radio", { name: "Dark" });
     await dark.click();

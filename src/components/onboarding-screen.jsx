@@ -38,12 +38,16 @@ export function OnboardingScreen({ families, onContinue }) {
     });
   };
 
-  const continueOnboarding = () => {
+  const submitOnboarding = (familyIds) => {
     if (submitting) {
       return;
     }
     setSubmitting(true);
-    onContinue(allIds.filter((id) => selectedIds.has(id)));
+    onContinue(familyIds);
+  };
+
+  const continueOnboarding = () => {
+    submitOnboarding(allIds.filter((id) => selectedIds.has(id)));
   };
 
   return (
@@ -52,9 +56,6 @@ export function OnboardingScreen({ families, onContinue }) {
       <section className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-5 pb-5 sm:px-8 sm:pb-8">
         <header className="shrink-0 pb-4">
           <h1 className="text-headline-lg">Start with any cursor packs?</h1>
-          <p className="mt-1 text-body-md text-muted-foreground">
-            All are selected by default. Click any pack to deselect it.
-          </p>
         </header>
 
         <div className="mb-2 flex shrink-0 justify-end gap-1">
@@ -72,7 +73,7 @@ export function OnboardingScreen({ families, onContinue }) {
             size="sm"
             onClick={() => setSelectedIds(new Set())}
           >
-            Deselect all
+            Select none
           </Button>
         </div>
 
@@ -122,7 +123,17 @@ export function OnboardingScreen({ families, onContinue }) {
           })}
         </div>
 
-        <footer className="flex shrink-0 justify-end pt-5">
+        <footer className="flex shrink-0 items-center justify-between pt-5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={submitting}
+            onClick={() => submitOnboarding([])}
+            className="text-muted-foreground"
+          >
+            Skip
+          </Button>
           <Button
             type="button"
             size="lg"

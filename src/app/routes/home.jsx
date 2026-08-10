@@ -1841,7 +1841,10 @@ function PackDetails({
           ) : null}
 
           <div className="mb-6 grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-5 border-b border-border/60 pb-6">
-            <div className="flex size-20 items-center justify-center rounded-xl bg-muted/45">
+            <div
+              data-testid="cursor-size-preview"
+              className="relative flex size-20 items-center justify-center rounded-xl bg-muted/45"
+            >
               {pack.preview ? (
                 <img
                   src={pack.preview}
@@ -1859,9 +1862,12 @@ function PackDetails({
                   aria-hidden="true"
                 />
               )}
+              <span className="type-numeric absolute right-1.5 bottom-1.5 rounded-sm bg-background/80 px-1 py-0.5 text-[0.65rem] leading-3 text-muted-foreground">
+                {previewSize}%
+              </span>
             </div>
             <div className="min-w-0">
-              <div className="mb-3 flex items-baseline justify-between gap-4">
+              <div className="mb-3 flex items-baseline gap-4">
                 <span className="flex items-center gap-1.5 text-title-md">
                   Size
                   <TooltipProvider>
@@ -1884,15 +1890,13 @@ function PackDetails({
                         />
                       </TooltipTrigger>
                       <TooltipContent className="max-w-72">
-                        For the applied size to match this preview, set System
-                        Settings › Accessibility › Display › Pointer › Pointer
-                        Size slider to its leftmost (lowest) position.
+                        For the applied size to match this preview, set the
+                        system slider in System Settings → Accessibility →
+                        Display → Pointer → Pointer Size all the way to its
+                        leftmost position.
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
-                </span>
-                <span className="type-numeric text-body-sm text-muted-foreground">
-                  {previewSize}%
                 </span>
               </div>
               <div className="flex items-center gap-3">

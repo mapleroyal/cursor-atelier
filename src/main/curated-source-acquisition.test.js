@@ -495,6 +495,100 @@ describe("curated source acquisition", () => {
     ).resolves.toBe("pinned");
   });
 
+  it("discards redirect bodies through the request transport before following", async () => {
+    const root = await temporaryRoot();
+    const seed = path.join(root, "seed");
+    await fs.promises.mkdir(path.join(seed, "assets"), { recursive: true });
+    await fs.promises.writeFile(path.join(seed, "assets/cursor.svg"), "pinned");
+    await fs.promises.writeFile(path.join(seed, "LICENSE"), "license");
+    const digest = await computeCuratedTreeDigest(seed, ["assets", "LICENSE"]);
+    const archive = rawTar([
+      { name: "wrapper/assets/", type: "5" },
+      { name: "wrapper/assets/cursor.svg", data: "pinned" },
+      { name: "wrapper/LICENSE", data: "license" },
+    ]);
+    const redirectBody = {
+      destroy: vi.fn(),
+      dump: vi.fn(async () => null),
+    };
+    const requests = [];
+
+    await acquireCuratedFamilySources({
+      familyIds: ["fixture"],
+      cacheRoot: path.join(root, "cache"),
+      catalog: repositoryCatalog({ digest }),
+      fetchImpl: async () => {
+        throw new Error("metadata fetch should not be used");
+      },
+      archiveRequestImpl: async (url) => {
+        requests.push(url);
+        if (requests.length === 1) {
+          return {
+            statusCode: 302,
+            headers: {
+              location: "https://cdn.example.test/source.tar.gz",
+            },
+            body: redirectBody,
+          };
+        }
+        return {
+          statusCode: 200,
+          headers: { "content-length": String(archive.length) },
+          body: Readable.from([archive]),
+        };
+      },
+    });
+
+    expect(requests).toEqual([
+      "https://example.test/source.tar.gz",
+      "https://cdn.example.test/source.tar.gz",
+    ]);
+    expect(redirectBody.dump).toHaveBeenCalledOnce();
+    expect(redirectBody.destroy).not.toHaveBeenCalled();
+  });
+
+  it("normalizes cancellation while discarding a redirect body", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    const cancellation = new Error("test cancellation");
+    const requests = [];
+
+    await expect(
+      acquireCuratedFamilySources({
+        familyIds: ["fixture"],
+        cacheRoot: path.join(root, "cache"),
+        catalog: repositoryCatalog({
+          digest: { sha256: "a".repeat(64), entries: 2 },
+        }),
+        fetchImpl: async () => {
+          throw new Error("metadata fetch should not be used");
+        },
+        archiveRequestImpl: async (url) => {
+          requests.push(url);
+          return {
+            statusCode: 302,
+            headers: {
+              location: "https://cdn.example.test/source.tar.gz",
+            },
+            body: {
+              async dump({ signal }) {
+                controller.abort(cancellation);
+                throw signal.reason;
+              },
+            },
+          };
+        },
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({
+      name: "CuratedSourceError",
+      code: "ABORTED",
+      cause: cancellation,
+    });
+
+    expect(requests).toEqual(["https://example.test/source.tar.gz"]);
+  });
+
   it("disposes a request body rejected by its declared archive size", async () => {
     const root = await temporaryRoot();
     const body = Readable.from([]);

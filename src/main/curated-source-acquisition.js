@@ -1083,6 +1083,25 @@ function responseHeader(headers, name) {
   return value === undefined ? null : String(value);
 }
 
+async function discardRequestBody(body, signal) {
+  throwIfAborted(signal);
+  if (!body) {
+    return;
+  }
+  if (typeof body.dump === "function") {
+    try {
+      await body.dump({ signal });
+    } catch (error) {
+      throwIfAborted(signal);
+      throw error;
+    }
+    throwIfAborted(signal);
+    return;
+  }
+  body.destroy?.();
+  throwIfAborted(signal);
+}
+
 async function requestHttps(
   url,
   requestImpl,
@@ -1114,7 +1133,7 @@ async function requestHttps(
   const status = Number(response?.statusCode);
   if (status >= 300 && status < 400) {
     const location = responseHeader(response.headers, "location");
-    response.body?.destroy?.();
+    await discardRequestBody(response.body, signal);
     if (!location || redirectCount >= 5) {
       fail("DOWNLOAD_FAILED", "An upstream source redirected unexpectedly.");
     }
@@ -1144,7 +1163,7 @@ async function requestHttps(
     );
   }
   if (status < 200 || status >= 300 || !response?.body) {
-    response?.body?.destroy?.();
+    await discardRequestBody(response?.body, signal);
     fail(
       "DOWNLOAD_FAILED",
       Number.isInteger(status)
@@ -1218,7 +1237,7 @@ async function downloadToFile(
       declared < 1 ||
       declared > limits.maxArchiveBytes)
   ) {
-    response.body?.destroy?.();
+    await discardRequestBody(response.body, signal);
     await response.body?.cancel?.().catch(() => undefined);
     fail("LIMIT_EXCEEDED", "The upstream source archive is too large.");
   }

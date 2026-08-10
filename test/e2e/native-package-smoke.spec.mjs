@@ -263,7 +263,7 @@ function onboardingRows(page) {
 }
 
 async function chooseOnlyFuture(page) {
-  await page.getByRole("button", { name: "Deselect all" }).click();
+  await page.getByRole("button", { name: "Select none" }).click();
   const future = onboardingRows(page).filter({ hasText: "Future" });
   await future.getByText("Future", { exact: true }).click();
   await expect(future).toHaveAttribute("aria-pressed", "true");
@@ -325,7 +325,7 @@ test.describe("packaged native integration", () => {
         await page.evaluate(() => window.electronAPI.listCursorThemes()),
       ).toEqual([]);
 
-      await page.getByRole("button", { name: "Deselect all" }).click();
+      await page.getByRole("button", { name: "Select none" }).click();
       await page.getByRole("button", { name: "Continue", exact: true }).click();
       await expect(
         page
@@ -442,6 +442,26 @@ test.describe("packaged native integration", () => {
       await expect
         .poll(() => page.evaluate(() => window.electronAPI.listCursorThemes()))
         .toHaveLength(2);
+      await expect(
+        page.getByTestId("cursor-size-preview").getByText("100%", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      const sizeHelp = page.getByRole("button", {
+        name: "About cursor sizing",
+      });
+      await sizeHelp.focus();
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      await expect(sizeHelp).toBeFocused();
+      await expect(
+        page
+          .getByRole("tooltip")
+          .getByText(
+            "For the applied size to match this preview, set the system slider in System Settings → Accessibility → Display → Pointer → Pointer Size all the way to its leftmost position.",
+            { exact: true },
+          ),
+      ).toBeVisible();
       const themes = await page.evaluate(() =>
         window.electronAPI.listCursorThemes(),
       );
