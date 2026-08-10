@@ -3,6 +3,7 @@
 #import "OreoCursorEngine.h"
 #import <Cocoa/Cocoa.h>
 #import <ServiceManagement/ServiceManagement.h>
+#include <string.h>
 
 NSString * const OreoLoginHelperBundleIdentifier =
     @"com.cursoratelier.CursorAtelier.NativeCursor.LoginHelper";
@@ -772,6 +773,40 @@ static BOOL OreoParseThemeSizePercentage(const char *value,
     return YES;
 }
 
+static NSDictionary *OreoParseJSONArgument(const char *value) {
+    if (!value) {
+        return nil;
+    }
+    size_t length = strlen(value);
+    if (length == 0 || length > 1024 * 1024) {
+        return nil;
+    }
+    NSData *data = [NSData dataWithBytes:value length:length];
+    id decoded = [NSJSONSerialization JSONObjectWithData:data
+                                                 options:0
+                                                   error:NULL];
+    return [decoded isKindOfClass:[NSDictionary class]] ? decoded : nil;
+}
+
+static BOOL OreoPortablePreferenceMutationIsSafe(NSError **error) {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    [defaults synchronize];
+    SMAppServiceStatus helperStatus = OreoLoginItemService().status;
+    BOOL helperRegistered =
+        helperStatus == SMAppServiceStatusEnabled ||
+        helperStatus == SMAppServiceStatusRequiresApproval;
+    if (![defaults boolForKey:OreoCursorEnabledDefaultsKey] &&
+        ![defaults boolForKey:OreoCursorEffectiveDefaultsKey] &&
+        !OreoLoginItemDesired() && !helperRegistered) {
+        return YES;
+    }
+    if (error) {
+        *error = OreoSetupError(
+            14, @"Restore Apple cursors before replacing native settings.");
+    }
+    return NO;
+}
+
 int OreoRunCommandLineIfRequested(
     int argc, const char * _Nonnull * _Nonnull argv) {
     if (argc < 2) {
@@ -783,7 +818,9 @@ int OreoRunCommandLineIfRequested(
         @"--list-themes", @"--validate-themes", @"--validate-theme",
         @"--select-theme", @"--set-theme-size", @"--forget-theme-size",
         @"--validate-system-fallbacks", @"--apply-theme",
-        @"--open-login-settings", @"--reconcile-login-items"
+        @"--open-login-settings", @"--reconcile-login-items",
+        @"--portable-preferences", @"--replace-portable-preferences",
+        @"--reset-preferences"
     ]];
     BOOL commandNeedsIdentifier =
         [command isEqual:@"--select-theme"] ||
@@ -792,10 +829,14 @@ int OreoRunCommandLineIfRequested(
         [command isEqual:@"--forget-theme-size"];
     BOOL commandNeedsIdentifierAndSize =
         [command isEqual:@"--set-theme-size"];
+    BOOL commandNeedsJSON =
+        [command isEqual:@"--replace-portable-preferences"];
     if (![supportedCommands containsObject:command] ||
         (commandNeedsIdentifier && argc != 3) ||
         (commandNeedsIdentifierAndSize && argc != 4) ||
+        (commandNeedsJSON && argc != 3) ||
         (!commandNeedsIdentifier && !commandNeedsIdentifierAndSize &&
+         !commandNeedsJSON &&
          argc != 2)) {
         fprintf(stderr,
                 "Usage: OreoCursor "
@@ -806,6 +847,9 @@ int OreoRunCommandLineIfRequested(
                 "--select-theme IDENTIFIER|--apply-theme IDENTIFIER|"
                 "--set-theme-size IDENTIFIER PERCENTAGE|"
                 "--forget-theme-size IDENTIFIER|"
+                "--portable-preferences|"
+                "--replace-portable-preferences JSON|"
+                "--reset-preferences|"
                 "--reconcile-login-items|"
                 "--open-login-settings]\n");
         return 64;
@@ -814,6 +858,49 @@ int OreoRunCommandLineIfRequested(
     if ([command isEqual:@"--list-themes"]) {
         OreoPrintJSON([OreoCursorEngine availableThemes]);
         return 0;
+    }
+
+    if ([command isEqual:@"--portable-preferences"]) {
+        OreoPrintJSON([OreoCursorEngine portablePreferences]);
+        return 0;
+    }
+
+    if ([command isEqual:@"--replace-portable-preferences"]) {
+        NSDictionary *preferences = OreoParseJSONArgument(argv[2]);
+        NSError *preferencesError = nil;
+        BOOL success = preferences &&
+            OreoPortablePreferenceMutationIsSafe(&preferencesError) &&
+            [OreoCursorEngine replacePortablePreferences:preferences
+                                                    error:&preferencesError];
+        if (!preferences && !preferencesError) {
+            preferencesError = OreoSetupError(
+                14, @"The native cursor settings document is invalid.");
+        }
+        NSMutableDictionary *result = [NSMutableDictionary
+            dictionaryWithDictionary:[OreoCursorEngine portablePreferences]];
+        result[@"action"] = command;
+        result[@"replaced"] = @(success);
+        if (preferencesError) {
+            result[@"actionError"] = preferencesError.localizedDescription;
+        }
+        OreoPrintJSON([result copy]);
+        return success ? 0 : 2;
+    }
+
+    if ([command isEqual:@"--reset-preferences"]) {
+        NSError *preferencesError = nil;
+        BOOL success =
+            OreoPortablePreferenceMutationIsSafe(&preferencesError) &&
+            [OreoCursorEngine resetPreferences:&preferencesError];
+        NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:@{
+            @"action": command,
+            @"reset": @(success),
+        }];
+        if (preferencesError) {
+            result[@"actionError"] = preferencesError.localizedDescription;
+        }
+        OreoPrintJSON([result copy]);
+        return success ? 0 : 2;
     }
 
     if ([command isEqual:@"--set-theme-size"]) {

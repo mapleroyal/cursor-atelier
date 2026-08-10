@@ -40,6 +40,7 @@ describe("cursor preference normalization", () => {
         lastRunAt: "2026-08-06T14:30:00-05:00",
       },
       menuBar: { visible: false },
+      startup: { runInBackground: true },
     });
 
     expect(merged).toMatchObject({
@@ -66,6 +67,7 @@ describe("cursor preference normalization", () => {
         lastRunAt: "2026-08-06T19:30:00.000Z",
       },
       menuBar: { visible: false },
+      startup: { runInBackground: true },
     });
   });
 
@@ -137,6 +139,22 @@ describe("cursor preference normalization", () => {
       normalizeCursorPreferences({
         appearance: { automaticSwitching: "true" },
       }).appearance.automaticSwitching,
+    ).toBe(false);
+  });
+
+  it("keeps background startup opt-in", () => {
+    expect(createDefaultCursorPreferences().startup.runInBackground).toBe(
+      false,
+    );
+    expect(
+      normalizeCursorPreferences({
+        startup: { runInBackground: true },
+      }).startup.runInBackground,
+    ).toBe(true);
+    expect(
+      normalizeCursorPreferences({
+        startup: { runInBackground: "true" },
+      }).startup.runInBackground,
     ).toBe(false);
   });
 

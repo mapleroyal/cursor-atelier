@@ -188,4 +188,39 @@ describe("cursor preferences store", () => {
       TypeError,
     );
   });
+
+  it("round-trips and resets the complete durable preference document", () => {
+    const store = createCursorPreferencesStore({
+      directory: "/tmp/cursor-preferences-test",
+      Store: memoryStore(),
+    });
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.replaceDataSnapshot({
+      preferences: {
+        favorites: { cursorIds: ["ImportedBlue"] },
+        startup: { runInBackground: true },
+      },
+      appAppearanceMode: "dark",
+      pendingThemeSizeCleanupIds: ["ImportedOld"],
+    });
+
+    expect(store.getDataSnapshot()).toMatchObject({
+      preferences: {
+        favorites: { cursorIds: ["ImportedBlue"] },
+        startup: { runInBackground: true },
+      },
+      appAppearanceMode: "dark",
+      pendingThemeSizeCleanupIds: ["ImportedOld"],
+    });
+    expect(listener).toHaveBeenCalledOnce();
+
+    store.resetData();
+    expect(store.getDataSnapshot()).toEqual({
+      preferences: createDefaultCursorPreferences(),
+      appAppearanceMode: "system",
+      pendingThemeSizeCleanupIds: [],
+    });
+  });
 });

@@ -36,6 +36,12 @@ release concerns.
 - A searchable two-pane workspace with independently scrolling rail/detail
   panes, restrained surfaces, and consistent squircle controls.
 - A persisted Light/System/Dark appearance selector.
+- An explicit, opt-in **Run in Background at Startup** setting; Command-Q
+  still exits the main app without dismantling its separately managed cursor
+  helper.
+- Portable export/import of installed cursors and settings, plus a recoverable
+  full reset to the first-run experience. Import always leaves Apple cursors
+  active rather than applying the archived selection.
 - Truthful selected, requested, and live-verified active states. Preview mode
   never mutates macOS or presents a selection as active.
 - Atomic theme application, transactional rollback/recovery, login-item

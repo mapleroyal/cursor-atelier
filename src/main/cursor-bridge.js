@@ -47,6 +47,7 @@ const MAX_IMPORTED_ROLE_PREVIEWS = 128;
 const DEFAULT_THEME_SIZE_PERCENTAGE = 100;
 const MIN_THEME_SIZE_PERCENTAGE = 50;
 const MAX_THEME_SIZE_PERCENTAGE = 200;
+const MAX_PORTABLE_THEME_SIZE_ENTRIES = 2048;
 
 function isSafeIdentifier(value) {
   return (
@@ -63,6 +64,40 @@ function normalizedThemeSizePercentage(value, fallback = null) {
     value <= MAX_THEME_SIZE_PERCENTAGE
     ? value
     : fallback;
+}
+
+function normalizePortablePreferences(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.schemaVersion !== 1 ||
+    (value.selectedThemeIdentifier !== null &&
+      !isSafeIdentifier(value.selectedThemeIdentifier)) ||
+    !value.themeSizePercentages ||
+    typeof value.themeSizePercentages !== "object" ||
+    Array.isArray(value.themeSizePercentages)
+  ) {
+    throw new TypeError("The native cursor settings are invalid.");
+  }
+  const entries = Object.entries(value.themeSizePercentages);
+  if (
+    entries.length > MAX_PORTABLE_THEME_SIZE_ENTRIES ||
+    entries.some(
+      ([identifier, sizePercentage]) =>
+        !isSafeIdentifier(identifier) ||
+        normalizedThemeSizePercentage(sizePercentage) === null,
+    )
+  ) {
+    throw new TypeError("The native cursor settings are invalid.");
+  }
+  return {
+    schemaVersion: 1,
+    selectedThemeIdentifier: value.selectedThemeIdentifier,
+    themeSizePercentages: Object.fromEntries(
+      entries.sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  };
 }
 
 function isSafeResourceName(value) {
@@ -83,6 +118,9 @@ const COMMAND_TIMEOUTS = Object.freeze({
   "--apply-theme": 45_000,
   "--set-theme-size": 12_000,
   "--forget-theme-size": 12_000,
+  "--portable-preferences": 12_000,
+  "--replace-portable-preferences": 12_000,
+  "--reset-preferences": 12_000,
   "--select-theme": 45_000,
   "--disable": 45_000,
   "--setup": 45_000,
@@ -916,6 +954,75 @@ function scanImportedManifests(importedPacksRoot, verifyResourceHash) {
   } catch {
     return [];
   }
+}
+
+export function validateImportedPacksRoot(importedPacksRoot) {
+  if (
+    typeof importedPacksRoot !== "string" ||
+    !path.isAbsolute(importedPacksRoot)
+  ) {
+    throw new TypeError("An absolute imported cursor directory is required.");
+  }
+  let entries;
+  try {
+    const rootStat = fs.lstatSync(importedPacksRoot);
+    if (
+      rootStat.isSymbolicLink() ||
+      !rootStat.isDirectory() ||
+      !isPrivateImportedEntry(rootStat)
+    ) {
+      throw new Error("The imported cursor directory is not private.");
+    }
+    entries = fs.readdirSync(importedPacksRoot, { withFileTypes: true });
+  } catch (error) {
+    const wrapped = new Error("The imported cursor directory is invalid.", {
+      cause: error,
+    });
+    wrapped.code = "INVALID_IMPORTED_LIBRARY";
+    throw wrapped;
+  }
+  if (
+    entries.length > MAX_IMPORTED_PACKS ||
+    entries.some(
+      (entry) =>
+        !entry.isDirectory() ||
+        !isSafeIdentifier(entry.name) ||
+        isCursorImportTransactionEntry(entry.name),
+    )
+  ) {
+    const error = new Error(
+      "The imported cursor directory contains unsupported data.",
+    );
+    error.code = "INVALID_IMPORTED_LIBRARY";
+    throw error;
+  }
+  const manifests = scanImportedManifests(importedPacksRoot);
+  if (manifests.length !== entries.length) {
+    const error = new Error("One or more imported cursor packs are invalid.");
+    error.code = "INVALID_IMPORTED_LIBRARY";
+    throw error;
+  }
+  const identifiers = [];
+  const seen = new Set();
+  for (const manifest of manifests) {
+    for (const theme of manifest.themes) {
+      const identifier = theme.Identifier;
+      const key = identifier.toLowerCase();
+      if (seen.has(key)) {
+        const error = new Error(
+          "The imported cursor library contains duplicate identifiers.",
+        );
+        error.code = "INVALID_IMPORTED_LIBRARY";
+        throw error;
+      }
+      seen.add(key);
+      identifiers.push(identifier);
+    }
+  }
+  return {
+    packCount: manifests.length,
+    identifiers: identifiers.sort((left, right) => left.localeCompare(right)),
+  };
 }
 
 function hasResource(manifest, theme, resourceFile, verifyResourceHash) {
@@ -2398,6 +2505,32 @@ export function createCursorBridge({
       };
     });
 
+  const getPortablePreferences = () =>
+    serializeMutation(async () =>
+      normalizePortablePreferences(await runNative("--portable-preferences")),
+    );
+
+  const replacePortablePreferences = (preferences) =>
+    serializeMutation(async () => {
+      const normalized = normalizePortablePreferences(preferences);
+      const result = await runNative("--replace-portable-preferences", [
+        JSON.stringify(normalized),
+      ]);
+      if (!firstBoolean(result, ["replaced", "Replaced"], false)) {
+        throw new Error("The native cursor settings could not be replaced.");
+      }
+      return normalizePortablePreferences(result);
+    });
+
+  const resetPreferences = () =>
+    serializeMutation(async () => {
+      const result = await runNative("--reset-preferences");
+      if (!firstBoolean(result, ["reset", "Reset"], false)) {
+        throw new Error("The native cursor settings could not be reset.");
+      }
+      return true;
+    });
+
   const restore = () =>
     serializeMutation(() =>
       // Restoring from the Electron app also removes its internal login item;
@@ -2424,6 +2557,9 @@ export function createCursorBridge({
     applyTheme,
     reconcileLoginItems,
     setThemeSize,
+    getPortablePreferences,
+    replacePortablePreferences,
+    resetPreferences,
     restore,
     openLoginSettings,
     assignImportedFamily,

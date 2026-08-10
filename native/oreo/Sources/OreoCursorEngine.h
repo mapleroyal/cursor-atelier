@@ -81,6 +81,19 @@ NS_ASSUME_NONNULL_BEGIN
                                           error:
     (NSError * _Nullable * _Nullable)error;
 
+/// User-facing native settings that can be archived without carrying live
+/// cursor or login-helper state.
++ (NSDictionary<NSString *, id> *)portablePreferences;
+
+/// Atomically replaces the selected theme and per-theme sizes without
+/// applying a cursor or notifying the resident helper.
++ (BOOL)replacePortablePreferences:(NSDictionary<NSString *, id> *)preferences
+                             error:(NSError * _Nullable * _Nullable)error;
+
+/// Clears the complete app-owned native defaults domain. Callers must restore
+/// Apple cursors and unregister the helper before invoking this method.
++ (BOOL)resetPreferences:(NSError * _Nullable * _Nullable)error;
+
 /// Rolls back an interrupted apply/restore transaction. Returns YES when no
 /// transaction existed or when recovery completed and was verified.
 - (BOOL)recoverInterruptedTransaction:(BOOL * _Nullable)didRecover

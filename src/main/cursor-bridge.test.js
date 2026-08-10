@@ -5,7 +5,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createCursorBridge, registerCursorIpc } from "./cursor-bridge";
+import {
+  createCursorBridge,
+  registerCursorIpc,
+  validateImportedPacksRoot,
+} from "./cursor-bridge";
 
 const temporaryDirectories = [];
 const ONE_PIXEL_PNG = Buffer.from(
@@ -105,6 +109,26 @@ afterEach(() => {
 });
 
 describe("cursor bridge unavailable state", () => {
+  it("strictly validates a portable imported-library root", () => {
+    const importedPacksRoot = temporaryDirectory();
+    writeImportedPack(importedPacksRoot, {
+      packName: "ImportedAurora",
+      nativeThemeId: "ImportedAurora",
+    });
+
+    expect(validateImportedPacksRoot(importedPacksRoot)).toEqual({
+      packCount: 1,
+      identifiers: ["ImportedAurora"],
+    });
+
+    fs.writeFileSync(path.join(importedPacksRoot, "unexpected.txt"), "bad", {
+      mode: 0o600,
+    });
+    expect(() => validateImportedPacksRoot(importedPacksRoot)).toThrow(
+      /unsupported data/,
+    );
+  });
+
   it("retains every requested native cleanup when the bridge is unavailable", async () => {
     const bridge = createCursorBridge({
       nativePath: "/missing/cursor-bridge",
@@ -1522,6 +1546,19 @@ describe("cursor bridge live native state", () => {
         if (command === "--open-login-settings") {
           return { ...rawStatus, action: "open-login-settings" };
         }
+        if (command === "--portable-preferences") {
+          return {
+            schemaVersion: 1,
+            selectedThemeIdentifier: "OreoBlue",
+            themeSizePercentages: { OreoBlue: 125 },
+          };
+        }
+        if (command === "--replace-portable-preferences") {
+          return { ...JSON.parse(args[0]), replaced: true };
+        }
+        if (command === "--reset-preferences") {
+          return { reset: true };
+        }
         return { ...rawStatus, action: "status" };
       },
     });
@@ -1605,6 +1642,35 @@ describe("cursor bridge live native state", () => {
       fixture.bridge.setThemeSize("oreo-blue", 100.5),
     ).rejects.toThrow("between 50 and 200");
     expect(fixture.calls).toHaveLength(1);
+  });
+
+  it("round-trips portable native settings without an apply command", async () => {
+    const fixture = createNativeFixture();
+
+    await expect(fixture.bridge.getPortablePreferences()).resolves.toEqual({
+      schemaVersion: 1,
+      selectedThemeIdentifier: "OreoBlue",
+      themeSizePercentages: { OreoBlue: 125 },
+    });
+    await expect(
+      fixture.bridge.replacePortablePreferences({
+        schemaVersion: 1,
+        selectedThemeIdentifier: "OreoBlue",
+        themeSizePercentages: { OreoBlue: 140 },
+      }),
+    ).resolves.toEqual({
+      schemaVersion: 1,
+      selectedThemeIdentifier: "OreoBlue",
+      themeSizePercentages: { OreoBlue: 140 },
+    });
+    await expect(fixture.bridge.resetPreferences()).resolves.toBe(true);
+
+    expect(fixture.calls.map(([command]) => command)).toEqual([
+      "--portable-preferences",
+      "--replace-portable-preferences",
+      "--reset-preferences",
+    ]);
+    expect(fixture.calls).not.toContainEqual(["--apply-theme", "OreoBlue"]);
   });
 
   it("requires every imported theme to pass the native decoder", async () => {

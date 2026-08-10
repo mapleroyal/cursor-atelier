@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import * as tar from "tar";
+import { request as undiciRequest } from "undici";
 import yauzl from "yauzl";
 
 import catalogDocument from "../../native/cursor-packs/sources/curated-source-catalog.json";
@@ -294,21 +295,12 @@ function validateArchivePath(value, limits) {
   return trimmed;
 }
 
-function checkRecords(records, limits, archiveBytes) {
+function checkRecordLimits(records, limits, archiveBytes) {
   if (!records.length || records.length > limits.maxEntries) {
     fail("LIMIT_EXCEEDED", "The source archive has an unsafe entry count.");
   }
-  const seen = new Set();
   let expandedBytes = 0;
   for (const record of records) {
-    const key = record.raw.normalize("NFC").toLocaleLowerCase("en-US");
-    if (seen.has(key)) {
-      fail(
-        "UNSAFE_ARCHIVE",
-        `The source archive has colliding paths: ${record.raw}.`,
-      );
-    }
-    seen.add(key);
     if (record.type === "file") {
       if (
         !Number.isSafeInteger(record.size) ||
@@ -331,6 +323,23 @@ function checkRecords(records, limits, archiveBytes) {
       "LIMIT_EXCEEDED",
       "The source archive has an unsafe compression ratio.",
     );
+  }
+}
+
+function assertSelectedPathsDoNotCollide(records, selected) {
+  const seen = new Set();
+  for (const record of records) {
+    if (!selected.has(record.relative)) {
+      continue;
+    }
+    const key = record.relative.normalize("NFC").toLocaleLowerCase("en-US");
+    if (seen.has(key)) {
+      fail(
+        "UNSAFE_ARCHIVE",
+        `The selected source inputs have colliding paths: ${record.relative}.`,
+      );
+    }
+    seen.add(key);
   }
 }
 
@@ -371,6 +380,7 @@ function selectRecords(records, roots) {
   }
   let changed = true;
   while (changed) {
+    assertSelectedPathsDoNotCollide(records, selected);
     changed = false;
     for (const relative of [...selected]) {
       const record = byPath.get(relative);
@@ -403,6 +413,7 @@ function selectRecords(records, roots) {
       }
     }
   }
+  assertSelectedPathsDoNotCollide(records, selected);
   for (const relative of selected) {
     let parent = path.posix.dirname(relative);
     while (parent && parent !== ".") {
@@ -494,7 +505,7 @@ async function inspectTar(archivePath, limits, signal) {
     }
     fail("INVALID_ARCHIVE", "The repository source archive is invalid.", error);
   }
-  checkRecords(records, limits, (await fsPromises.stat(archivePath)).size);
+  checkRecordLimits(records, limits, (await fsPromises.stat(archivePath)).size);
   stripRepositoryWrapper(records);
   return records;
 }
@@ -748,7 +759,11 @@ async function inspectZip(archivePath, limits, signal) {
       });
       zip.readEntry();
     });
-    checkRecords(records, limits, (await fsPromises.stat(archivePath)).size);
+    checkRecordLimits(
+      records,
+      limits,
+      (await fsPromises.stat(archivePath)).size,
+    );
     for (const record of records) {
       if (record.type === "symlink") {
         record.linkTarget = (
@@ -1060,6 +1075,93 @@ async function fetchHttps(url, fetchImpl, accept, signal) {
   return response;
 }
 
+function responseHeader(headers, name) {
+  const value = headers?.[name.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value.join(", ");
+  }
+  return value === undefined ? null : String(value);
+}
+
+async function requestHttps(
+  url,
+  requestImpl,
+  accept,
+  signal,
+  redirectCount = 0,
+) {
+  throwIfAborted(signal);
+  let response;
+  try {
+    response = await requestImpl(url, {
+      method: "GET",
+      headers: {
+        Accept: accept,
+        "User-Agent": "CursorAtelier-source-acquirer/1",
+      },
+      signal,
+      headersTimeout: 30_000,
+      bodyTimeout: 120_000,
+    });
+  } catch (error) {
+    throwIfAborted(signal);
+    fail(
+      "DOWNLOAD_FAILED",
+      "An upstream cursor source could not be downloaded.",
+      error,
+    );
+  }
+  const status = Number(response?.statusCode);
+  if (status >= 300 && status < 400) {
+    const location = responseHeader(response.headers, "location");
+    response.body?.destroy?.();
+    if (!location || redirectCount >= 5) {
+      fail("DOWNLOAD_FAILED", "An upstream source redirected unexpectedly.");
+    }
+    let redirected;
+    try {
+      redirected = new URL(location, url);
+    } catch (error) {
+      fail(
+        "DOWNLOAD_FAILED",
+        "An upstream source returned an invalid URL.",
+        error,
+      );
+    }
+    if (
+      redirected.protocol !== "https:" ||
+      redirected.username ||
+      redirected.password
+    ) {
+      fail("DOWNLOAD_FAILED", "An upstream source redirected insecurely.");
+    }
+    return requestHttps(
+      redirected.href,
+      requestImpl,
+      accept,
+      signal,
+      redirectCount + 1,
+    );
+  }
+  if (status < 200 || status >= 300 || !response?.body) {
+    response?.body?.destroy?.();
+    fail(
+      "DOWNLOAD_FAILED",
+      Number.isInteger(status)
+        ? `An upstream cursor source returned HTTP ${status}.`
+        : "An upstream cursor source could not be downloaded.",
+    );
+  }
+  return {
+    body: response.body,
+    headers: {
+      get: (name) => responseHeader(response.headers, name),
+    },
+    ok: true,
+    url,
+  };
+}
+
 async function responseBytes(response, maximumBytes, signal) {
   const chunks = [];
   let received = 0;
@@ -1095,16 +1197,19 @@ async function downloadToFile(
   destination,
   limits,
   fetchImpl,
+  archiveRequestImpl,
   onBytes,
   signal,
 ) {
   throwIfAborted(signal);
-  const response = await fetchHttps(
-    url,
-    fetchImpl,
-    "application/octet-stream",
-    signal,
-  );
+  const response = archiveRequestImpl
+    ? await requestHttps(
+        url,
+        archiveRequestImpl,
+        "application/octet-stream",
+        signal,
+      )
+    : await fetchHttps(url, fetchImpl, "application/octet-stream", signal);
   const contentLength = response.headers?.get?.("content-length")?.trim();
   const declared = contentLength ? Number(contentLength) : null;
   if (
@@ -1113,6 +1218,8 @@ async function downloadToFile(
       declared < 1 ||
       declared > limits.maxArchiveBytes)
   ) {
+    response.body?.destroy?.();
+    await response.body?.cancel?.().catch(() => undefined);
     fail("LIMIT_EXCEEDED", "The upstream source archive is too large.");
   }
   const output = await fsPromises.open(destination, "wx", 0o600);
@@ -1137,6 +1244,10 @@ async function downloadToFile(
         }
         await write(Buffer.from(value));
       }
+    } else if (response.body?.[Symbol.asyncIterator]) {
+      for await (const value of response.body) {
+        await write(Buffer.from(value));
+      }
     } else {
       await write(Buffer.from(await response.arrayBuffer()));
     }
@@ -1144,6 +1255,7 @@ async function downloadToFile(
       fail("DOWNLOAD_FAILED", "The upstream source archive was empty.");
     }
   } catch (error) {
+    response.body?.destroy?.();
     await output.close().catch(() => undefined);
     await fsPromises.unlink(destination).catch(() => undefined);
     throwIfAborted(signal);
@@ -1198,6 +1310,7 @@ async function stageArchive({
   source,
   destination,
   fetchImpl,
+  archiveRequestImpl,
   localRoot,
   url,
   localRelative,
@@ -1218,6 +1331,7 @@ async function stageArchive({
     destination,
     source.limits,
     fetchImpl,
+    archiveRequestImpl,
     onBytes,
     signal,
   );
@@ -1332,6 +1446,7 @@ async function acquireRepositorySource({
   source,
   temporary,
   fetchImpl,
+  archiveRequestImpl,
   localRoot,
   report,
   signal,
@@ -1342,6 +1457,7 @@ async function acquireRepositorySource({
     source,
     destination: archive,
     fetchImpl,
+    archiveRequestImpl,
     localRoot,
     url: source.archiveUrl,
     localRelative: `${source.id}.tar.gz`,
@@ -1424,6 +1540,7 @@ async function acquireGnomeSource({
   source,
   temporary,
   fetchImpl,
+  archiveRequestImpl,
   localRoot,
   report,
   signal,
@@ -1446,6 +1563,7 @@ async function acquireGnomeSource({
       source,
       destination: archivePath,
       fetchImpl,
+      archiveRequestImpl,
       localRoot,
       url,
       localRelative: `${source.id}/${archive.name}`,
@@ -1789,6 +1907,7 @@ async function acquireOneSource({
   source,
   cacheRoot,
   fetchImpl,
+  archiveRequestImpl,
   localRoot,
   onProgress,
   familyIds,
@@ -1832,6 +1951,7 @@ async function acquireOneSource({
         source,
         temporary,
         fetchImpl,
+        archiveRequestImpl,
         localRoot,
         report,
         signal,
@@ -1841,6 +1961,7 @@ async function acquireOneSource({
         source,
         temporary,
         fetchImpl,
+        archiveRequestImpl,
         localRoot,
         report,
         signal,
@@ -1905,6 +2026,7 @@ export async function acquireCuratedFamilySources({
   cacheRoot,
   catalog = CURATED_SOURCE_CATALOG,
   fetchImpl = globalThis.fetch,
+  archiveRequestImpl,
   localArchiveRoot,
   onProgress,
   signal,
@@ -1915,6 +2037,10 @@ export async function acquireCuratedFamilySources({
       ? catalog
       : validateCuratedSourceCatalog(catalog);
   const selected = selectCatalogEntries(trustedCatalog, familyIds);
+  const trustedArchiveRequest =
+    archiveRequestImpl === undefined && fetchImpl === globalThis.fetch
+      ? undiciRequest
+      : archiveRequestImpl;
   const canonicalRoot = await canonicalCacheRoot(cacheRoot);
   const localRoot = localArchiveRoot
     ? await canonicalDirectory(
@@ -1936,6 +2062,7 @@ export async function acquireCuratedFamilySources({
         source,
         cacheRoot: canonicalRoot,
         fetchImpl,
+        archiveRequestImpl: trustedArchiveRequest,
         localRoot,
         onProgress,
         familyIds: sourceFamilies,

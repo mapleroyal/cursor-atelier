@@ -60,6 +60,15 @@ function errorMessage(value) {
   return String(value.message ?? value.reason ?? "Import failed.");
 }
 
+function failureDetail(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const code = String(value.code ?? "").trim();
+  const message = errorMessage(value)?.replace(/\s+/g, " ").trim();
+  return code && message ? { code, message } : null;
+}
+
 export function normalizeOnboardingJob(job) {
   if (!job || typeof job !== "object") {
     return null;
@@ -73,6 +82,7 @@ export function normalizeOnboardingJob(job) {
     status: normalizeStatus(job.status ?? job.state ?? job.phase),
     progress: normalizeProgress(job.progress ?? job.percentage),
     error: errorMessage(job.error ?? job.lastError ?? job.reason),
+    failure: failureDetail(job.failure ?? job.errorDetail),
     currentVariant:
       typeof job.currentVariant === "string" && job.currentVariant.trim()
         ? job.currentVariant.trim()
@@ -126,6 +136,7 @@ export function createOptimisticOnboardingState(familyIds) {
       status: "queued",
       progress: null,
       error: null,
+      failure: null,
       currentVariant: null,
       installedVariantIds: [],
     })),
@@ -135,12 +146,17 @@ export function createOptimisticOnboardingState(familyIds) {
 
 export function failOnboardingJobs(state, error) {
   const message = errorMessage(error) ?? "Import failed.";
+  const failure = {
+    code: String(error?.code ?? "ONBOARDING_REQUEST_FAILED"),
+    message,
+  };
   return {
     ...normalizeOnboardingState(state),
     jobs: (state?.jobs ?? []).map((job) => ({
       ...normalizeOnboardingJob(job),
       status: "failed",
       error: message,
+      failure,
     })),
     error: message,
   };
@@ -157,6 +173,7 @@ export function queueOnboardingJob(state, familyId) {
             status: "queued",
             progress: null,
             error: null,
+            failure: null,
             currentVariant: null,
           }
         : job,
@@ -185,6 +202,17 @@ export function getOnboardingJobLabel(job) {
     installing: "Installing",
   }[status];
   return progress === null ? `${phase}…` : `${phase} ${progress}%`;
+}
+
+export function getOnboardingFailureDetail(job) {
+  const failure = failureDetail(job?.failure ?? job?.errorDetail);
+  if (failure) {
+    return `${failure.code}: ${failure.message}`;
+  }
+  return (
+    errorMessage(job?.error ?? job?.lastError ?? job?.reason) ??
+    "Import failed."
+  );
 }
 
 export function groupCursorFamilies(packs, jobs, search = "") {
@@ -221,5 +249,16 @@ export function groupCursorFamilies(packs, jobs, search = "") {
     groups.set(key, group);
   }
 
-  return [...groups.values()];
+  return [...groups.values()]
+    .map((group, index) => ({ group, index }))
+    .sort((left, right) => {
+      const rank = ({ job }) => {
+        if (!job) {
+          return 0;
+        }
+        return normalizeStatus(job.status) === "failed" ? 1 : 2;
+      };
+      return rank(left.group) - rank(right.group) || left.index - right.index;
+    })
+    .map(({ group }) => group);
 }

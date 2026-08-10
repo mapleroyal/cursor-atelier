@@ -23,8 +23,19 @@ import {
   registerAppAppearanceIpc,
   syncWindowBackgroundColors,
 } from "./main/app-appearance-ipc";
+import {
+  createAppDataArchive,
+  extractAppDataArchive,
+} from "./main/app-data-archive";
+import { createAppDataService } from "./main/app-data-service";
+import { createAppQuitCoordinator } from "./main/app-quit-coordinator";
 import { createCursorAutomation } from "./main/cursor-automation";
-import { createCursorBridge, registerCursorIpc } from "./main/cursor-bridge";
+import {
+  createCursorBridge,
+  registerCursorIpc,
+  validateImportedPacksRoot,
+} from "./main/cursor-bridge";
+import { syncDockIcon } from "./main/dock-icon";
 import {
   createCursorImportStaging,
   installImportedArtifacts,
@@ -46,6 +57,7 @@ import {
   CURATED_VARIANTS_BY_FAMILY,
 } from "./main/curated-family-catalog";
 import { createCuratedFamilyService } from "./main/curated-family-service";
+import { assertCuratedMutationAvailable } from "./main/curated-mutation-guard";
 import {
   acquireCuratedFamilySources,
   CURATED_FAMILY_IDS,
@@ -151,6 +163,21 @@ function syncWindowBackgrounds() {
     backgroundColor: getWindowBackgroundColor(),
     onWindowError: (error) =>
       console.error("Could not update a window background.", error),
+  });
+}
+
+function syncDockAppearanceIcon() {
+  const resourcesRoot = app.isPackaged
+    ? process.resourcesPath
+    : path.join(app.getAppPath(), "assets");
+  syncDockIcon({
+    isMacOS: process.platform === "darwin",
+    appearance: getSystemAppearance(),
+    resourcesRoot,
+    dock: app.dock,
+    nativeImage,
+    onError: (error) =>
+      console.error("Could not update the Dock app icon.", error),
   });
 }
 
@@ -698,8 +725,47 @@ async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
   }
 }
 
+async function chooseDataExportPath(event) {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  const date = new Date().toISOString().slice(0, 10);
+  const options = {
+    title: "Export Cursor Atelier Data",
+    buttonLabel: "Export",
+    defaultPath: `Cursor Atelier Backup ${date}.cursoratelier`,
+    filters: [{ name: "Cursor Atelier data", extensions: ["cursoratelier"] }],
+    properties: ["showOverwriteConfirmation", "createDirectory"],
+  };
+  const selection = parentWindow
+    ? await dialog.showSaveDialog(parentWindow, options)
+    : await dialog.showSaveDialog(options);
+  return selection.canceled || !selection.filePath ? null : selection.filePath;
+}
+
+async function chooseDataImportPath(event) {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  const options = {
+    title: "Import Cursor Atelier Data",
+    buttonLabel: "Import",
+    filters: [
+      { name: "Cursor Atelier data", extensions: ["cursoratelier"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+    properties: ["openFile"],
+  };
+  const selection = parentWindow
+    ? await dialog.showOpenDialog(parentWindow, options)
+    : await dialog.showOpenDialog(options);
+  return selection.canceled || selection.filePaths.length !== 1
+    ? null
+    : selection.filePaths[0];
+}
+
 async function startApplication() {
   const importedPacksRoot = path.join(app.getPath("userData"), "ImportedPacks");
+  await fs.promises.mkdir(importedPacksRoot, {
+    recursive: true,
+    mode: 0o700,
+  });
   const curatedSourceRoot = path.join(
     app.getPath("userData"),
     "CuratedSources",
@@ -716,7 +782,9 @@ async function startApplication() {
   });
   getSystemAppearance();
   nativeTheme.themeSource = preferencesStore.getAppAppearanceMode();
-  const initialPreferences = preferencesStore.get();
+  syncDockAppearanceIcon();
+  let automation = null;
+  let mainLoginItemReconciler = null;
   const persistPendingThemeSizeCleanup = (identifiers) => {
     const pending = preferencesStore.getPendingThemeSizeCleanupIds();
     const seen = new Set(pending.map((identifier) => identifier.toLowerCase()));
@@ -919,6 +987,65 @@ async function startApplication() {
       );
     },
   });
+  const appDataService = createAppDataService({
+    userDataRoot: app.getPath("userData"),
+    importedPacksRoot,
+    appVersion: app.getVersion(),
+    preferencesStore,
+    onboardingStore,
+    bridge,
+    validateImportedPacksRoot,
+    createArchive: createAppDataArchive,
+    extractArchive: extractAppDataArchive,
+    moveToTrash: (target) => shell.trashItem(target),
+    runLibraryExclusive: (operation) => runImportedLibraryExclusive(operation),
+    assertIdle: () => {
+      const active = curatedFamilyService
+        .getState()
+        .jobs.some((job) =>
+          ["queued", "downloading", "converting", "installing"].includes(
+            job.status,
+          ),
+        );
+      if (active) {
+        const error = new Error(
+          "Wait for starter cursor imports to finish before managing data.",
+        );
+        error.code = "CURATED_FAMILY_BUSY";
+        throw error;
+      }
+    },
+    pauseAutomation: () => automation?.stop(),
+    resumeAutomation: (options) => {
+      void automation?.start(options).catch((error) => {
+        console.error("Could not resume cursor automation.", error);
+      });
+    },
+    reconcileLibraryPreferences: () => libraryPreferencesReconciler.reconcile(),
+    applyAppearanceMode: (mode) => {
+      nativeTheme.themeSource = mode;
+      syncWindowBackgrounds();
+      syncDockAppearanceIcon();
+    },
+    syncMainLoginItem: (preferences) =>
+      mainLoginItemReconciler?.sync(
+        shouldRegisterMainAppLoginItem(preferences),
+      ),
+    onDataChanged: ({ reason }) => {
+      broadcastToRenderers("onboarding:changed", onboardingStore.get());
+      notifyLibraryChanged({ reason, identifiers: [] });
+      notifyCursorChanged({
+        reason,
+        changedAt: new Date().toISOString(),
+      });
+    },
+    onResetComplete: () => {
+      app.relaunch();
+      app.quit();
+    },
+  });
+  await appDataService.reconcileTransactions();
+  const initialPreferences = preferencesStore.get();
   // Launching app.asar directly (including the Playwright preview) can still
   // report app.isPackaged. Requiring the verified packaged native component
   // keeps that read-only preview from registering a system login item.
@@ -938,7 +1065,7 @@ async function startApplication() {
       console.error("Could not inspect Cursor Atelier’s login item.", error);
     }
   }
-  const mainLoginItemReconciler = createMainLoginItemReconciler({
+  mainLoginItemReconciler = createMainLoginItemReconciler({
     available: backgroundRegistrationAvailable,
     setLoginItemSettings: (settings) => app.setLoginItemSettings(settings),
     getLoginItemSettings: (settings) => app.getLoginItemSettings(settings),
@@ -1143,22 +1270,17 @@ async function startApplication() {
     importQueue = result.catch(() => undefined);
     return result;
   };
-  const assertCuratedMutationIdle = () => {
-    const active = curatedFamilyService
-      .getState()
-      .jobs.some((job) =>
-        ["queued", "downloading", "converting", "installing"].includes(
-          job.status,
-        ),
-      );
-    if (active) {
-      const error = new Error(
-        "Wait for this curated family to finish before changing it.",
-      );
-      error.code = "CURATED_FAMILY_BUSY";
-      throw error;
-    }
-  };
+  const assertCuratedMutationAvailableFor = async ({
+    identifiers,
+    familyNames,
+  }) =>
+    assertCuratedMutationAvailable({
+      jobs: curatedFamilyService.getState().jobs,
+      themes: await bridge.listThemes(),
+      identifiers,
+      familyNames,
+      curatedFamilies: CURATED_FAMILY_CATALOG.families,
+    });
   const completeImportedDeletion = async (result, reason) => {
     if (result.sizePreferenceCleanupIdentifiers?.length) {
       try {
@@ -1200,7 +1322,10 @@ async function startApplication() {
     (event, identifiers, family) => {
       requireTrustedSender(event);
       return enqueueImportedLibraryMutation(async () => {
-        assertCuratedMutationIdle();
+        await assertCuratedMutationAvailableFor({
+          identifiers,
+          familyNames: [family],
+        });
         const result = await bridge.assignImportedFamily(identifiers, family);
         let preferenceCleanupPending = false;
         try {
@@ -1223,7 +1348,7 @@ async function startApplication() {
   ipcMain.handle("cursor:delete-imported", (event, identifier) => {
     requireTrustedSender(event);
     return enqueueImportedLibraryMutation(async () => {
-      assertCuratedMutationIdle();
+      await assertCuratedMutationAvailableFor({ identifiers: [identifier] });
       return completeImportedDeletion(
         await bridge.deleteImportedThemes([identifier]),
         "renderer-delete-imported",
@@ -1233,7 +1358,7 @@ async function startApplication() {
   ipcMain.handle("cursor:delete-imported-family", (event, family) => {
     requireTrustedSender(event);
     return enqueueImportedLibraryMutation(async () => {
-      assertCuratedMutationIdle();
+      await assertCuratedMutationAvailableFor({ familyNames: [family] });
       return completeImportedDeletion(
         await bridge.deleteImportedFamily(family),
         "renderer-delete-imported-family",
@@ -1241,7 +1366,7 @@ async function startApplication() {
     });
   });
 
-  const automation = createCursorAutomation({
+  automation = createCursorAutomation({
     bridge,
     preferencesStore,
     getSystemAppearance,
@@ -1272,6 +1397,30 @@ async function startApplication() {
   ipcMain.handle("preferences:update", (event, patch) => {
     requireTrustedSender(event);
     return preferencesStore.update(patch);
+  });
+  ipcMain.handle("data:export", async (event) => {
+    requireTrustedSender(event);
+    const destination = await chooseDataExportPath(event);
+    if (!destination) {
+      return { canceled: true };
+    }
+    await appDataService.exportTo(destination);
+    return { canceled: false, exported: true };
+  });
+  ipcMain.handle("data:import", async (event) => {
+    requireTrustedSender(event);
+    const archivePath = await chooseDataImportPath(event);
+    if (!archivePath) {
+      return { canceled: true };
+    }
+    return appDataService.importFrom(archivePath);
+  });
+  ipcMain.handle("data:reset", (event, confirmation) => {
+    requireTrustedSender(event);
+    if (confirmation !== "reset-all-data") {
+      throw new TypeError("Full reset confirmation is required.");
+    }
+    return appDataService.reset();
   });
   ipcMain.handle("cursor:randomize", (event) => {
     requireTrustedSender(event);
@@ -1322,9 +1471,12 @@ async function startApplication() {
 
   const handleNativeThemeUpdated = () => {
     syncWindowBackgrounds();
+    syncDockAppearanceIcon();
   };
-  const handleSystemAppearanceUpdated = () =>
+  const handleSystemAppearanceUpdated = () => {
+    syncDockAppearanceIcon();
     void automation.appearanceChanged();
+  };
   const handleWake = () => void automation.wake();
   nativeTheme.on("updated", handleNativeThemeUpdated);
   powerMonitor.on("resume", handleWake);
@@ -1348,50 +1500,35 @@ async function startApplication() {
   }
 
   let stopping = false;
-  let shutdownReady = false;
-  const handleBeforeQuit = (event) => {
-    if (shutdownReady) {
-      return;
-    }
-    event.preventDefault();
-    if (stopping) {
-      return;
-    }
-    stopping = true;
-    windowLifecycle?.beginQuit();
-    automation.stop();
-    libraryPreferencesReconciler.stop();
-    themeSizeCleanupReconciler.stop();
-    mainLoginItemReconciler.stop();
-    curatedFamilyService.stop();
-    unsubscribeOnboarding();
-    disposeAppAppearanceIpc();
-    unsubscribePreferences();
-    nativeTheme.off("updated", handleNativeThemeUpdated);
-    powerMonitor.off("resume", handleWake);
-    powerMonitor.off("unlock-screen", handleWake);
-    for (const identifier of localNotificationIds) {
-      systemPreferences.unsubscribeLocalNotification(identifier);
-    }
-    if (appearanceNotificationId !== null) {
-      systemPreferences.unsubscribeNotification(appearanceNotificationId);
-      appearanceNotificationId = null;
-    }
-    tray?.destroy();
-    tray = null;
-    runtime = null;
-    let timeoutId;
-    void Promise.race([
-      curatedFamilyService.whenIdle(),
-      new Promise((resolve) => {
-        timeoutId = setTimeout(resolve, 7_000);
-      }),
-    ]).finally(() => {
-      clearTimeout(timeoutId);
-      shutdownReady = true;
-      app.quit();
-    });
-  };
+  const quitCoordinator = createAppQuitCoordinator({
+    cleanup: () => {
+      stopping = true;
+      windowLifecycle?.beginQuit();
+      automation.stop();
+      libraryPreferencesReconciler.stop();
+      themeSizeCleanupReconciler.stop();
+      mainLoginItemReconciler.stop();
+      curatedFamilyService.stop();
+      unsubscribeOnboarding();
+      disposeAppAppearanceIpc();
+      unsubscribePreferences();
+      nativeTheme.off("updated", handleNativeThemeUpdated);
+      powerMonitor.off("resume", handleWake);
+      powerMonitor.off("unlock-screen", handleWake);
+      for (const identifier of localNotificationIds) {
+        systemPreferences.unsubscribeLocalNotification(identifier);
+      }
+      if (appearanceNotificationId !== null) {
+        systemPreferences.unsubscribeNotification(appearanceNotificationId);
+        appearanceNotificationId = null;
+      }
+      tray?.destroy();
+      tray = null;
+      runtime = null;
+    },
+    exit: (code) => app.exit(code),
+  });
+  const handleBeforeQuit = (event) => quitCoordinator.handleBeforeQuit(event);
   app.on("before-quit", handleBeforeQuit);
 
   app.on("activate", () => {

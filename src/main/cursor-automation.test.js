@@ -730,6 +730,31 @@ describe("cursor automation", () => {
     automation.stop();
   });
 
+  it("can resume scheduling after data import without a startup apply", async () => {
+    const nativeBridge = bridge();
+    const preferencesStore = createMemoryPreferences({
+      appearance: {
+        automaticSwitching: true,
+        lightCursorId: "OreoWhite",
+        darkCursorId: "OreoBlack",
+      },
+      randomization: {
+        automaticEnabled: true,
+        schedule: { mode: "launch" },
+      },
+    });
+    const automation = createCursorAutomation({
+      bridge: nativeBridge,
+      preferencesStore,
+      getSystemAppearance: () => "light",
+    });
+
+    await automation.start({ runLaunch: false, syncAppearance: false });
+
+    expect(nativeBridge.applyTheme).not.toHaveBeenCalled();
+    automation.stop();
+  });
+
   it("reverts an appearance cursor that becomes stale during native execution", async () => {
     let systemAppearance = "light";
     let releaseApply;
@@ -1785,5 +1810,42 @@ describe("cursor automation", () => {
     await expect(exclusive).resolves.toBe("restored");
     await randomization;
     expect(nativeBridge.applyTheme).toHaveBeenCalledOnce();
+  });
+
+  it("reports quiescence only after queued cursor work settles", async () => {
+    let finishOperation;
+    let markOperationStarted;
+    const operationStarted = new Promise((resolve) => {
+      markOperationStarted = resolve;
+    });
+    const automation = createCursorAutomation({
+      bridge: bridge(),
+      preferencesStore: createMemoryPreferences(),
+      getSystemAppearance: () => "light",
+    });
+    const operation = automation.runExclusive(async () => {
+      markOperationStarted();
+      await new Promise((resolve) => {
+        finishOperation = resolve;
+      });
+    });
+    await operationStarted;
+
+    let stopped = false;
+    const stopping = automation.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    finishOperation();
+    await operation;
+    await stopping;
+    expect(stopped).toBe(true);
+    await expect(automation.randomize()).rejects.toMatchObject({
+      code: "CURSOR_OPERATIONS_PAUSED",
+    });
+    await automation.appearanceChanged();
+    expect(automation.getNextRunAt()).toBeNull();
   });
 });

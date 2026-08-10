@@ -171,7 +171,7 @@
       "type": "repository",
       "directory": "simp1e",
       "revision": "f8f8f3c09dd0aa31cc9bc5499c683aad025984be",
-      "archiveUrl": "https://gitlab.com/cursors/simp1e/-/archive/f8f8f3c09dd0aa31cc9bc5499c683aad025984be/simp1e-f8f8f3c09dd0aa31cc9bc5499c683aad025984be.tar.gz",
+      "archiveUrl": "https://gitlab.com/api/v4/projects/cursors%2Fsimp1e/repository/archive.tar.gz?sha=f8f8f3c09dd0aa31cc9bc5499c683aad025984be",
       "inputRoots": [
         "src/color_schemes",
         "src/templates/cursors.svg",
@@ -189,9 +189,9 @@
       "directory": "capitaine-cursors",
       "revision": "06c88433662a4004cf56a6e471b523a0a8880be0",
       "archiveUrl": "https://codeload.github.com/keeferrourke/capitaine-cursors/tar.gz/06c88433662a4004cf56a6e471b523a0a8880be0",
-      "inputRoots": ["src/svg/light", "src/svg/dark", "COPYING"],
-      "treeSha256": "cabb638859b1fe3625f560cedd640710888463b185aa0fda529c3905e8c5ed65",
-      "treeEntries": 189
+      "inputRoots": ["src/svg/light", "src/svg/dark", "src/config", "COPYING"],
+      "treeSha256": "dbaaeb7001eab059d7c634b4a9086b6cb09670c77e22ad8f200b878271f5a091",
+      "treeEntries": 236
     },
     {
       "id": "future",

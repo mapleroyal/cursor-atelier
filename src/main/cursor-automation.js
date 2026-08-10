@@ -198,6 +198,7 @@ export function createCursorAutomation({
   }
 
   let started = false;
+  let suspended = false;
   let timer = null;
   let appearanceRetryTimer = null;
   let appearanceRetryAttempts = 0;
@@ -236,6 +237,14 @@ export function createCursorAutomation({
     const result = operationQueue.then(operation, operation);
     operationQueue = result.catch(() => undefined);
     return result;
+  };
+
+  const suspendedOperation = () => {
+    const error = plainError(
+      "Cursor operations are paused while app data is changing.",
+      "CURSOR_OPERATIONS_PAUSED",
+    );
+    return Promise.reject(error);
   };
 
   const clearScheduledTimer = () => {
@@ -843,11 +852,12 @@ export function createCursorAutomation({
   };
 
   return {
-    start({ runLaunch = true } = {}) {
+    start({ runLaunch = true, syncAppearance = true } = {}) {
       if (started) {
         return operationQueue;
       }
 
+      suspended = false;
       started = true;
       scheduleGeneration += 1;
       observedPreferences = preferencesStore.get();
@@ -858,11 +868,15 @@ export function createCursorAutomation({
         observedPreferences.randomization.schedule.mode === "launch";
       unsubscribePreferences = preferencesStore.subscribe(preferencesChanged);
       return enqueue(async () => {
-        await syncAppearanceWithRetry(
-          "startup",
-          { force: true },
-          "startup-appearance",
-        );
+        if (syncAppearance) {
+          await syncAppearanceWithRetry(
+            "startup",
+            { force: true },
+            "startup-appearance",
+          );
+        } else {
+          lastAppearance = readSystemAppearance();
+        }
 
         if (shouldRunLaunch) {
           try {
@@ -879,6 +893,7 @@ export function createCursorAutomation({
     },
     stop() {
       started = false;
+      suspended = true;
       scheduleGeneration += 1;
       clearScheduledTimer();
       clearAppearanceRetryTimer();
@@ -889,8 +904,12 @@ export function createCursorAutomation({
       randomizationActivatedAt = null;
       unsubscribePreferences?.();
       unsubscribePreferences = null;
+      return operationQueue;
     },
     randomize(reason = "manual") {
+      if (suspended) {
+        return suspendedOperation();
+      }
       return enqueue(async () => {
         try {
           return await applyRandomCursor(reason);
@@ -900,6 +919,9 @@ export function createCursorAutomation({
       });
     },
     setAppearanceCursor(appearance, identifier) {
+      if (suspended) {
+        return suspendedOperation();
+      }
       return enqueue(async () => {
         if (!CURSOR_APPEARANCES.includes(appearance)) {
           throw new TypeError("A valid system appearance is required.");
@@ -1021,9 +1043,15 @@ export function createCursorAutomation({
       });
     },
     appearanceChanged() {
+      if (suspended) {
+        return operationQueue;
+      }
       return enqueue(() => syncAppearanceWithRetry("appearance"));
     },
     wake() {
+      if (suspended) {
+        return operationQueue;
+      }
       return enqueue(async () => {
         await syncAppearanceWithRetry(
           "wake",
@@ -1034,11 +1062,17 @@ export function createCursorAutomation({
       });
     },
     reschedule() {
+      if (suspended) {
+        return operationQueue;
+      }
       return enqueue(() => scheduleNext());
     },
     runExclusive(operation) {
       if (typeof operation !== "function") {
         throw new TypeError("A cursor operation is required.");
+      }
+      if (suspended) {
+        return suspendedOperation();
       }
       return enqueue(() => operation());
     },

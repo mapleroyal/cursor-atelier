@@ -8,6 +8,16 @@ import {
 } from "@hugeicons/core-free-icons";
 
 import { AppearanceModeSelector } from "@/components/appearance-mode-selector";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -496,6 +506,9 @@ export function SettingsScreen({
   feedback,
   onClose,
 }) {
+  const [dataOperation, setDataOperation] = useState(null);
+  const [dataFeedback, setDataFeedback] = useState(null);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const families = useMemo(
     () =>
       [
@@ -521,7 +534,7 @@ export function SettingsScreen({
     typeof randomizationFeedback === "string"
       ? randomizationFeedback
       : randomizationFeedback?.message;
-  const settingsDisabled = !preferencesAvailable;
+  const settingsDisabled = !preferencesAvailable || Boolean(dataOperation);
   const automaticRandomizationEnabled = randomization.automaticEnabled === true;
   const displayedPreferenceError = preferencesError
     ? preferencesErrorMessage
@@ -532,6 +545,29 @@ export function SettingsScreen({
     randomizationPoolSize === 0
       ? `No ${systemAppearance}-mode cursors match these settings.`
       : null;
+  const dataActionsDisabled = Boolean(
+    dataOperation || cursorOperationBusy || saving,
+  );
+
+  const runDataOperation = async (operation, callback, successMessage) => {
+    setDataOperation(operation);
+    setDataFeedback(null);
+    try {
+      const result = await callback();
+      if (!result?.canceled) {
+        setDataFeedback({ type: "success", message: successMessage });
+      }
+      return result;
+    } catch (error) {
+      setDataFeedback({
+        type: "error",
+        message: error?.message || "The data operation failed.",
+      });
+      return null;
+    } finally {
+      setDataOperation(null);
+    }
+  };
 
   return (
     <section
@@ -640,9 +676,8 @@ export function SettingsScreen({
                           />
                         </TooltipTrigger>
                         <TooltipContent className="max-w-72">
-                          Runs after its window closes, even without the menu
-                          bar item. macOS Login Items controls launch at
-                          sign-in.
+                          Runs while Cursor Atelier is open or remains in the
+                          background.
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -654,6 +689,22 @@ export function SettingsScreen({
                   disabled={settingsDisabled}
                   onCheckedChange={(automaticSwitching) =>
                     onChange({ appearance: { automaticSwitching } })
+                  }
+                />
+              </Field>
+
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor="startup-run-in-background">
+                    Run in Background at Startup
+                  </FieldLabel>
+                </FieldContent>
+                <Switch
+                  id="startup-run-in-background"
+                  checked={preferences?.startup?.runInBackground === true}
+                  disabled={settingsDisabled}
+                  onCheckedChange={(runInBackground) =>
+                    onChange({ startup: { runInBackground } })
                   }
                 />
               </Field>
@@ -845,9 +896,118 @@ export function SettingsScreen({
                 }
               />
             </SettingsSection>
+
+            <SettingsSection title="Data">
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel>Export Data</FieldLabel>
+                </FieldContent>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={dataActionsDisabled}
+                  onClick={() =>
+                    void runDataOperation(
+                      "export",
+                      () => window.electronAPI.exportAppData(),
+                      "Data exported.",
+                    )
+                  }
+                >
+                  {dataOperation === "export" ? "Exporting…" : "Export…"}
+                </Button>
+              </Field>
+
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel>Import Data</FieldLabel>
+                </FieldContent>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={dataActionsDisabled}
+                  onClick={() =>
+                    void runDataOperation(
+                      "import",
+                      () => window.electronAPI.importAppData(),
+                      "Data imported. Apple cursor remains active.",
+                    )
+                  }
+                >
+                  {dataOperation === "import" ? "Importing…" : "Import…"}
+                </Button>
+              </Field>
+
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel>Full Reset</FieldLabel>
+                </FieldContent>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={dataActionsDisabled}
+                  onClick={() => setResetDialogOpen(true)}
+                >
+                  {dataOperation === "reset" ? "Resetting…" : "Reset…"}
+                </Button>
+              </Field>
+
+              {dataFeedback ? (
+                <p
+                  role={dataFeedback.type === "error" ? "alert" : "status"}
+                  className={cn(
+                    "select-text text-body-sm text-muted-foreground",
+                    dataFeedback.type === "error" && "text-destructive",
+                  )}
+                >
+                  {dataFeedback.message}
+                </p>
+              ) : null}
+            </SettingsSection>
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={resetDialogOpen}
+        onOpenChange={(open) => {
+          if (dataOperation !== "reset") {
+            setResetDialogOpen(open);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset Cursor Atelier?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This restores the Apple cursor and resets all cursor packs and
+              settings. Prior data is moved to Trash.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={dataOperation === "reset"}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={dataOperation === "reset"}
+              onClick={(event) => {
+                event.preventDefault();
+                void runDataOperation(
+                  "reset",
+                  () => window.electronAPI.resetAppData(),
+                  "Data reset.",
+                ).then((result) => {
+                  if (!result?.reset) {
+                    setResetDialogOpen(false);
+                  }
+                });
+              }}
+            >
+              Reset All Data
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

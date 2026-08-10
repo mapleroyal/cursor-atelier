@@ -12,10 +12,12 @@ import {
   getPackRailNavigationIndex,
   getPackScopedFeedback,
   getPackScopedOperation,
+  getRandomizationPoolSourceLabel,
   getSelectedStatusVariant,
   getStatusEnabled,
   getStatusVariant,
   isPackVerifiedActive,
+  isCursorFamilyManagementDisabled,
   isRandomizationResultVerified,
   isRestoreAvailable,
   isStatusQueryUnavailable,
@@ -367,6 +369,43 @@ describe("cursor rail behavior", () => {
       ]).map((pack) => pack.id),
     ).toEqual(["oreo-black", "oreo-blue", "oreo-white"]);
     expect(resolveCursorPoolPacks(packs, null)).toEqual([]);
+  });
+
+  it("names an implicit randomization pool by the source it includes", () => {
+    expect(getRandomizationPoolSourceLabel({})).toBe("All cursors");
+    expect(
+      getRandomizationPoolSourceLabel({
+        randomization: { source: "favorites" },
+      }),
+    ).toBe("All favorites");
+    expect(
+      getRandomizationPoolSourceLabel({
+        randomization: { source: "family", family: "Oreo" },
+      }),
+    ).toBe("All in Oreo");
+  });
+
+  it("keeps deletion available outside the family currently being added", () => {
+    const addingFamilyNames = new Set(["qogir"]);
+    const state = {
+      operation: "idle",
+      pendingPreferenceCount: 0,
+      addingFamilyNames,
+    };
+
+    expect(
+      isCursorFamilyManagementDisabled({ ...state, family: "Qogir" }),
+    ).toBe(true);
+    expect(isCursorFamilyManagementDisabled({ ...state, family: "Oreo" })).toBe(
+      false,
+    );
+    expect(
+      isCursorFamilyManagementDisabled({
+        ...state,
+        family: "Oreo",
+        operation: "deleting",
+      }),
+    ).toBe(true);
   });
 
   it("matches native cursor identifiers case-insensitively", () => {

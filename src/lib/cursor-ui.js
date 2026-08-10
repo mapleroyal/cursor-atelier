@@ -119,6 +119,30 @@ export function resolveCursorPoolPacks(packs, identifiers) {
   return resolved;
 }
 
+export function getRandomizationPoolSourceLabel(preferences) {
+  const { randomization } = normalizeCursorPreferences(preferences);
+  if (randomization.source === "favorites") {
+    return "All favorites";
+  }
+  if (randomization.source === "family" && randomization.family) {
+    return `All in ${randomization.family}`;
+  }
+  return "All cursors";
+}
+
+export function isCursorFamilyManagementDisabled({
+  family,
+  operation,
+  pendingPreferenceCount,
+  addingFamilyNames,
+}) {
+  if (operation !== "idle" || pendingPreferenceCount > 0) {
+    return true;
+  }
+  const familyKey = String(family ?? "").toLocaleLowerCase();
+  return Boolean(familyKey && addingFamilyNames?.has(familyKey));
+}
+
 export function getPackRailNavigationIndex(key, currentIndex, itemCount) {
   if (currentIndex < 0 || itemCount < 1) {
     return null;

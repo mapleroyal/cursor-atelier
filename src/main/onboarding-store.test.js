@@ -56,6 +56,7 @@ describe("onboarding store", () => {
           status: "downloading",
           progress: 100,
           error: null,
+          failure: null,
           installedVariantIds: ["OreoWhite"],
           currentVariant: "Spark Dark",
         },
@@ -110,9 +111,47 @@ describe("onboarding store", () => {
       status: "failed",
       progress: null,
       error: "Interrupted. Try again.",
+      failure: {
+        code: "INTERRUPTED",
+        message: "Curated family import was interrupted.",
+      },
       installedVariantIds: [],
       currentVariant: null,
     });
+  });
+
+  it("keeps concise structured failure details only on failed jobs", () => {
+    expect(
+      normalizeOnboardingStoreState({
+        version: 2,
+        completed: true,
+        jobs: [
+          {
+            familyId: "qogir",
+            status: "failed",
+            error: "Conversion failed. Try again.",
+            failure: {
+              code: "CURATED_CONVERSION_FAILED",
+              message: "  required wait cursor is not animated\ntry again  ",
+            },
+          },
+          {
+            familyId: "colloid",
+            status: "completed",
+            failure: { code: "STALE", message: "not retained" },
+          },
+        ],
+      }).jobs,
+    ).toMatchObject([
+      {
+        familyId: "qogir",
+        failure: {
+          code: "CURATED_CONVERSION_FAILED",
+          message: "required wait cursor is not animated try again",
+        },
+      },
+      { familyId: "colloid", failure: null },
+    ]);
   });
 
   it("resets incompatible pre-release state instead of carrying it forward", () => {
@@ -123,5 +162,34 @@ describe("onboarding store", () => {
         jobs: [{ catalogId: "oreo-white", status: "completed" }],
       }),
     ).toEqual({ version: 2, completed: false, jobs: [], error: null });
+  });
+
+  it("replaces and resets data for portable archive transactions", () => {
+    const store = createOnboardingStore({
+      directory: "/state",
+      Store: MemoryStore,
+    });
+    store.replaceDataSnapshot({
+      version: 2,
+      completed: true,
+      jobs: [
+        {
+          familyId: "oreo",
+          status: "completed",
+          installedVariantIds: ["OreoWhite"],
+        },
+      ],
+    });
+    expect(store.get()).toMatchObject({
+      completed: true,
+      jobs: [{ familyId: "oreo", status: "completed" }],
+    });
+
+    expect(store.resetData()).toEqual({
+      version: 2,
+      completed: false,
+      jobs: [],
+      error: null,
+    });
   });
 });

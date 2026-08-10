@@ -73,6 +73,33 @@ async function removeTemporaryProfile(directory) {
   await fs.promises.rm(resolvedDirectory, { recursive: true });
 }
 
+async function waitForElectronExit(application, timeoutMs = 3_000) {
+  const child = application.process();
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise((resolve, reject) => {
+    const finish = (callback, value) => {
+      clearTimeout(timeout);
+      child.off("exit", handleExit);
+      child.off("error", handleError);
+      callback(value);
+    };
+    const handleExit = () => finish(resolve);
+    const handleError = (error) => finish(reject, error);
+    const timeout = setTimeout(
+      () =>
+        finish(
+          reject,
+          new Error(`Electron did not quit within ${timeoutMs}ms.`),
+        ),
+      timeoutMs,
+    );
+    child.once("exit", handleExit);
+    child.once("error", handleError);
+  });
+}
+
 async function launchCursorAtelier({
   onboardingState = completedOnboardingState,
 } = {}) {
@@ -103,7 +130,10 @@ async function launchCursorAtelier({
     app,
     profileDirectory,
     async cleanup() {
-      await app.close();
+      const child = app.process();
+      if (child.exitCode === null && child.signalCode === null) {
+        await app.close();
+      }
       await removeTemporaryProfile(profileDirectory);
     },
   };
@@ -195,7 +225,8 @@ test.describe("Cursor Atelier packaged UI", () => {
         ),
       ).toBe(true);
 
-      await future.getByText("Default", { exact: true }).click();
+      await expect(future.getByText("Default", { exact: true })).toHaveCount(0);
+      await future.getByText("Future", { exact: true }).click();
       await expect(future).toHaveAttribute("aria-pressed", "true");
       await expect(
         page.getByRole("button", { name: "Continue", exact: true }),
@@ -308,13 +339,12 @@ test.describe("Cursor Atelier packaged UI", () => {
       page.getByRole("button", { name: "Restore", exact: true }),
     ).toHaveAttribute("aria-disabled", "true");
 
-    const importInformation = page.getByRole("button", {
-      name: "About cursor imports",
-    });
-    await importInformation.hover();
-    await expect(page.getByRole("tooltip")).toContainText(
-      "original SVG source",
-    );
+    await expect(
+      page.getByRole("button", { name: "Import", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "About cursor imports" }),
+    ).toHaveCount(0);
   });
 
   test("uses the pack drawer at the supported minimum window width", async ({
@@ -328,9 +358,9 @@ test.describe("Cursor Atelier packaged UI", () => {
       name: "Choose a cursor pack",
     });
     await expect(drawer).toBeVisible();
-    await expect(
-      drawer.getByText("Cursor packs", { exact: true }),
-    ).toBeVisible();
+    const drawerHeading = drawer.getByText("Cursor packs", { exact: true });
+    await expect(drawerHeading).toBeVisible();
+    expect((await drawerHeading.boundingBox())?.y).toBeGreaterThanOrEqual(48);
     await expect(
       drawer.getByRole("textbox", { name: "Search cursor packs" }),
     ).toBeVisible();
@@ -382,5 +412,32 @@ test.describe("Cursor Atelier packaged UI", () => {
     await expect(
       reopenedPage.getByText("Cursor packs", { exact: true }),
     ).toBeVisible();
+  });
+
+  test("registers Command-Q and fully exits through native Quit", async () => {
+    const launch = await launchCursorAtelier();
+    try {
+      await firstWindow(launch.app);
+      const quitItem = await launch.app.evaluate(({ Menu }) => {
+        const item = Menu.getApplicationMenu()
+          .items.flatMap((entry) => entry.submenu?.items ?? [])
+          .find((entry) => entry.role === "quit");
+        return item ? { role: item.role, accelerator: item.accelerator } : null;
+      });
+      expect(quitItem).toEqual({
+        role: "quit",
+        accelerator: "CommandOrControl+Q",
+      });
+
+      // Playwright renderer key events do not traverse AppKit's native menu
+      // accelerator dispatch. Verify the binding above, then exercise the same
+      // app.quit() path used by the native Quit role.
+      await Promise.all([
+        waitForElectronExit(launch.app),
+        launch.app.evaluate(({ app }) => app.quit()).catch(() => undefined),
+      ]);
+    } finally {
+      await launch.cleanup();
+    }
   });
 });

@@ -17,7 +17,6 @@ import {
   FolderFavouriteIcon,
   InformationCircleIcon,
   Moon02Icon,
-  MoreHorizontalIcon,
   Search01Icon,
   Settings02Icon,
   Sun02Icon,
@@ -108,6 +107,7 @@ import {
   getPackScopedFeedback,
   getPackScopedOperation,
   getPackRailNavigationIndex,
+  getRandomizationPoolSourceLabel,
   getSelectedStatusVariant,
   getStatusVariant,
   isRestoreAvailable,
@@ -117,6 +117,7 @@ import {
   isStatusVerifiedActive,
   isStatusVerifiedRestored,
   importCursorPack,
+  isCursorFamilyManagementDisabled,
   matchesCursorPack,
   normalizeCursorSizePercentage,
   openLoginItemsSettings,
@@ -133,6 +134,7 @@ import {
   ONBOARDING_FAMILIES_BY_ID,
 } from "@/lib/onboarding-catalog";
 import {
+  getOnboardingFailureDetail,
   getOnboardingJobLabel,
   groupCursorFamilies,
   isOnboardingJobVisible,
@@ -418,6 +420,12 @@ function getAssignedAppearanceModes(preferences, preferenceId) {
   );
 }
 
+function isManagementDisabled(managementDisabled, family) {
+  return typeof managementDisabled === "function"
+    ? managementDisabled(family)
+    : Boolean(managementDisabled);
+}
+
 function PackPreview({ pack, active = false, size = "md", className }) {
   return (
     <span
@@ -466,6 +474,10 @@ function PackContextActions({
   const preferenceId = getCursorPreferenceId(pack);
   const roles = Array.isArray(appearanceRoles) ? appearanceRoles : [];
   const canManageImport = pack.imported === true;
+  const managementUnavailable = isManagementDisabled(
+    managementDisabled,
+    pack.family,
+  );
   const otherFamilies = familyNames.filter(
     (family) => family.toLocaleLowerCase() !== pack.family.toLocaleLowerCase(),
   );
@@ -473,7 +485,7 @@ function PackContextActions({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent>
+      <ContextMenuContent className="min-w-64">
         <ContextMenuItem
           disabled={preferencesDisabled}
           onSelect={() => onToggleFavorite(preferenceId, !favorite)}
@@ -492,7 +504,7 @@ function PackContextActions({
           onSelect={() => onAssignAppearanceCursor(preferenceId, "light")}
         >
           <HugeiconsIcon icon={Sun02Icon} strokeWidth={2} />
-          Use in light mode
+          Set as default light mode cursor
           {roles.includes("light") ? (
             <HugeiconsIcon
               icon={Tick02Icon}
@@ -512,7 +524,7 @@ function PackContextActions({
           onSelect={() => onAssignAppearanceCursor(preferenceId, "dark")}
         >
           <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />
-          Use in dark mode
+          Set as default dark mode cursor
           {roles.includes("dark") ? (
             <HugeiconsIcon
               icon={Tick02Icon}
@@ -526,7 +538,7 @@ function PackContextActions({
           <>
             <ContextMenuSeparator />
             <ContextMenuSub>
-              <ContextMenuSubTrigger disabled={managementDisabled}>
+              <ContextMenuSubTrigger disabled={managementUnavailable}>
                 <HugeiconsIcon icon={FolderEditIcon} strokeWidth={2} />
                 Move to family
               </ContextMenuSubTrigger>
@@ -534,6 +546,7 @@ function PackContextActions({
                 {otherFamilies.map((family) => (
                   <ContextMenuItem
                     key={family}
+                    disabled={isManagementDisabled(managementDisabled, family)}
                     onSelect={() => onAssignFamily?.(pack, family)}
                   >
                     <span className="truncate">{family}</span>
@@ -555,7 +568,7 @@ function PackContextActions({
             <ContextMenuSeparator />
             <ContextMenuItem
               variant="destructive"
-              disabled={managementDisabled}
+              disabled={managementUnavailable}
               onSelect={() => {
                 window.setTimeout(
                   () => onDelete?.(pack),
@@ -586,6 +599,10 @@ function FamilyContextActions({
   const canDelete =
     familyPacks.length > 0 &&
     familyPacks.some((pack) => pack.imported === true);
+  const managementUnavailable = isManagementDisabled(
+    managementDisabled,
+    family,
+  );
 
   return (
     <ContextMenu>
@@ -603,7 +620,7 @@ function FamilyContextActions({
             <ContextMenuSeparator />
             <ContextMenuItem
               variant="destructive"
-              disabled={managementDisabled}
+              disabled={managementUnavailable}
               onSelect={() => {
                 window.setTimeout(
                   () => onDelete?.(family, familyPacks),
@@ -618,90 +635,6 @@ function FamilyContextActions({
         ) : null}
       </ContextMenuContent>
     </ContextMenu>
-  );
-}
-
-function PackManagementMenu({
-  pack,
-  familyNames = [],
-  managementDisabled = false,
-  onAssignFamily,
-  onCreateFamily,
-  onDelete,
-  className,
-}) {
-  const [open, setOpen] = useState(false);
-  const otherFamilies = familyNames.filter(
-    (family) => family.toLocaleLowerCase() !== pack.family.toLocaleLowerCase(),
-  );
-
-  if (pack.imported !== true) {
-    return null;
-  }
-
-  const closeThen = (action) => {
-    setOpen(false);
-    window.setTimeout(action, 0);
-  };
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Manage ${pack.variant}`}
-          disabled={managementDisabled}
-          className={cn(
-            "shrink-0 text-muted-foreground/70 hover:text-foreground",
-            className,
-          )}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <HugeiconsIcon
-            icon={MoreHorizontalIcon}
-            strokeWidth={2}
-            aria-hidden="true"
-          />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="max-h-72 min-w-48 overflow-y-auto"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <p className="px-3 pt-2 pb-1 text-label-sm text-muted-foreground">
-          Move to family
-        </p>
-        {otherFamilies.map((family) => (
-          <button
-            key={family}
-            type="button"
-            className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
-            onClick={() => closeThen(() => onAssignFamily?.(pack, family))}
-          >
-            <span className="truncate">{family}</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
-          onClick={() => closeThen(() => onCreateFamily?.(pack))}
-        >
-          New family…
-        </button>
-        <Separator className="my-1" />
-        <button
-          type="button"
-          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm text-destructive outline-none hover:bg-destructive/10 focus-visible:bg-destructive/10 dark:hover:bg-destructive/20 dark:focus-visible:bg-destructive/20"
-          onClick={() => closeThen(() => onDelete?.(pack))}
-        >
-          <HugeiconsIcon icon={Delete01Icon} strokeWidth={2} />
-          Delete cursor…
-        </button>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -725,37 +658,27 @@ function PackRailShortcut({
       onToggleFavorite={onToggleFavorite}
       onAssignAppearanceCursor={onAssignAppearanceCursor}
     >
-      <div className="group/management relative flex min-w-0 items-center">
-        <button
-          type="button"
-          onClick={() => onSelect(pack.id)}
-          className={cn(
-            "group flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60",
-            pack.imported && "pr-8",
-          )}
-        >
-          <PackPreview pack={pack} active={active} />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-title-md">{pack.variant}</span>
-            <span className="block truncate text-body-sm text-muted-foreground">
-              {label ?? pack.family}
-            </span>
+      <button
+        type="button"
+        onClick={() => onSelect(pack.id)}
+        className="group flex min-w-0 w-full items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <PackPreview pack={pack} active={active} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-title-md">{pack.variant}</span>
+          <span className="block truncate text-body-sm text-muted-foreground">
+            {label ?? pack.family}
           </span>
-          {active ? (
-            <HugeiconsIcon
-              icon={CheckmarkCircle02Icon}
-              strokeWidth={2.2}
-              className="size-4 shrink-0 text-primary"
-              aria-hidden="true"
-            />
-          ) : null}
-        </button>
-        <PackManagementMenu
-          pack={pack}
-          {...libraryActions}
-          className="absolute right-1 opacity-55 group-hover/management:opacity-100 group-focus-within/management:opacity-100"
-        />
-      </div>
+        </span>
+        {active ? (
+          <HugeiconsIcon
+            icon={CheckmarkCircle02Icon}
+            strokeWidth={2.2}
+            className="size-4 shrink-0 text-primary"
+            aria-hidden="true"
+          />
+        ) : null}
+      </button>
     </PackContextActions>
   );
 }
@@ -858,7 +781,7 @@ function PackRail({
     familyNames,
     appearanceApplicationUnavailable: !engineAvailable,
     appearanceAssignmentDisabled:
-      libraryActions.managementDisabled || libraryActions.preferencesSaving,
+      libraryActions.operationDisabled || libraryActions.preferencesSaving,
     preferencesDisabled: !preferencesAvailable,
   };
   const currentPack = verifiedActive
@@ -903,6 +826,7 @@ function PackRail({
       packs: resolveCursorPoolPacks(allPacks, identifiers),
     };
   });
+  const implicitPoolLabel = getRandomizationPoolSourceLabel(preferences);
 
   const setFamilyExpanded = useCallback((family, expanded) => {
     setExpandedFamilies((current) => {
@@ -1235,7 +1159,7 @@ function PackRail({
                           {label} mode
                         </span>
                         <span className="type-numeric text-[0.65rem] font-normal text-muted-foreground/75">
-                          {includesAll ? "All from source" : poolPacks.length}
+                          {includesAll ? implicitPoolLabel : poolPacks.length}
                         </span>
                       </>
                     );
@@ -1446,6 +1370,14 @@ function PackRail({
                     </FamilyContextActions>
                     <CollapsibleContent>
                       <div className="min-w-0 space-y-0.5 pb-1">
+                        {familyFailed ? (
+                          <p
+                            role="alert"
+                            className="select-text whitespace-pre-wrap break-words px-2.5 py-1.5 text-body-sm text-destructive"
+                          >
+                            {getOnboardingFailureDetail(job)}
+                          </p>
+                        ) : null}
                         {familyPacks.map((pack) => {
                           const selected = pack.id === selectedId;
                           const active =
@@ -1470,54 +1402,46 @@ function PackRail({
                                 onAssignAppearanceCursor
                               }
                             >
-                              <div className="group/management relative flex min-w-0 items-center">
-                                <button
-                                  type="button"
-                                  ref={(node) => {
-                                    if (node) {
-                                      optionRefs.current.set(pack.id, node);
-                                    } else {
-                                      optionRefs.current.delete(pack.id);
-                                    }
-                                  }}
-                                  onClick={() => selectShortcut(pack.id)}
-                                  onKeyDown={(event) =>
-                                    handleOptionKeyDown(event, pack.id)
+                              <button
+                                type="button"
+                                ref={(node) => {
+                                  if (node) {
+                                    optionRefs.current.set(pack.id, node);
+                                  } else {
+                                    optionRefs.current.delete(pack.id);
                                   }
-                                  className={cn(
-                                    "group relative flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden rounded-2xl px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
-                                    selected
-                                      ? "bg-accent text-accent-foreground"
-                                      : "hover:bg-muted/60",
-                                    !canApply && "opacity-60",
-                                    pack.imported && "pr-8",
-                                  )}
-                                  aria-current={selected ? "true" : undefined}
-                                  data-pack-option=""
-                                  aria-label={`${pack.family} ${pack.variant}${active ? ", active" : ""}${canApply ? "" : ", unavailable"}`}
-                                  tabIndex={pack.id === rovingId ? 0 : -1}
-                                >
-                                  <PackPreview pack={pack} active={active} />
-                                  <span className="min-w-0 flex-1 overflow-hidden">
-                                    <span className="block truncate text-title-md">
-                                      {pack.variant}
-                                    </span>
+                                }}
+                                onClick={() => selectShortcut(pack.id)}
+                                onKeyDown={(event) =>
+                                  handleOptionKeyDown(event, pack.id)
+                                }
+                                className={cn(
+                                  "group relative flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-2xl px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
+                                  selected
+                                    ? "bg-accent text-accent-foreground"
+                                    : "hover:bg-muted/60",
+                                  !canApply && "opacity-60",
+                                )}
+                                aria-current={selected ? "true" : undefined}
+                                data-pack-option=""
+                                aria-label={`${pack.family} ${pack.variant}${active ? ", active" : ""}${canApply ? "" : ", unavailable"}`}
+                                tabIndex={pack.id === rovingId ? 0 : -1}
+                              >
+                                <PackPreview pack={pack} active={active} />
+                                <span className="min-w-0 flex-1 overflow-hidden">
+                                  <span className="block truncate text-title-md">
+                                    {pack.variant}
                                   </span>
-                                  {active ? (
-                                    <HugeiconsIcon
-                                      icon={CheckmarkCircle02Icon}
-                                      strokeWidth={2.2}
-                                      className="size-4 shrink-0 text-primary"
-                                      aria-hidden="true"
-                                    />
-                                  ) : null}
-                                </button>
-                                <PackManagementMenu
-                                  pack={pack}
-                                  {...packLibraryActions}
-                                  className="absolute right-1 opacity-55 group-hover/management:opacity-100 group-focus-within/management:opacity-100"
-                                />
-                              </div>
+                                </span>
+                                {active ? (
+                                  <HugeiconsIcon
+                                    icon={CheckmarkCircle02Icon}
+                                    strokeWidth={2.2}
+                                    className="size-4 shrink-0 text-primary"
+                                    aria-hidden="true"
+                                  />
+                                ) : null}
+                              </button>
                             </PackContextActions>
                           );
                         })}
@@ -1578,7 +1502,6 @@ function PackDetails({
   favorite,
   appearanceRoles = [],
   randomizationRoles = [],
-  randomizationPoolSizes = {},
   selectedBySystem,
   operation,
   operationTargetPackId,
@@ -1601,7 +1524,6 @@ function PackDetails({
   statusErrorMessage,
   onRetryStatus,
   statusRetrying,
-  libraryActions = {},
 }) {
   const cursorBusy = operation !== "idle";
   const packOperation = getPackScopedOperation(
@@ -1681,21 +1603,6 @@ function PackDetails({
 
           <TooltipProvider>
             <div className="flex shrink-0 items-center gap-1.5">
-              {engineAvailable ? (
-                <Button
-                  type="button"
-                  variant={active ? "outline" : "default"}
-                  size="sm"
-                  disabled={cursorBusy || !canApply}
-                  onClick={onApply}
-                >
-                  {packOperation === "applying"
-                    ? "Applying…"
-                    : active
-                      ? "Reapply"
-                      : "Apply"}
-                </Button>
-              ) : null}
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -1803,33 +1710,37 @@ function PackDetails({
                     Randomization…
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent align="end" aria-label="Randomization pools">
+                <PopoverContent
+                  align="end"
+                  aria-label="Randomization pools"
+                  className="grid gap-1"
+                >
                   {["light", "dark"].map((role) => {
                     const selected = randomizationRoles.includes(role);
-                    const poolSize = randomizationPoolSizes[role] ?? 0;
-                    const label =
-                      poolSize === 0
-                        ? `Create ${role} mode pool with this cursor`
-                        : selected && poolSize === 1
-                          ? `Use source for ${role} mode`
-                          : selected
-                            ? `Remove from ${role} mode pool`
-                            : `Add to ${role} mode pool`;
                     return (
                       <button
                         key={role}
                         type="button"
                         aria-pressed={selected}
-                        className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent aria-pressed:bg-accent aria-pressed:font-medium"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent aria-pressed:bg-accent aria-pressed:font-medium"
                         onClick={() => onToggleRandomizationRole(role)}
                       >
-                        {label}
+                        <span className="min-w-0 flex-1">
+                          Add to {role} mode pool
+                        </span>
+                        {selected ? (
+                          <HugeiconsIcon
+                            icon={Tick02Icon}
+                            strokeWidth={2}
+                            className="size-4 shrink-0"
+                            aria-hidden="true"
+                          />
+                        ) : null}
                       </button>
                     );
                   })}
                 </PopoverContent>
               </Popover>
-              <PackManagementMenu pack={pack} {...libraryActions} />
             </div>
           </TooltipProvider>
         </div>
@@ -1984,23 +1895,41 @@ function PackDetails({
                   {previewSize}%
                 </span>
               </div>
-              <Slider
-                aria-label={`${pack.variant} cursor size`}
-                min={MIN_CURSOR_SIZE_PERCENTAGE}
-                max={MAX_CURSOR_SIZE_PERCENTAGE}
-                step={5}
-                value={[previewSize]}
-                onValueChange={(values) =>
-                  setSizeDraft(
-                    normalizeCursorSizePercentage(
-                      values?.[0],
-                      DEFAULT_CURSOR_SIZE_PERCENTAGE,
-                    ),
-                  )
-                }
-                onValueCommit={commitSize}
-                disabled={cursorBusy || !canApply}
-              />
+              <div className="flex items-center gap-3">
+                <Slider
+                  aria-label={`${pack.variant} cursor size`}
+                  min={MIN_CURSOR_SIZE_PERCENTAGE}
+                  max={MAX_CURSOR_SIZE_PERCENTAGE}
+                  step={5}
+                  value={[previewSize]}
+                  onValueChange={(values) =>
+                    setSizeDraft(
+                      normalizeCursorSizePercentage(
+                        values?.[0],
+                        DEFAULT_CURSOR_SIZE_PERCENTAGE,
+                      ),
+                    )
+                  }
+                  onValueCommit={commitSize}
+                  disabled={cursorBusy || !canApply}
+                  className="min-w-0 flex-1"
+                />
+                {engineAvailable ? (
+                  <Button
+                    type="button"
+                    variant={active ? "outline" : "default"}
+                    size="sm"
+                    disabled={cursorBusy || !canApply}
+                    onClick={onApply}
+                  >
+                    {packOperation === "applying"
+                      ? "Applying…"
+                      : active
+                        ? "Reapply"
+                        : "Apply"}
+                  </Button>
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -3311,13 +3240,26 @@ export function HomeRoute() {
       ),
     [packs],
   );
+  const addingFamilyNames = useMemo(
+    () =>
+      new Set(
+        onboardingFamilyJobs
+          .filter((job) => job.status !== "failed")
+          .map((job) => job.family.toLocaleLowerCase()),
+      ),
+    [onboardingFamilyJobs],
+  );
   const libraryActions = useMemo(
     () => ({
       familyNames,
-      managementDisabled:
-        operation !== "idle" ||
-        pendingPreferenceCount > 0 ||
-        onboardingFamilyJobs.some((job) => job.status !== "failed"),
+      operationDisabled: operation !== "idle",
+      managementDisabled: (family) =>
+        isCursorFamilyManagementDisabled({
+          family,
+          operation,
+          pendingPreferenceCount,
+          addingFamilyNames,
+        }),
       preferencesSaving: pendingPreferenceCount > 0,
       onAssignFamily: (pack, family) => {
         void handleAssignFamily(pack, family);
@@ -3331,8 +3273,8 @@ export function HomeRoute() {
       handleOpenFamilyEditor,
       handleRequestCursorDeletion,
       handleRequestFamilyDeletion,
+      addingFamilyNames,
       familyNames,
-      onboardingFamilyJobs,
       operation,
       pendingPreferenceCount,
     ],
@@ -3364,48 +3306,20 @@ export function HomeRoute() {
           <div className="titlebar-no-drag flex shrink-0 items-center gap-2">
             <TooltipProvider>
               <div className="flex items-center gap-0.5">
-                <div className="relative isolate">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="pr-8"
-                    onClick={handleImport}
-                    disabled={
-                      operation !== "idle" || pendingPreferenceCount > 0
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={Add01Icon}
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                    {operation === "importing" ? "Importing…" : "Import"}
-                  </Button>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          aria-label="About cursor imports"
-                          className="absolute top-1/2 right-1 z-10 grid size-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                        />
-                      }
-                    >
-                      <HugeiconsIcon
-                        icon={InformationCircleIcon}
-                        strokeWidth={2}
-                        className="size-3.5"
-                        aria-hidden="true"
-                      />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-80">
-                      If an import looks soft, try the author&apos;s github repo
-                      for the original SVG source instead of theme aggregators
-                      like pling.com, gnome-look.org, or opendesktop.org.
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleImport}
+                  disabled={operation !== "idle" || pendingPreferenceCount > 0}
+                >
+                  <HugeiconsIcon
+                    icon={Add01Icon}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                  {operation === "importing" ? "Importing…" : "Import"}
+                </Button>
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -3454,6 +3368,10 @@ export function HomeRoute() {
                   className="max-w-[340px] overflow-hidden p-0"
                   style={{ width: "min(88vw, 340px)" }}
                 >
+                  <div
+                    className="titlebar-drag h-12 shrink-0"
+                    aria-hidden="true"
+                  />
                   <SheetHeader className="sr-only">
                     <SheetTitle>Choose a cursor pack</SheetTitle>
                     <SheetDescription>Choose a cursor pack.</SheetDescription>
@@ -3569,10 +3487,6 @@ export function HomeRoute() {
               favorite={selectedFavorite}
               appearanceRoles={selectedAppearanceRoles}
               randomizationRoles={selectedRandomizationRoles}
-              randomizationPoolSizes={{
-                light: preferences.randomization.pools.light.length,
-                dark: preferences.randomization.pools.dark.length,
-              }}
               selectedBySystem={selectedBySystem}
               operation={operation}
               operationTargetPackId={operationTargetPackId}
@@ -3608,7 +3522,6 @@ export function HomeRoute() {
               statusErrorMessage={statusErrorMessage}
               onRetryStatus={() => void statusQuery.refetch()}
               statusRetrying={statusQuery.isFetching}
-              libraryActions={libraryActions}
             />
           ) : (
             <EmptyLibrary adding={onboardingFamilyJobs.length > 0} />

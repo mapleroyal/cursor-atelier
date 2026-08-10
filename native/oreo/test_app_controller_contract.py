@@ -178,6 +178,54 @@ class AppControllerContractTests(unittest.TestCase):
         self.assertIn(f'@"{domain}.SettingsChanged"', controller)
         self.assertIn(f'@"{domain}.SettingsChanged"', helper)
 
+    def test_portable_preferences_mutate_only_after_verified_restore(self) -> None:
+        controller = CONTROLLER.read_text(encoding="utf-8")
+        safety = self._function(
+            controller,
+            "static BOOL OreoPortablePreferenceMutationIsSafe(",
+            "int OreoRunCommandLineIfRequested(",
+        )
+        self.assertIn("OreoCursorEnabledDefaultsKey", safety)
+        self.assertIn("OreoCursorEffectiveDefaultsKey", safety)
+        self.assertIn("!OreoLoginItemDesired()", safety)
+        self.assertIn("!helperRegistered", safety)
+
+        command = self._function(
+            controller,
+            'if ([command isEqual:@"--portable-preferences"]) {',
+            'if ([command isEqual:@"--set-theme-size"]) {',
+        )
+        self.assertIn('if ([command isEqual:@"--replace-portable-preferences"])', command)
+        self.assertIn('if ([command isEqual:@"--reset-preferences"])', command)
+        self.assertGreaterEqual(
+            command.count("OreoPortablePreferenceMutationIsSafe"), 2
+        )
+
+        engine = ENGINE.read_text(encoding="utf-8")
+        replace = self._function(
+            engine,
+            "+ (BOOL)replacePortablePreferences:",
+            "+ (BOOL)resetPreferences:",
+        )
+        reset = self._function(
+            engine,
+            "+ (BOOL)resetPreferences:",
+            "- (instancetype)initWithError:",
+        )
+        self.assertIn(
+            "persistentDomainForName:OreoEffectiveCursorDefaultsDomain()",
+            replace,
+        )
+        self.assertIn("setPersistentDomain:[next copy]", replace)
+        self.assertNotIn("OreoCursorEnabledDefaultsKey", replace)
+        self.assertNotIn("OreoCursorEffectiveDefaultsKey", replace)
+        self.assertIn(
+            "removePersistentDomainForName:\n"
+            "        OreoEffectiveCursorDefaultsDomain()",
+            reset,
+        )
+        self.assertIn("setPersistentDomain:previous", reset)
+
     def test_running_helper_recovers_every_refresh_before_state_actions(self) -> None:
         helper = HELPER.read_text(encoding="utf-8")
         reload_engine = self._function(

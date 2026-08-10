@@ -1,6 +1,9 @@
 const FAMILY_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const THEME_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const INSTALL_BATCH_SIZE = 8;
+const DEFAULT_ACQUISITION_CONCURRENCY = 4;
+const MAX_FAILURE_DETAIL_LENGTH = 1_200;
 
 function serviceError(code, message, cause) {
   const error = new Error(message, cause ? { cause } : undefined);
@@ -35,6 +38,74 @@ function userFacingFailure(error) {
     return "Interrupted. Try again.";
   }
   return "Conversion failed. Try again.";
+}
+
+function failureDetail(error) {
+  const code = ERROR_CODE.test(String(error?.code ?? ""))
+    ? error.code
+    : "CURATED_FAMILY_FAILED";
+  const message = String(error?.message ?? "Curated family import failed.")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_FAILURE_DETAIL_LENGTH);
+  return {
+    code,
+    message: message || "Curated family import failed.",
+  };
+}
+
+function createConcurrencyGate(limit) {
+  let active = 0;
+  const waiting = [];
+
+  const release = () => {
+    active -= 1;
+    while (waiting.length) {
+      const entry = waiting.shift();
+      if (entry.signal?.aborted) {
+        continue;
+      }
+      entry.signal?.removeEventListener("abort", entry.abort);
+      active += 1;
+      entry.resolve(release);
+      return;
+    }
+  };
+
+  const acquire = (signal) => {
+    signal?.throwIfAborted();
+    if (active < limit) {
+      active += 1;
+      return Promise.resolve(release);
+    }
+    return new Promise((resolve, reject) => {
+      const entry = {
+        abort: null,
+        reject,
+        resolve,
+        signal,
+      };
+      entry.abort = () => {
+        const index = waiting.indexOf(entry);
+        if (index !== -1) {
+          waiting.splice(index, 1);
+        }
+        reject(signal.reason);
+      };
+      signal?.addEventListener("abort", entry.abort, { once: true });
+      waiting.push(entry);
+    });
+  };
+
+  return async (signal, operation) => {
+    const releaseSlot = await acquire(signal);
+    try {
+      signal?.throwIfAborted();
+      return await operation();
+    } finally {
+      releaseSlot();
+    }
+  };
 }
 
 function assertFamilyIds(familyIds, allowedFamilyIds) {
@@ -84,9 +155,8 @@ function variantEvent(event) {
 }
 
 /**
- * Runs the curated source path one family at a time. Acquisition and rendering
- * may run outside the global import lock; only each transactional promotion is
- * serialized with other library mutations.
+ * Acquires a bounded number of curated families concurrently, while conversion
+ * remains serial. Only transactional promotions use the global import lock.
  */
 export function createCuratedFamilyService({
   familyIds,
@@ -98,6 +168,7 @@ export function createCuratedFamilyService({
   convertFamily,
   installVariants,
   runInstallExclusive = (operation) => operation(),
+  acquisitionConcurrency = DEFAULT_ACQUISITION_CONCURRENCY,
   onLibraryChanged = () => {},
   onError = (error, { familyId }) =>
     console.error(`Curated family ${familyId} failed.`, error),
@@ -127,14 +198,24 @@ export function createCuratedFamilyService({
     typeof getInstalledVariantIds !== "function" ||
     typeof convertFamily !== "function" ||
     typeof installVariants !== "function" ||
-    typeof runInstallExclusive !== "function"
+    typeof runInstallExclusive !== "function" ||
+    !Number.isSafeInteger(acquisitionConcurrency) ||
+    acquisitionConcurrency < 1
   ) {
     throw new TypeError("Curated family service dependencies are incomplete.");
   }
 
-  let queue = Promise.resolve();
+  const withAcquisitionSlot = createConcurrencyGate(acquisitionConcurrency);
+  let conversionQueue = Promise.resolve();
   let stopped = false;
   const running = new Map();
+  const operations = new Set();
+
+  const enqueueConversion = (operation) => {
+    const result = conversionQueue.then(operation);
+    conversionQueue = result.catch(() => undefined);
+    return result;
+  };
 
   const setJob = (familyId, patch) => {
     if (!stopped) {
@@ -231,28 +312,35 @@ export function createCuratedFamilyService({
           status: "completed",
           progress: 100,
           error: null,
+          failure: null,
           currentVariant: null,
           installedVariantIds: [...installed],
         });
         completed = true;
         return;
       }
-      setJob(familyId, {
-        status: "downloading",
-        progress: 0,
-        error: null,
-        currentVariant: null,
-        installedVariantIds: [...installed],
-      });
-      const acquired = await acquireFamilySources({
-        familyId,
-        signal: controller.signal,
-        onProgress: (progress) =>
+      const acquired = await withAcquisitionSlot(
+        controller.signal,
+        async () => {
           setJob(familyId, {
             status: "downloading",
-            progress: normalizeProgress(progress),
-          }),
-      });
+            progress: 0,
+            error: null,
+            failure: null,
+            currentVariant: null,
+            installedVariantIds: [...installed],
+          });
+          return acquireFamilySources({
+            familyId,
+            signal: controller.signal,
+            onProgress: (progress) =>
+              setJob(familyId, {
+                status: "downloading",
+                progress: normalizeProgress(progress),
+              }),
+          });
+        },
+      );
       if (!acquired || typeof acquired.sourceRoot !== "string") {
         throw serviceError(
           "INVALID_SOURCE_ROOT",
@@ -260,77 +348,83 @@ export function createCuratedFamilyService({
         );
       }
 
-      setJob(familyId, {
-        status: "converting",
-        progress: 0,
-        error: null,
-        currentVariant: null,
-      });
-      await convertFamily({
-        familyId,
-        sourceRoot: acquired.sourceRoot,
-        skipIdentifiers: [...installed],
-        signal: controller.signal,
-        onEvent: async (rawEvent) => {
-          const event = variantEvent(rawEvent);
-          if (event.type === "variant-start") {
-            setJob(familyId, {
-              status: "converting",
-              progress: event.progress,
-              currentVariant: event.displayName ?? event.identifier,
-            });
-            return;
-          }
-          if (event.type === "progress") {
-            setJob(familyId, {
-              status: "converting",
-              progress: event.progress,
-              currentVariant: event.displayName,
-            });
-            return;
-          }
-          if (["family-complete", "done", "failed"].includes(event.type)) {
-            await flushPending();
-            return;
-          }
-          if (event.type !== "variant-complete") {
-            return;
-          }
-          if (!expected.has(event.identifier)) {
-            throw serviceError(
-              "INVALID_CONVERTER_EVENT",
-              "The curated converter emitted a variant outside its family.",
-            );
-          }
-          pending.push(event);
-          if (pending.length >= INSTALL_BATCH_SIZE) {
-            await flushPending();
-          }
-        },
-      });
-      const missing = [...expected].filter(
-        (identifier) => !installed.has(identifier),
-      );
-      if (missing.length) {
-        throw serviceError(
-          "INCOMPLETE_CONVERSION",
-          `The curated converter did not install ${missing[0]}.`,
+      await enqueueConversion(async () => {
+        controller.signal.throwIfAborted();
+        setJob(familyId, {
+          status: "converting",
+          progress: 0,
+          error: null,
+          failure: null,
+          currentVariant: null,
+        });
+        await convertFamily({
+          familyId,
+          sourceRoot: acquired.sourceRoot,
+          skipIdentifiers: [...installed],
+          signal: controller.signal,
+          onEvent: async (rawEvent) => {
+            const event = variantEvent(rawEvent);
+            if (event.type === "variant-start") {
+              setJob(familyId, {
+                status: "converting",
+                progress: event.progress,
+                currentVariant: event.displayName ?? event.identifier,
+              });
+              return;
+            }
+            if (event.type === "progress") {
+              setJob(familyId, {
+                status: "converting",
+                progress: event.progress,
+                currentVariant: event.displayName,
+              });
+              return;
+            }
+            if (["family-complete", "done", "failed"].includes(event.type)) {
+              await flushPending();
+              return;
+            }
+            if (event.type !== "variant-complete") {
+              return;
+            }
+            if (!expected.has(event.identifier)) {
+              throw serviceError(
+                "INVALID_CONVERTER_EVENT",
+                "The curated converter emitted a variant outside its family.",
+              );
+            }
+            pending.push(event);
+            if (pending.length >= INSTALL_BATCH_SIZE) {
+              await flushPending();
+            }
+          },
+        });
+        const missing = [...expected].filter(
+          (identifier) => !installed.has(identifier),
         );
-      }
-      setJob(familyId, {
-        status: "completed",
-        progress: 100,
-        error: null,
-        currentVariant: null,
-        installedVariantIds: [...installed],
+        if (missing.length) {
+          throw serviceError(
+            "INCOMPLETE_CONVERSION",
+            `The curated converter did not install ${missing[0]}.`,
+          );
+        }
+        setJob(familyId, {
+          status: "completed",
+          progress: 100,
+          error: null,
+          failure: null,
+          currentVariant: null,
+          installedVariantIds: [...installed],
+        });
+        completed = true;
       });
-      completed = true;
     } catch (error) {
       if (!stopped) {
         setJob(familyId, {
           status: "failed",
           progress: null,
           error: userFacingFailure(error),
+          failure: failureDetail(error),
           currentVariant: null,
           installedVariantIds: [...installed],
         });
@@ -349,8 +443,12 @@ export function createCuratedFamilyService({
   };
 
   const schedule = (familyId) => {
-    const operation = queue.then(() => run(familyId));
-    queue = operation.catch(() => undefined);
+    const operation = run(familyId);
+    operations.add(operation);
+    operation.then(
+      () => operations.delete(operation),
+      () => operations.delete(operation),
+    );
   };
 
   store.interruptRunning();
@@ -389,7 +487,9 @@ export function createCuratedFamilyService({
       }
     },
     async whenIdle() {
-      await queue;
+      while (operations.size) {
+        await Promise.allSettled([...operations]);
+      }
     },
   };
 }

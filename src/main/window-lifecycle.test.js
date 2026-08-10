@@ -61,17 +61,22 @@ function closeEvent() {
 
 describe("window lifecycle", () => {
   it("registers the Electron login item for either resident feature", () => {
-    expect(shouldRegisterMainAppLoginItem({ menuBar: { visible: true } })).toBe(
-      true,
-    );
     expect(
       shouldRegisterMainAppLoginItem({
+        startup: { runInBackground: true },
+        menuBar: { visible: true },
+      }),
+    ).toBe(true);
+    expect(
+      shouldRegisterMainAppLoginItem({
+        startup: { runInBackground: true },
         menuBar: { visible: false },
         appearance: { automaticSwitching: true },
       }),
     ).toBe(true);
     expect(
       shouldRegisterMainAppLoginItem({
+        startup: { runInBackground: true },
         menuBar: { visible: false },
         randomization: {
           automaticEnabled: true,
@@ -81,6 +86,7 @@ describe("window lifecycle", () => {
     ).toBe(true);
     expect(
       shouldRegisterMainAppLoginItem({
+        startup: { runInBackground: true },
         menuBar: { visible: false },
         appearance: {
           automaticSwitching: false,
@@ -94,6 +100,7 @@ describe("window lifecycle", () => {
     ).toBe(true);
     expect(
       shouldRegisterMainAppLoginItem({
+        startup: { runInBackground: true },
         menuBar: { visible: false },
         appearance: {
           automaticSwitching: false,
@@ -105,10 +112,18 @@ describe("window lifecycle", () => {
         },
       }),
     ).toBe(false);
+    expect(
+      shouldRegisterMainAppLoginItem({
+        startup: { runInBackground: false },
+        menuBar: { visible: true },
+        appearance: { automaticSwitching: true },
+      }),
+    ).toBe(false);
   });
 
   it("does not keep a launch-only schedule resident after launch work", () => {
     const preferences = {
+      startup: { runInBackground: true },
       menuBar: { visible: false },
       appearance: { automaticSwitching: false },
       randomization: {

@@ -2,10 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import zlib from "node:zlib";
 
 import * as tar from "tar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   acquireCuratedFamilySources,
@@ -217,6 +218,12 @@ describe("curated source catalog", () => {
         0,
       ),
     ).toBe(240);
+    expect(
+      CURATED_SOURCE_CATALOG.sources.find((source) => source.id === "simp1e")
+        .archiveUrl,
+    ).toBe(
+      "https://gitlab.com/api/v4/projects/cursors%2Fsimp1e/repository/archive.tar.gz?sha=f8f8f3c09dd0aa31cc9bc5499c683aad025984be",
+    );
     expect(
       CURATED_SOURCE_CATALOG.sources.every((source) =>
         source.type === "repository"
@@ -446,6 +453,107 @@ describe("curated source acquisition", () => {
     ).resolves.toBe("pinned");
   });
 
+  it("streams repository archives through the dedicated request transport", async () => {
+    const root = await temporaryRoot();
+    const seed = path.join(root, "seed");
+    await fs.promises.mkdir(path.join(seed, "assets"), { recursive: true });
+    await fs.promises.writeFile(path.join(seed, "assets/cursor.svg"), "pinned");
+    await fs.promises.writeFile(path.join(seed, "LICENSE"), "license");
+    const digest = await computeCuratedTreeDigest(seed, ["assets", "LICENSE"]);
+    const archive = rawTar([
+      { name: "wrapper/assets/", type: "5" },
+      { name: "wrapper/assets/cursor.svg", data: "pinned" },
+      { name: "wrapper/LICENSE", data: "license" },
+    ]);
+
+    const result = await acquireCuratedFamilySources({
+      familyIds: ["fixture"],
+      cacheRoot: path.join(root, "cache"),
+      catalog: repositoryCatalog({ digest }),
+      fetchImpl: async () => {
+        throw new Error("metadata fetch should not be used");
+      },
+      archiveRequestImpl: async (url, options) => {
+        expect(url).toBe("https://example.test/source.tar.gz");
+        expect(options).toMatchObject({
+          method: "GET",
+          headers: { Accept: "application/octet-stream" },
+        });
+        return {
+          statusCode: 200,
+          headers: { "content-length": String(archive.length) },
+          body: Readable.from([archive]),
+        };
+      },
+    });
+
+    await expect(
+      fs.promises.readFile(
+        path.join(result.sources[0].root, "assets/cursor.svg"),
+        "utf8",
+      ),
+    ).resolves.toBe("pinned");
+  });
+
+  it("disposes a request body rejected by its declared archive size", async () => {
+    const root = await temporaryRoot();
+    const body = Readable.from([]);
+    const destroy = vi.spyOn(body, "destroy");
+
+    await expect(
+      acquireCuratedFamilySources({
+        familyIds: ["fixture"],
+        cacheRoot: path.join(root, "cache"),
+        catalog: repositoryCatalog({
+          digest: { sha256: "a".repeat(64), entries: 2 },
+        }),
+        fetchImpl: async () => {
+          throw new Error("metadata fetch should not be used");
+        },
+        archiveRequestImpl: async () => ({
+          statusCode: 200,
+          headers: { "content-length": String(513 * 1024 * 1024) },
+          body,
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("ignores case-colliding repository paths outside the pinned inputs", async () => {
+    const root = await temporaryRoot();
+    const seed = path.join(root, "seed");
+    await fs.promises.mkdir(path.join(seed, "assets"), { recursive: true });
+    await fs.promises.writeFile(path.join(seed, "assets/cursor.svg"), "pinned");
+    await fs.promises.writeFile(path.join(seed, "LICENSE"), "license");
+    const digest = await computeCuratedTreeDigest(seed, ["assets", "LICENSE"]);
+    const archive = rawTar([
+      { name: "wrapper/assets/", type: "5" },
+      { name: "wrapper/assets/cursor.svg", data: "pinned" },
+      { name: "wrapper/LICENSE", data: "license" },
+      { name: "wrapper/ignored/Example.svg", data: "first" },
+      { name: "wrapper/ignored/example.svg", data: "second" },
+    ]);
+
+    const result = await acquireCuratedFamilySources({
+      familyIds: ["fixture"],
+      cacheRoot: path.join(root, "cache"),
+      catalog: repositoryCatalog({ digest }),
+      fetchImpl: async () => new Response(archive, { status: 200 }),
+    });
+
+    await expect(
+      fs.promises.readFile(
+        path.join(result.sources[0].root, "assets/cursor.svg"),
+        "utf8",
+      ),
+    ).resolves.toBe("pinned");
+    await expect(
+      fs.promises.access(path.join(result.sources[0].root, "ignored")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("refuses to replace or remove an unowned cache directory", async () => {
     const root = await temporaryRoot();
     const cache = path.join(root, "cache");
@@ -623,6 +731,14 @@ describe("curated source acquisition", () => {
       [
         { name: "wrapper/assets/", type: "5" },
         { name: "wrapper/assets/device", type: "3" },
+        { name: "wrapper/LICENSE", data: "license" },
+      ],
+    ],
+    [
+      "case-colliding selected path",
+      [
+        { name: "wrapper/assets/cursor.svg", data: "first" },
+        { name: "wrapper/assets/Cursor.svg", data: "second" },
         { name: "wrapper/LICENSE", data: "license" },
       ],
     ],

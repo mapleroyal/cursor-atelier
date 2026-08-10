@@ -28,6 +28,14 @@ function makeStore() {
   });
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("curated family service", () => {
   it("acquires once and installs every converted family variant incrementally", async () => {
     const store = makeStore();
@@ -86,9 +94,83 @@ describe("curated family service", () => {
       status: "completed",
       progress: 100,
       error: null,
+      failure: null,
       installedVariantIds: ["Future", "FutureCyan"],
       currentVariant: null,
     });
+  });
+
+  it("acquires four families concurrently but converts only one at a time", async () => {
+    const store = makeStore();
+    const familyIds = ["alpha", "beta", "gamma", "delta", "epsilon"];
+    const acquisitions = new Map(
+      familyIds.map((familyId) => [familyId, deferred()]),
+    );
+    const conversions = new Map(
+      familyIds.map((familyId) => [familyId, deferred()]),
+    );
+    const acquisitionStarts = [];
+    const conversionStarts = [];
+    let activeAcquisitions = 0;
+    let maximumAcquisitions = 0;
+    let activeConversions = 0;
+    let maximumConversions = 0;
+    const service = createCuratedFamilyService({
+      familyIds,
+      variantsByFamily: Object.fromEntries(
+        familyIds.map((familyId) => [familyId, [familyId.toUpperCase()]]),
+      ),
+      store,
+      acquireFamilySources: async ({ familyId }) => {
+        acquisitionStarts.push(familyId);
+        activeAcquisitions += 1;
+        maximumAcquisitions = Math.max(maximumAcquisitions, activeAcquisitions);
+        await acquisitions.get(familyId).promise;
+        activeAcquisitions -= 1;
+        return { sourceRoot: `/sources/${familyId}` };
+      },
+      convertFamily: async ({ familyId, onEvent }) => {
+        conversionStarts.push(familyId);
+        activeConversions += 1;
+        maximumConversions = Math.max(maximumConversions, activeConversions);
+        await conversions.get(familyId).promise;
+        await onEvent({
+          type: "variant-complete",
+          identifier: familyId.toUpperCase(),
+          artifactDirectory: `/work/${familyId}`,
+          progress: 100,
+        });
+        await onEvent({ type: "done" });
+        activeConversions -= 1;
+      },
+      installVariants: async ({ variants }) => ({
+        identifiers: variants.map((variant) => variant.expectedIdentifier),
+      }),
+    });
+
+    service.start(familyIds);
+    await vi.waitFor(() => expect(acquisitionStarts).toHaveLength(4));
+    expect(acquisitionStarts).toEqual(["alpha", "beta", "gamma", "delta"]);
+    expect(maximumAcquisitions).toBe(4);
+
+    acquisitions.get("alpha").resolve();
+    await vi.waitFor(() => expect(acquisitionStarts).toHaveLength(5));
+    expect(acquisitionStarts[4]).toBe("epsilon");
+    for (const familyId of familyIds.slice(1)) {
+      acquisitions.get(familyId).resolve();
+    }
+
+    await vi.waitFor(() => expect(conversionStarts).toEqual(["alpha"]));
+    for (let index = 0; index < familyIds.length; index += 1) {
+      await vi.waitFor(() => expect(conversionStarts).toHaveLength(index + 1));
+      conversions.get(conversionStarts[index]).resolve();
+    }
+    await service.whenIdle();
+
+    expect(maximumConversions).toBe(1);
+    expect(
+      service.getState().jobs.every((job) => job.status === "completed"),
+    ).toBe(true);
   });
 
   it("keeps completed variants on failure and skips them on retry", async () => {
@@ -135,6 +217,10 @@ describe("curated family service", () => {
     expect(service.getState().jobs[0]).toMatchObject({
       status: "failed",
       installedVariantIds: ["Future"],
+      failure: {
+        code: "CONVERSION_FAILED",
+        message: "renderer crashed",
+      },
     });
 
     service.retry("future");

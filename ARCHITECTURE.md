@@ -73,6 +73,9 @@ The executable supports JSON-producing commands:
 - `--validate-theme <identifier>`
 - `--apply-theme <identifier>`
 - `--teardown`
+- `--portable-preferences`
+- `--replace-portable-preferences <json>`
+- `--reset-preferences`
 - `--open-login-settings`
 - lower-level `--select-theme`, `--enable`, `--disable`, and `--setup`
 
@@ -83,6 +86,12 @@ helper as one rollback-capable operation. Teardown restores the saved Apple
 cursors and unregisters both current and legacy login items. Exit code 5 from
 apply represents a successful cursor change that still needs Login Items
 approval; the UI offers the settings action only in that state.
+Portable preference replacement is accepted only after status proves custom
+cursors, helper intent, and helper registration are inactive. It carries the
+selected theme and per-theme sizes but never desired/effective state, never
+applies a cursor, and never notifies the helper. Reset clears the complete
+app-owned `NSUserDefaults` suite through the defaults API rather than deleting
+its backing plist.
 
 ## State model
 
@@ -156,15 +165,15 @@ app registrations are removed instead. Reconciliation does not select or size
 a cursor; the current helper then reads the already committed desired/effective
 state through the normal transaction and verification path.
 
-The menu-bar setting controls whether the Electron main app is registered to
-run at login. Menu-bar launches keep a hidden renderer warm, and closing a
-window while the menu-bar item is enabled hides rather than destroys that
-renderer. Opening Settings therefore only presents the existing window and
-sends a renderer navigation event. A presented window uses macOS's regular
-activation policy and appears in the Dock; closing it switches to accessory
-mode so the Dock no longer presents the app as running. When the menu-bar item
-is disabled, closing the last window quits Electron instead. There is no
-independent Dock preference or asynchronous Dock show/hide path.
+The explicit **Run in Background at Startup** preference is off by default and
+gates registration of the Electron main app. Registration is useful only when
+at least one resident feature is enabled: the menu-bar item, appearance
+switching, or scheduled randomization. Closing the final window can keep those
+features alive for the current session; a visible menu-bar item hides and
+reuses its renderer. Command-Q always exits Electron promptly, without
+tearing down the separately managed native cursor helper or changing either
+startup preference. A presented window uses macOS's regular activation policy;
+a background-only session uses accessory mode.
 
 This ordering is part of cursor correctness, not only packaging hygiene. A
 resident helper from an older build could otherwise react to the new build's
@@ -270,6 +279,31 @@ them to Trash. Manifest caches, favorites, appearance and randomization
 references, and native per-theme size preferences are pruned only after the
 library removal. Cleanup failures are reported separately and never
 misrepresent an already completed removal as a failed one.
+
+## Portable data and reset
+
+Settings exports a versioned `.cursoratelier` gzip-tar containing a fixed
+`manifest.json` and the complete validated `ImportedPacks` library. The
+manifest carries app preferences, appearance, onboarding state, and portable
+native selection/size settings. Archive inspection and extraction reject
+links, special files, duplicate or escaping paths, excessive depth, entry
+counts, sizes, and decompression ratios.
+
+Import and full reset first stop and drain cursor automation, restore and
+verify Apple cursors, then use a private marker-backed transaction. Import
+atomically promotes the validated library and settings but forces native
+desired/effective state inactive, so it never applies the archived cursor.
+Full reset unregisters the Electron startup item, moves every app-owned data
+path into a recoverable transaction, clears both JavaScript stores and the
+native defaults suite, and relaunches into onboarding. Prior data is sent to
+Trash only after commit; an interrupted uncommitted operation rolls back at
+the next launch.
+
+Rollback deliberately does not guess at a previously live native registration.
+If import or reset fails after Apple cursors have been verified, the library,
+settings, selected theme, and sizes are restored, while Apple cursors remain
+active and the native helper remains disabled. Normal automation may act again
+only after it is resumed; the failed operation itself never reapplies a cursor.
 
 ## Package layout and identities
 

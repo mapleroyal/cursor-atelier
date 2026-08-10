@@ -73,6 +73,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getCursorPreferences: () => electron.ipcRenderer.invoke("preferences:get"),
   updateCursorPreferences: (patch) =>
     electron.ipcRenderer.invoke("preferences:update", patch),
+  exportAppData: () => electron.ipcRenderer.invoke("data:export"),
+  importAppData: () => electron.ipcRenderer.invoke("data:import"),
+  resetAppData: () =>
+    electron.ipcRenderer.invoke("data:reset", "reset-all-data"),
   randomizeCursor: () => electron.ipcRenderer.invoke("cursor:randomize"),
   getOnboardingState: () => electron.ipcRenderer.invoke("onboarding:get"),
   startOnboarding: (familyIds) =>

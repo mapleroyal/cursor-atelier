@@ -1,4 +1,4 @@
-export const CURSOR_PREFERENCES_VERSION = 6;
+export const CURSOR_PREFERENCES_VERSION = 7;
 
 export const RANDOM_SOURCES = Object.freeze(["all", "favorites", "family"]);
 export const RANDOM_SCHEDULE_MODES = Object.freeze([
@@ -47,6 +47,9 @@ export function createDefaultCursorPreferences() {
     },
     menuBar: {
       visible: true,
+    },
+    startup: {
+      runInBackground: false,
     },
   };
 }
@@ -156,6 +159,10 @@ export function normalizeCursorPreferences(value) {
     candidate.menuBar && typeof candidate.menuBar === "object"
       ? candidate.menuBar
       : {};
+  const startup =
+    candidate.startup && typeof candidate.startup === "object"
+      ? candidate.startup
+      : {};
 
   const source = RANDOM_SOURCES.includes(randomization.source)
     ? randomization.source
@@ -212,6 +219,9 @@ export function normalizeCursorPreferences(value) {
     menuBar: {
       visible: menuBar.visible !== false,
     },
+    startup: {
+      runInBackground: startup.runInBackground === true,
+    },
   };
 }
 
@@ -238,6 +248,7 @@ export function mergeCursorPreferences(current, patch) {
       },
     },
     menuBar: { ...base.menuBar, ...(update.menuBar ?? {}) },
+    startup: { ...base.startup, ...(update.startup ?? {}) },
   });
 }
 

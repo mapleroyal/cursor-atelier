@@ -6,6 +6,7 @@ const STORE_NAME = "onboarding";
 const STORE_KEY = "state";
 const FAMILY_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const THEME_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const RUNNING_STATUSES = new Set([
   "queued",
   "downloading",
@@ -16,6 +17,7 @@ const STATUSES = new Set([...RUNNING_STATUSES, "failed", "completed"]);
 const MAX_JOBS = 15;
 const MAX_VARIANTS_PER_FAMILY = 192;
 const MAX_ERROR_LENGTH = 300;
+const MAX_FAILURE_DETAIL_LENGTH = 1_200;
 
 function clone(value) {
   return structuredClone(value);
@@ -27,6 +29,21 @@ function normalizeError(value) {
   }
   const message = value.trim();
   return message ? message.slice(0, MAX_ERROR_LENGTH) : null;
+}
+
+function normalizeFailure(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const code = String(value.code ?? "").trim();
+  const message = String(value.message ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_FAILURE_DETAIL_LENGTH);
+  if (!FAILURE_CODE.test(code) || !message) {
+    return null;
+  }
+  return { code, message };
 }
 
 function normalizeProgress(value) {
@@ -69,6 +86,7 @@ function normalizeJob(value) {
     status,
     progress: normalizeProgress(value?.progress),
     error: status === "failed" ? normalizeError(value?.error) : null,
+    failure: status === "failed" ? normalizeFailure(value?.failure) : null,
     installedVariantIds,
     currentVariant: RUNNING_STATUSES.has(status) ? currentVariant : null,
   };
@@ -206,6 +224,7 @@ export function createOnboardingStore({
           status: "queued",
           progress: null,
           error: null,
+          failure: null,
           installedVariantIds: [],
           currentVariant: null,
         })),
@@ -226,6 +245,7 @@ export function createOnboardingStore({
         status: "queued",
         progress: null,
         error: null,
+        failure: null,
         currentVariant: null,
       });
     },
@@ -237,10 +257,20 @@ export function createOnboardingStore({
               status: "failed",
               progress: null,
               error: "Interrupted. Try again.",
+              failure: {
+                code: "INTERRUPTED",
+                message: "Curated family import was interrupted.",
+              },
             }
           : job,
       );
       return replace({ ...state, jobs });
+    },
+    replaceDataSnapshot(value) {
+      return replace(value);
+    },
+    resetData() {
+      return replace(normalizeOnboardingStoreState(null));
     },
     subscribe(listener) {
       if (typeof listener !== "function") {

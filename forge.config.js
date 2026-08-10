@@ -421,11 +421,13 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
     for (const templateName of [
       "MenuBarIconTemplate.png",
       "MenuBarIconTemplate@2x.png",
+      "DockIconLight.png",
+      "DockIconLight@2x.png",
+      "DockIconDark.png",
+      "DockIconDark@2x.png",
     ]) {
       if (!fs.existsSync(path.join(packagedResources, templateName))) {
-        throw new Error(
-          `The packaged menu-bar icon is missing: ${templateName}.`,
-        );
+        throw new Error(`A packaged runtime icon is missing: ${templateName}.`);
       }
     }
     const outerSignature = codesignDetails(appPath);
@@ -598,6 +600,10 @@ module.exports = {
     extraResource: [
       path.join(rootDirectory, "assets", "MenuBarIconTemplate.png"),
       path.join(rootDirectory, "assets", "MenuBarIconTemplate@2x.png"),
+      path.join(rootDirectory, "assets", "DockIconLight.png"),
+      path.join(rootDirectory, "assets", "DockIconLight@2x.png"),
+      path.join(rootDirectory, "assets", "DockIconDark.png"),
+      path.join(rootDirectory, "assets", "DockIconDark@2x.png"),
       curatedConverterDirectory,
     ],
     afterCopyExtraResources: [removeUnusedElectronMetadata],

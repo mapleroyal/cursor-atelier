@@ -1,4 +1,7 @@
 export function shouldRegisterMainAppLoginItem(preferences) {
+  if (preferences?.startup?.runInBackground !== true) {
+    return false;
+  }
   const automaticRandomizationEnabled =
     preferences?.randomization?.automaticEnabled === true;
   return (

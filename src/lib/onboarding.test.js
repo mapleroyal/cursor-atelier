@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createOptimisticOnboardingState,
   failOnboardingJobs,
+  getOnboardingFailureDetail,
   getOnboardingJobLabel,
   groupCursorFamilies,
   isOnboardingJobVisible,
@@ -36,6 +37,7 @@ describe("onboarding state", () => {
           status: "downloading",
           progress: 42,
           error: null,
+          failure: null,
           currentVariant: "White",
           installedVariantIds: ["OreoBlack"],
         },
@@ -44,6 +46,7 @@ describe("onboarding state", () => {
           status: "completed",
           progress: null,
           error: null,
+          failure: null,
           currentVariant: null,
           installedVariantIds: [],
         },
@@ -72,10 +75,42 @@ describe("onboarding state", () => {
     );
     expect(getOnboardingJobLabel(failed.jobs[0])).toBe("Failed");
     expect(failed.jobs[0].error).toBe("Network unavailable");
+    expect(failed.jobs[0].failure).toEqual({
+      code: "ONBOARDING_REQUEST_FAILED",
+      message: "Network unavailable",
+    });
 
     const retrying = queueOnboardingJob(failed, "future");
     expect(getOnboardingJobLabel(retrying.jobs[0])).toBe("Preparing…");
     expect(retrying.jobs[0].error).toBeNull();
+    expect(retrying.jobs[0].failure).toBeNull();
+  });
+
+  it("normalizes structured failure details for copyable diagnostics", () => {
+    const [job] = normalizeOnboardingState({
+      jobs: [
+        {
+          familyId: "simp1e",
+          status: "failed",
+          error: "Download failed. Try again.",
+          failure: {
+            code: "DOWNLOAD_FAILED",
+            message: "GitLab returned HTTP 406.",
+          },
+        },
+      ],
+    }).jobs;
+
+    expect(job.failure).toEqual({
+      code: "DOWNLOAD_FAILED",
+      message: "GitLab returned HTTP 406.",
+    });
+    expect(getOnboardingFailureDetail(job)).toBe(
+      "DOWNLOAD_FAILED: GitLab returned HTTP 406.",
+    );
+    expect(
+      getOnboardingFailureDetail({ error: "Conversion failed. Try again." }),
+    ).toBe("Conversion failed. Try again.");
   });
 
   it("does not keep completed jobs in the temporary rail", () => {
@@ -85,7 +120,7 @@ describe("onboarding state", () => {
     );
   });
 
-  it("merges family jobs and progressively installed variants into one rail group", () => {
+  it("keeps installed families above families that are still being added", () => {
     const jobs = [
       {
         familyId: "nordzy",
@@ -102,17 +137,23 @@ describe("onboarding state", () => {
     const packs = [
       { id: "nordzy-white", family: "Nordzy", variant: "White" },
       { id: "nordzy-black", family: "Nordzy", variant: "Black" },
+      { id: "oreo-white", family: "Oreo", variant: "White" },
     ];
 
     const groups = groupCursorFamilies(packs, jobs);
 
-    expect(groups).toHaveLength(2);
+    expect(groups).toHaveLength(3);
     expect(groups[0]).toMatchObject({
-      family: "Nordzy",
-      familyPacks: packs,
-      job: jobs[0],
+      family: "Oreo",
+      familyPacks: [packs[2]],
+      job: null,
     });
     expect(groups[1]).toMatchObject({
+      family: "Nordzy",
+      familyPacks: packs.slice(0, 2),
+      job: jobs[0],
+    });
+    expect(groups[2]).toMatchObject({
       family: "Bibata",
       familyPacks: [],
       job: jobs[1],

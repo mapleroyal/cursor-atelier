@@ -8,6 +8,7 @@
 #import <fcntl.h>
 #import <limits.h>
 #import <math.h>
+#import <stdlib.h>
 #import <sys/file.h>
 #import <sys/stat.h>
 #import <sys/sysctl.h>
@@ -26,6 +27,8 @@ static NSString * const OreoCursorActiveBootDefaultsKey = @"ActiveBootSessionUUI
 static NSString * const OreoCursorThemeSizesDefaultsKey = @"ThemeSizePercentages";
 static NSString * const OreoCursorEffectiveThemeSizeDefaultsKey =
     @"EffectiveThemeSizePercentage";
+static NSString * const OreoCursorDefaultsDomain =
+    @"com.cursoratelier.CursorAtelier.NativeCursor";
 static NSString * const OreoCursorErrorDomain =
     @"com.cursoratelier.CursorAtelier.NativeCursor.Engine";
 static const NSInteger OreoDefaultThemeSizePercentage = 100;
@@ -57,6 +60,21 @@ static const NSUInteger OreoMaximumBundledThemes = 256;
 // Covers the complete built-in, build-generated, and imported catalogue while
 // still bounding malformed preference data independently of import limits.
 static const NSUInteger OreoMaximumThemeSizeEntries = 2048;
+
+static NSString *OreoEffectiveCursorDefaultsDomain(void) {
+#if defined(OREO_CURSOR_ENGINE_TESTING)
+    const char *override = getenv("OREO_CURSOR_TEST_DEFAULTS_DOMAIN");
+    if (override) {
+        NSString *candidate = [NSString stringWithUTF8String:override];
+        if ([candidate
+                hasPrefix:@"com.cursoratelier.CursorAtelier.NativeCursor.Tests."] &&
+            candidate.length <= 192) {
+            return candidate;
+        }
+    }
+#endif
+    return OreoCursorDefaultsDomain;
+}
 
 typedef NS_ENUM(NSUInteger, OreoSnapshotPreparationDisposition) {
     OreoSnapshotPreparationCreateFresh = 0,
@@ -144,6 +162,13 @@ NSUserDefaults *OreoCursorDefaults(void) {
     static NSUserDefaults *defaults;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
+#if defined(OREO_CURSOR_ENGINE_TESTING)
+        NSString *testingDomain = OreoEffectiveCursorDefaultsDomain();
+        if (![testingDomain isEqualToString:OreoCursorDefaultsDomain]) {
+            defaults = [[NSUserDefaults alloc] initWithSuiteName:testingDomain];
+            return;
+        }
+#endif
         if ([NSBundle.mainBundle.bundleIdentifier
                 isEqualToString:@"com.cursoratelier.CursorAtelier.NativeCursor"]) {
             defaults = NSUserDefaults.standardUserDefaults;
@@ -2317,6 +2342,143 @@ OreoThemeCursorsByScalingGeometry(
         return NO;
     }
     return YES;
+}
+
++ (NSDictionary<NSString *, id> *)portablePreferences {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    [defaults synchronize];
+    NSSet<NSString *> *availableIdentifiers = [NSSet setWithArray:
+        [[self availableThemes] valueForKey:@"Identifier"]];
+    NSString *selected = [defaults stringForKey:OreoCursorThemeDefaultsKey];
+    if (![availableIdentifiers containsObject:selected] ||
+        !OreoIsSafeThemeIdentifier(selected)) {
+        selected = nil;
+    }
+    NSDictionary *storedSizes =
+        [defaults dictionaryForKey:OreoCursorThemeSizesDefaultsKey];
+    NSMutableDictionary<NSString *, NSNumber *> *sizes =
+        [NSMutableDictionary dictionary];
+    NSArray *identifiers = [[storedSizes allKeys]
+        sortedArrayUsingSelector:@selector(compare:)];
+    for (id identifier in identifiers) {
+        NSInteger size = 0;
+        if ([identifier isKindOfClass:[NSString class]] &&
+            [availableIdentifiers containsObject:identifier] &&
+            OreoIsSafeThemeIdentifier(identifier) &&
+            OreoReadThemeSizePercentage(storedSizes[identifier], &size)) {
+            sizes[identifier] = @(size);
+        }
+    }
+    return @{
+        @"schemaVersion": @1,
+        @"selectedThemeIdentifier": selected ?: NSNull.null,
+        @"themeSizePercentages": [sizes copy],
+    };
+}
+
++ (BOOL)replacePortablePreferences:(NSDictionary<NSString *, id> *)preferences
+                             error:(NSError **)error {
+    if (![preferences isKindOfClass:[NSDictionary class]] ||
+        ![preferences[@"schemaVersion"] isKindOfClass:[NSNumber class]] ||
+        CFGetTypeID((__bridge CFTypeRef)preferences[@"schemaVersion"]) ==
+            CFBooleanGetTypeID() ||
+        [preferences[@"schemaVersion"] integerValue] != 1) {
+        if (error) {
+            *error = OreoError(375, @"The native cursor settings are invalid.");
+        }
+        return NO;
+    }
+    NSSet<NSString *> *availableIdentifiers = [NSSet setWithArray:
+        [[self availableThemes] valueForKey:@"Identifier"]];
+    id rawSelected = preferences[@"selectedThemeIdentifier"];
+    NSString *selected = [rawSelected isKindOfClass:[NSString class]]
+        ? rawSelected : nil;
+    if (rawSelected != NSNull.null &&
+        (!selected || !OreoIsSafeThemeIdentifier(selected) ||
+         ![availableIdentifiers containsObject:selected])) {
+        if (error) {
+            *error = OreoError(
+                375, @"The archived cursor selection is unavailable.");
+        }
+        return NO;
+    }
+    id rawSizes = preferences[@"themeSizePercentages"];
+    if (![rawSizes isKindOfClass:[NSDictionary class]] ||
+        [rawSizes count] > OreoMaximumThemeSizeEntries) {
+        if (error) {
+            *error = OreoError(375, @"The archived cursor sizes are invalid.");
+        }
+        return NO;
+    }
+    NSMutableDictionary<NSString *, NSNumber *> *sizes =
+        [NSMutableDictionary dictionary];
+    for (id identifier in rawSizes) {
+        NSInteger size = 0;
+        if (![identifier isKindOfClass:[NSString class]] ||
+            !OreoIsSafeThemeIdentifier(identifier) ||
+            ![availableIdentifiers containsObject:identifier] ||
+            !OreoReadThemeSizePercentage(rawSizes[identifier], &size)) {
+            if (error) {
+                *error = OreoError(
+                    375, @"The archived cursor sizes are invalid.");
+            }
+            return NO;
+        }
+        if (size != OreoDefaultThemeSizePercentage) {
+            sizes[identifier] = @(size);
+        }
+    }
+
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    [defaults synchronize];
+    NSDictionary *previous =
+        [defaults persistentDomainForName:OreoEffectiveCursorDefaultsDomain()] ?:
+            @{};
+    NSMutableDictionary *next = [previous mutableCopy];
+    if (selected) {
+        next[OreoCursorThemeDefaultsKey] = selected;
+    } else {
+        [next removeObjectForKey:OreoCursorThemeDefaultsKey];
+    }
+    if (sizes.count > 0) {
+        next[OreoCursorThemeSizesDefaultsKey] = [sizes copy];
+    } else {
+        [next removeObjectForKey:OreoCursorThemeSizesDefaultsKey];
+    }
+    [defaults setPersistentDomain:[next copy]
+                          forName:OreoEffectiveCursorDefaultsDomain()];
+    if ([defaults synchronize]) {
+        return YES;
+    }
+    [defaults setPersistentDomain:previous
+                          forName:OreoEffectiveCursorDefaultsDomain()];
+    [defaults synchronize];
+    if (error) {
+        *error = OreoError(
+            376, @"The native cursor settings could not be saved.");
+    }
+    return NO;
+}
+
++ (BOOL)resetPreferences:(NSError **)error {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    [defaults synchronize];
+    NSDictionary *previous =
+        [defaults persistentDomainForName:OreoEffectiveCursorDefaultsDomain()] ?:
+            @{};
+    [defaults removePersistentDomainForName:
+        OreoEffectiveCursorDefaultsDomain()];
+    if ([defaults synchronize]) {
+        return YES;
+    }
+    [defaults setPersistentDomain:previous
+                          forName:OreoEffectiveCursorDefaultsDomain()];
+    [defaults synchronize];
+    if (error) {
+        *error = OreoError(
+            377, @"The native cursor settings could not be reset.");
+    }
+    return NO;
 }
 
 - (instancetype)initWithError:(NSError **)error {

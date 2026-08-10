@@ -27,6 +27,10 @@ function clonePreferences(preferences) {
   return structuredClone(preferences);
 }
 
+function clone(value) {
+  return structuredClone(value);
+}
+
 function normalizeAppAppearanceMode(value) {
   return APP_APPEARANCE_MODES.has(value) ? value : "system";
 }
@@ -120,9 +124,84 @@ export function createCursorPreferencesStore({
     }
   };
 
+  const dataSnapshot = () => ({
+    preferences: clonePreferences(preferences),
+    appAppearanceMode,
+    pendingThemeSizeCleanupIds: [...pendingThemeSizeCleanupIds],
+  });
+
+  const replaceData = (value) => {
+    if (!isPlainObject(value)) {
+      throw new TypeError("Cursor preference data must be an object.");
+    }
+    const nextPreferences = normalizeCursorPreferences(value.preferences);
+    const nextAppAppearanceMode = normalizeAppAppearanceMode(
+      value.appAppearanceMode,
+    );
+    const nextPendingThemeSizeCleanupIds = normalizePendingThemeSizeCleanupIds(
+      value.pendingThemeSizeCleanupIds,
+    );
+    const previous = dataSnapshot();
+    try {
+      backingStore.set(STORE_KEY, nextPreferences);
+      backingStore.set(APP_APPEARANCE_MODE_KEY, nextAppAppearanceMode);
+      backingStore.set(
+        PENDING_THEME_SIZE_CLEANUP_IDS_KEY,
+        nextPendingThemeSizeCleanupIds,
+      );
+    } catch (error) {
+      const rollbackErrors = [];
+      for (const [key, previousValue] of [
+        [STORE_KEY, previous.preferences],
+        [APP_APPEARANCE_MODE_KEY, previous.appAppearanceMode],
+        [
+          PENDING_THEME_SIZE_CLEANUP_IDS_KEY,
+          previous.pendingThemeSizeCleanupIds,
+        ],
+      ]) {
+        try {
+          backingStore.set(key, previousValue);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (rollbackErrors.length) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          "Cursor preference data could not be saved or rolled back.",
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+
+    const preferencesChanged =
+      JSON.stringify(nextPreferences) !== JSON.stringify(preferences);
+    preferences = nextPreferences;
+    appAppearanceMode = nextAppAppearanceMode;
+    pendingThemeSizeCleanupIds = nextPendingThemeSizeCleanupIds;
+    if (preferencesChanged) {
+      emit();
+    }
+    return dataSnapshot();
+  };
+
   return {
     get() {
       return clonePreferences(preferences);
+    },
+    getDataSnapshot() {
+      return dataSnapshot();
+    },
+    replaceDataSnapshot(value) {
+      return replaceData(clone(value));
+    },
+    resetData() {
+      return replaceData({
+        preferences: createDefaultCursorPreferences(),
+        appAppearanceMode: "system",
+        pendingThemeSizeCleanupIds: [],
+      });
     },
     update(patch) {
       if (!isPlainObject(patch)) {

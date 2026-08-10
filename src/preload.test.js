@@ -91,4 +91,20 @@ describe("sandbox preload", () => {
       expect.any(Function),
     );
   });
+
+  it("exposes bounded data-management commands", async () => {
+    const { api, ipcRenderer } = loadPreload();
+
+    await api.exportAppData();
+    await api.importAppData();
+    await api.resetAppData();
+
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(1, "data:export");
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(2, "data:import");
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      3,
+      "data:reset",
+      "reset-all-data",
+    );
+  });
 });

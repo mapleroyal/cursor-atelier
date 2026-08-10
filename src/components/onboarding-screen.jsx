@@ -79,7 +79,7 @@ export function OnboardingScreen({ families, onContinue }) {
         <div
           role="group"
           aria-label="Starter cursor packs"
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-y border-border/70 py-1"
+          className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain py-1"
         >
           {families.map((family) => {
             const selected = selectedIds.has(family.id);
@@ -90,20 +90,15 @@ export function OnboardingScreen({ families, onContinue }) {
                 aria-pressed={selected}
                 onClick={() => toggle(family.id)}
                 className={cn(
-                  "group flex min-h-16 w-full items-center gap-4 border-b border-border/60 px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-muted/45 focus-visible:bg-muted/45 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60",
+                  "group flex min-h-16 w-full items-center gap-4 rounded-2xl px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/45 focus-visible:bg-muted/45 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60",
                   selected
                     ? "text-foreground"
                     : "text-muted-foreground opacity-50 hover:opacity-80",
                 )}
               >
                 <PackPreviews pack={family} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-title-md text-foreground">
-                    {family.family}
-                  </span>
-                  <span className="block truncate text-body-sm text-muted-foreground">
-                    {family.variant}
-                  </span>
+                <span className="min-w-0 flex-1 truncate text-title-md text-foreground">
+                  {family.family}
                 </span>
                 <span
                   aria-hidden="true"
