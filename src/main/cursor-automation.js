@@ -449,39 +449,31 @@ export function createCursorAutomation({
     }
 
     const appearancePreference = `${appearance}CursorId`;
+    const appearanceDefault = preferences.appearance[appearancePreference];
     const lastRunAt = getNow().toISOString();
     const rollbackPatch = {
-      appearance: {
-        [appearancePreference]: preferences.appearance[appearancePreference],
-      },
       randomization: {
         lastRunAt: preferences.randomization.lastRunAt,
       },
     };
     preferencesStore.update({
-      appearance: { [appearancePreference]: identifier },
       randomization: { lastRunAt },
     });
 
     const transactionIsCurrent = () => {
       const latestPreferences = preferencesStore.get();
       return (
-        latestPreferences.appearance[appearancePreference] === identifier &&
+        latestPreferences.appearance[appearancePreference] ===
+          appearanceDefault &&
         latestPreferences.randomization.lastRunAt === lastRunAt
       );
     };
     const rollbackPatchForCurrent = () => {
       const latestPreferences = preferencesStore.get();
-      const currentRollbackPatch = {};
-      if (latestPreferences.appearance[appearancePreference] === identifier) {
-        currentRollbackPatch.appearance = rollbackPatch.appearance;
-      }
       if (latestPreferences.randomization.lastRunAt === lastRunAt) {
-        currentRollbackPatch.randomization = rollbackPatch.randomization;
+        return rollbackPatch;
       }
-      return Object.keys(currentRollbackPatch).length
-        ? currentRollbackPatch
-        : null;
+      return null;
     };
     const rollbackStaleRandomization = () => {
       const currentRollbackPatch = rollbackPatchForCurrent();

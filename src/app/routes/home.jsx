@@ -19,6 +19,7 @@ import {
   Moon02Icon,
   Search01Icon,
   Settings02Icon,
+  ShuffleIcon,
   Sun02Icon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
@@ -103,6 +104,7 @@ import {
   deleteImportedCursorFamily,
   getAutomaticSelectionId,
   getAuthoritativeStatus,
+  getCursorLibraryPresentationState,
   getCursorErrorMessage,
   getPackScopedFeedback,
   getPackScopedOperation,
@@ -733,6 +735,7 @@ function PackRail({
   familyJobs = [],
   onRetryFamily,
   loadError,
+  loading = false,
   onClose,
   className,
 }) {
@@ -910,9 +913,11 @@ function PackRail({
         <div className="mb-3 flex h-7 min-w-0 items-center justify-between gap-3 px-1">
           <div className="flex min-w-0 items-baseline gap-2">
             <h2 className="truncate text-title-md">Cursor packs</h2>
-            <span className="type-numeric text-body-sm text-muted-foreground">
-              {packs.length}
-            </span>
+            {!loading && !loadError ? (
+              <span className="type-numeric text-body-sm text-muted-foreground">
+                {packs.length}
+              </span>
+            ) : null}
           </div>
           {onClose ? (
             <Button
@@ -937,13 +942,15 @@ function PackRail({
                   verifiedActive && "bg-primary",
                 )}
               />
-              {familyJobs.some((job) => job.status !== "failed")
-                ? "Adding"
-                : !engineAvailable
-                  ? "Unavailable"
-                  : verifiedActive
-                    ? "Active"
-                    : "Off"}
+              {loading
+                ? "Loading"
+                : familyJobs.some((job) => job.status !== "failed")
+                  ? "Adding"
+                  : !engineAvailable
+                    ? "Unavailable"
+                    : verifiedActive
+                      ? "Active"
+                      : "Off"}
             </span>
           )}
         </div>
@@ -985,7 +992,7 @@ function PackRail({
         data-testid="pack-rail-scroll"
         className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pb-3 sm:px-3"
       >
-        {!loadError && allPacks.length ? (
+        {!loading && !loadError && allPacks.length ? (
           <nav aria-label="Cursor shortcuts" className="pb-2">
             {currentEntries.length ? (
               <div>
@@ -1242,7 +1249,14 @@ function PackRail({
           </nav>
         ) : null}
 
-        {loadError && !groups.length ? (
+        {loading ? (
+          <p
+            role="status"
+            className="px-3 py-8 text-center text-body-sm text-muted-foreground"
+          >
+            Loading cursor packs…
+          </p>
+        ) : loadError && !groups.length ? (
           <p className="px-3 py-8 text-center text-body-sm text-muted-foreground">
             Unavailable
           </p>
@@ -1707,15 +1721,18 @@ function PackDetails({
                     size="sm"
                     disabled={!canApply || !preferencesAvailable}
                   >
-                    Randomization…
+                    Add to…
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
                   align="end"
-                  aria-label="Randomization pools"
+                  aria-label="Add to randomization pools"
                   className="grid gap-1"
                 >
-                  {["light", "dark"].map((role) => {
+                  {[
+                    ["light", "Light mode randomization pool"],
+                    ["dark", "Dark mode randomization pool"],
+                  ].map(([role, label]) => {
                     const selected = randomizationRoles.includes(role);
                     return (
                       <button
@@ -1725,9 +1742,7 @@ function PackDetails({
                         className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent aria-pressed:bg-accent aria-pressed:font-medium"
                         onClick={() => onToggleRandomizationRole(role)}
                       >
-                        <span className="min-w-0 flex-1">
-                          Add to {role} mode pool
-                        </span>
+                        <span className="min-w-0 flex-1">{label}</span>
                         {selected ? (
                           <HugeiconsIcon
                             icon={Tick02Icon}
@@ -2015,18 +2030,32 @@ function CatalogueFailure({ onRetry, retrying }) {
   );
 }
 
-function EmptyLibrary({ adding = false }) {
+function EmptyLibrary({ adding = false, loading = false }) {
   return (
     <section className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-8 text-center">
-      <div className="grid justify-items-center gap-2 text-muted-foreground">
-        <HugeiconsIcon
-          icon={Cursor01Icon}
-          strokeWidth={1.6}
-          className="size-7 opacity-60"
-          aria-hidden="true"
-        />
+      <div
+        role={loading ? "status" : undefined}
+        className="grid justify-items-center gap-2 text-muted-foreground"
+      >
+        {loading ? (
+          <span
+            aria-hidden="true"
+            className="size-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground"
+          />
+        ) : (
+          <HugeiconsIcon
+            icon={Cursor01Icon}
+            strokeWidth={1.6}
+            className="size-7 opacity-60"
+            aria-hidden="true"
+          />
+        )}
         <p className="text-body-md">
-          {adding ? "Adding cursor packs…" : "No cursor packs"}
+          {loading
+            ? "Loading cursor packs…"
+            : adding
+              ? "Adding cursor packs…"
+              : "No cursor packs"}
         </p>
       </div>
     </section>
@@ -2242,6 +2271,9 @@ export function HomeRoute() {
   const nativeThemeData = nativeThemesQuery.data;
   const nativeThemeQueryError = nativeThemesQuery.isError;
   const nativeThemeQuerySuccess = nativeThemesQuery.isSuccess;
+  const cataloguePresentationState =
+    getCursorLibraryPresentationState(nativeThemesQuery);
+  const catalogueLoadError = cataloguePresentationState === "error";
 
   const packs = useMemo(() => {
     // Main already validates and normalizes every native row against the
@@ -2269,6 +2301,12 @@ export function HomeRoute() {
     staleTime: 10_000,
     retry: false,
   });
+  const initialCursorDataLoading = Boolean(
+    !catalogueLoadError &&
+    (cataloguePresentationState === "loading" ||
+      preferencesQuery.isPending ||
+      statusQuery.isPending),
+  );
 
   const statusUnavailable = isStatusQueryUnavailable(statusQuery);
   const authoritativeStatus = getAuthoritativeStatus(statusQuery);
@@ -2285,7 +2323,6 @@ export function HomeRoute() {
   const nativeThemeListAvailable = Boolean(
     Array.isArray(nativeThemeData) && nativeThemeData.length,
   );
-  const catalogueLoadError = nativeThemeQueryError;
   const nativeEngineAvailable = Boolean(
     !statusUnavailable &&
     authoritativeStatus?.bridgeAvailable &&
@@ -3253,6 +3290,9 @@ export function HomeRoute() {
       ),
     [onboardingFamilyJobs],
   );
+  const addingCursorPacks = onboardingFamilyJobs.some(
+    (job) => job.status !== "failed",
+  );
   const libraryActions = useMemo(
     () => ({
       familyNames,
@@ -3352,6 +3392,24 @@ export function HomeRoute() {
                     Restore the cursor macOS was using before Cursor Atelier
                   </TooltipContent>
                 </Tooltip>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleRandomize()}
+                  disabled={
+                    !canRandomize ||
+                    operation !== "idle" ||
+                    pendingPreferenceCount > 0
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={ShuffleIcon}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                  {operation === "randomizing" ? "Randomizing…" : "Randomize"}
+                </Button>
               </div>
             </TooltipProvider>
             {isMobile ? (
@@ -3402,6 +3460,7 @@ export function HomeRoute() {
                       void retryOnboardingImport(familyId)
                     }
                     loadError={catalogueLoadError}
+                    loading={initialCursorDataLoading}
                     onClose={() => setRailOpen(false)}
                   />
                 </SheetContent>
@@ -3476,6 +3535,7 @@ export function HomeRoute() {
               familyJobs={onboardingFamilyJobs}
               onRetryFamily={(familyId) => void retryOnboardingImport(familyId)}
               loadError={catalogueLoadError}
+              loading={initialCursorDataLoading}
             />
           </aside>
           {catalogueLoadError ? (
@@ -3483,6 +3543,8 @@ export function HomeRoute() {
               onRetry={() => void nativeThemesQuery.refetch()}
               retrying={nativeThemesQuery.isFetching}
             />
+          ) : initialCursorDataLoading ? (
+            <EmptyLibrary loading />
           ) : selectedPack ? (
             <PackDetails
               key={selectedPack.id}
@@ -3528,7 +3590,7 @@ export function HomeRoute() {
               statusRetrying={statusQuery.isFetching}
             />
           ) : (
-            <EmptyLibrary adding={onboardingFamilyJobs.length > 0} />
+            <EmptyLibrary adding={addingCursorPacks} />
           )}
         </div>
       )}

@@ -5,6 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const expectedBundleId = "com.cursoratelier.CursorAtelier";
+const expectedNativeBundleId = "com.cursoratelier.CursorAtelier.NativeCursor";
+const expectedHelperBundleId =
+  "com.cursoratelier.CursorAtelier.NativeCursor.LoginHelper";
 const installedApp = "/Applications/Cursor Atelier.app";
 const launchServices =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -115,6 +118,58 @@ function topLevelProductApps(outputRoot) {
   return apps;
 }
 
+function stagedProductApps(appPath) {
+  const nativeApp = path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "Oreo Cursor.app",
+  );
+  const helperApp = path.join(
+    nativeApp,
+    "Contents",
+    "Library",
+    "LoginItems",
+    "Oreo Cursor Login Helper.app",
+  );
+  const apps = [
+    [helperApp, expectedHelperBundleId],
+    [nativeApp, expectedNativeBundleId],
+    [appPath, expectedBundleId],
+  ];
+
+  for (const [candidate, expectedIdentifier] of apps) {
+    const candidateStat = fs.lstatSync(candidate);
+    if (!candidateStat.isDirectory() || candidateStat.isSymbolicLink()) {
+      throw new Error(`Refusing an unexpected staged app: ${candidate}`);
+    }
+    if (plistValue(candidate, "CFBundleIdentifier") !== expectedIdentifier) {
+      throw new Error(
+        `The staged app has an unexpected bundle identifier: ${candidate}`,
+      );
+    }
+  }
+  return apps.map(([candidate]) => candidate);
+}
+
+function registeredApplicationPaths() {
+  const result = spawnSync(launchServices, ["-dump"], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `Inspecting LaunchServices registrations failed: ${result.stderr.trim()}`,
+    );
+  }
+  return new Set(
+    result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim().match(/^path:\s+(.+) \([^)]*\)$/)?.[1])
+      .filter(Boolean),
+  );
+}
+
 function runLaunchServices(args, description) {
   const result = spawnSync(launchServices, args, { encoding: "utf8" });
   if (result.status !== 0) {
@@ -156,6 +211,8 @@ for (const outputRoot of outputRoots) {
   validateOutputRoot(outputRoot);
   candidates.push(...topLevelProductApps(outputRoot));
 }
+const stagedApps = candidates.flatMap(stagedProductApps);
+const registeredApps = registeredApplicationPaths();
 
 const currentOutput = path.join(projectRoot, "out.noindex");
 if (
@@ -174,7 +231,11 @@ if (
 for (const outputRoot of outputRoots) {
   process.stdout.write(`Validated package output for cleanup: ${outputRoot}\n`);
 }
-for (const appPath of candidates) {
+for (const appPath of stagedApps) {
+  if (!registeredApps.has(appPath)) {
+    process.stdout.write(`Staged app is already unregistered: ${appPath}\n`);
+    continue;
+  }
   if (dryRun) {
     process.stdout.write(`Would unregister staged app: ${appPath}\n`);
     continue;

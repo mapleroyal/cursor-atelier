@@ -197,6 +197,16 @@ export function resolvePackQuerySource(query, fallback) {
   return fallback;
 }
 
+export function getCursorLibraryPresentationState(query) {
+  if (!query?.isSuccess && !query?.isError) {
+    return "loading";
+  }
+  if (query.isError) {
+    return "error";
+  }
+  return Array.isArray(query.data) && query.data.length ? "ready" : "empty";
+}
+
 export function getAutomaticSelectionId(packs, selectedId) {
   if (!Array.isArray(packs) || packs.length === 0) {
     return null;

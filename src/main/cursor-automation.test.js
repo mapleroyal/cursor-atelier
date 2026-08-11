@@ -140,44 +140,60 @@ function expectGuardedApply(mock, identifier) {
 }
 
 describe("cursor automation", () => {
-  it("uses the current appearance pool, applies, and remembers the result", async () => {
-    const preferencesStore = createMemoryPreferences({
-      favorites: { cursorIds: ["OreoWhite", "OreoBlack"] },
-      randomization: {
-        source: "favorites",
-        pools: { light: ["OreoWhite"], dark: ["OreoBlack"] },
-      },
-    });
-    const nativeBridge = bridge({
-      themes: [theme("OreoWhite"), theme("OreoBlack"), theme("Moga", "Moga")],
-      status: { effectiveNativeThemeId: "OreoWhite" },
-    });
-    const changed = vi.fn();
-    const automation = createCursorAutomation({
-      bridge: nativeBridge,
-      preferencesStore,
-      getSystemAppearance: () => "dark",
-      random: () => 0,
-      now: () => new Date("2026-08-06T20:15:00.000Z"),
-      onCursorChanged: changed,
-    });
+  it.each(["light", "dark"])(
+    "uses the %s appearance pool without changing either appearance default",
+    async (appearance) => {
+      const originalAppearance = {
+        automaticSwitching: true,
+        lightCursorId: "OreoWhite",
+        darkCursorId: "OreoBlack",
+      };
+      const preferencesStore = createMemoryPreferences({
+        appearance: originalAppearance,
+        favorites: { cursorIds: ["Moga"] },
+        randomization: {
+          source: "favorites",
+          pools: { light: ["Moga"], dark: ["Moga"] },
+        },
+      });
+      const observedAppearances = [];
+      preferencesStore.subscribe((snapshot) => {
+        observedAppearances.push(snapshot.appearance);
+      });
+      const nativeBridge = bridge({
+        themes: [theme("OreoWhite"), theme("OreoBlack"), theme("Moga", "Moga")],
+        status: {
+          effectiveNativeThemeId:
+            appearance === "light" ? "OreoWhite" : "OreoBlack",
+        },
+      });
+      const changed = vi.fn();
+      const automation = createCursorAutomation({
+        bridge: nativeBridge,
+        preferencesStore,
+        getSystemAppearance: () => appearance,
+        random: () => 0,
+        now: () => new Date("2026-08-06T20:15:00.000Z"),
+        onCursorChanged: changed,
+      });
 
-    const result = await automation.randomize("menu");
+      const result = await automation.randomize("menu");
 
-    expect(result.cursor.nativeThemeId).toBe("OreoBlack");
-    expectGuardedApply(nativeBridge.applyTheme, "OreoBlack");
-    expect(preferencesStore.get().randomization.lastRunAt).toBe(
-      "2026-08-06T20:15:00.000Z",
-    );
-    expect(preferencesStore.get().appearance).toEqual({
-      automaticSwitching: false,
-      lightCursorId: null,
-      darkCursorId: "OreoBlack",
-    });
-    expect(changed).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: "menu" }),
-    );
-  });
+      expect(result.cursor.nativeThemeId).toBe("Moga");
+      expectGuardedApply(nativeBridge.applyTheme, "Moga");
+      expect(preferencesStore.get().randomization.lastRunAt).toBe(
+        "2026-08-06T20:15:00.000Z",
+      );
+      expect(preferencesStore.get().appearance).toEqual(originalAppearance);
+      expect(observedAppearances).not.toHaveLength(0);
+      expect(observedAppearances).toEqual(
+        observedAppearances.map(() => originalAppearance),
+      );
+      expect(changed).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "menu" }),
+      );
+    },
+  );
 
   it("keeps randomization state when a follow-up status verifies an initially unverified apply", async () => {
     const preferencesStore = createMemoryPreferences({

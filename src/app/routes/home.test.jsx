@@ -8,6 +8,7 @@ import {
   deleteImportedCursorFamily,
   getAutomaticSelectionId,
   getAuthoritativeStatus,
+  getCursorLibraryPresentationState,
   getCursorErrorMessage,
   getPackRailNavigationIndex,
   getPackScopedFeedback,
@@ -450,6 +451,36 @@ describe("cursor rail behavior", () => {
     expect(
       resolvePackQuerySource({ data: native, isError: true }, fallback),
     ).toBe(native);
+  });
+
+  it("distinguishes a pending cursor inventory from a confirmed empty library", () => {
+    expect(
+      getCursorLibraryPresentationState({
+        isPending: true,
+        isSuccess: false,
+        isError: false,
+      }),
+    ).toBe("loading");
+    expect(
+      getCursorLibraryPresentationState({
+        data: [],
+        isSuccess: true,
+        isError: false,
+      }),
+    ).toBe("empty");
+    expect(
+      getCursorLibraryPresentationState({
+        data: [{ id: "native" }],
+        isSuccess: true,
+        isError: false,
+      }),
+    ).toBe("ready");
+    expect(
+      getCursorLibraryPresentationState({
+        isSuccess: false,
+        isError: true,
+      }),
+    ).toBe("error");
   });
 
   it("confirms apply success only for the live, sentinel-verified pack", () => {

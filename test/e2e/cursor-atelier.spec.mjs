@@ -283,6 +283,12 @@ test.describe("Cursor Atelier packaged UI", () => {
     cursorPage: page,
   }) => {
     await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
+    const randomize = page.getByRole("button", {
+      name: "Randomize",
+      exact: true,
+    });
+    await expect(randomize).toBeVisible();
+    await expect(randomize.locator("svg")).toHaveCount(1);
     await expect(
       page
         .getByTestId("pack-rail-scroll")

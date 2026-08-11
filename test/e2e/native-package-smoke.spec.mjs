@@ -489,6 +489,22 @@ test.describe("packaged native integration", () => {
       await expect(variants.filter({ hasText: "Default" })).toHaveCount(1);
       await expect(variants.filter({ hasText: "Cyan" })).toHaveCount(1);
 
+      const addTo = page.getByRole("button", {
+        name: "Add to…",
+        exact: true,
+      });
+      await expect(addTo).toBeVisible();
+      await addTo.click();
+      for (const label of [
+        "Light mode randomization pool",
+        "Dark mode randomization pool",
+      ]) {
+        await expect(
+          page.getByRole("button", { name: label, exact: true }),
+        ).toBeVisible();
+      }
+      await page.keyboard.press("Escape");
+
       const status = await page.evaluate(() =>
         window.electronAPI.getCursorStatus(),
       );
