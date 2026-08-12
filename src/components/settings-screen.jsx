@@ -695,9 +695,7 @@ export function SettingsScreen({
 
               <Field orientation="responsive">
                 <FieldContent>
-                  <p className="text-body-md font-medium leading-snug text-foreground">
-                    App Icon
-                  </p>
+                  <p className="text-title-md text-foreground">App Icon</p>
                 </FieldContent>
                 <p className="max-w-md text-body-sm text-muted-foreground sm:text-right">
                   Follows System Settings → Appearance → Icon &amp; widget style

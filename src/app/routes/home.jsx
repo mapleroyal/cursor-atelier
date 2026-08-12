@@ -707,6 +707,7 @@ function FamilyJobStatus({ job }) {
       ) : (
         <span
           aria-hidden="true"
+          data-corner-shape="round"
           className="size-3 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground"
         />
       )}
@@ -937,6 +938,8 @@ function PackRail({
           ) : (
             <span className="flex shrink-0 items-center gap-1.5 text-label-md text-muted-foreground">
               <span
+                aria-hidden="true"
+                data-corner-shape="round"
                 className={cn(
                   "size-1.5 rounded-full bg-muted-foreground/40",
                   verifiedActive && "bg-primary",
@@ -996,7 +999,7 @@ function PackRail({
           <nav aria-label="Cursor shortcuts" className="pb-2">
             {currentEntries.length ? (
               <div>
-                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground">
+                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm text-muted-foreground">
                   Current
                 </h3>
                 <div className="space-y-0.5">
@@ -1031,7 +1034,7 @@ function PackRail({
 
             {defaultEntries.length ? (
               <div>
-                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground">
+                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm text-muted-foreground">
                   Defaults
                 </h3>
                 <div className="space-y-0.5">
@@ -1067,7 +1070,7 @@ function PackRail({
 
             {hasFavorites ? (
               <div>
-                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground">
+                <h3 className="px-2.5 pt-1 pb-0.5 text-label-sm text-muted-foreground">
                   Favorites
                 </h3>
                 <div className="space-y-0.5">
@@ -1141,7 +1144,7 @@ function PackRail({
             <section aria-labelledby="randomization-pools-heading">
               <h3
                 id="randomization-pools-heading"
-                className="px-2.5 pt-1 pb-0.5 text-label-sm tracking-[0.02em] text-muted-foreground"
+                className="px-2.5 pt-1 pb-0.5 text-label-sm text-muted-foreground"
               >
                 Randomization Pools
               </h3>
@@ -1188,13 +1191,13 @@ function PackRail({
                             <CollapsibleTrigger asChild>
                               <button
                                 type="button"
-                                className="group flex w-full min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                                className="group flex w-full min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-label-sm text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
                               >
                                 {poolHeader}
                               </button>
                             </CollapsibleTrigger>
                           ) : (
-                            <div className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-label-sm tracking-[0.02em] text-muted-foreground">
+                            <div className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-label-sm text-muted-foreground">
                               {poolHeader}
                             </div>
                           )}
@@ -1343,7 +1346,7 @@ function PackRail({
                         {searchActive ? (
                           <div
                             className={cn(
-                              "flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground",
+                              "flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-label-sm text-muted-foreground",
                               job && !familyFailed && "opacity-60",
                               familyFailed && "text-destructive",
                             )}
@@ -1355,7 +1358,7 @@ function PackRail({
                             <button
                               type="button"
                               className={cn(
-                                "group flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm tracking-[0.02em] text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+                                "group flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
                                 job && !familyFailed && "opacity-60",
                                 familyFailed && "text-destructive",
                               )}
@@ -1367,9 +1370,9 @@ function PackRail({
                         {familyFailed ? (
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant="destructive-text"
                             size="icon-xs"
-                            className="mr-1 shrink-0 text-destructive hover:text-destructive"
+                            className="mr-1 shrink-0"
                             onClick={() => onRetryFamily(job.familyId)}
                             aria-label={`Retry ${family}`}
                           >
@@ -1739,7 +1742,7 @@ function PackDetails({
                         key={role}
                         type="button"
                         aria-pressed={selected}
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent aria-pressed:bg-accent aria-pressed:font-medium"
+                        className="text-body-md flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:bg-accent aria-pressed:bg-accent aria-pressed:text-label-lg"
                         onClick={() => onToggleRandomizationRole(role)}
                       >
                         <span className="min-w-0 flex-1">{label}</span>
@@ -2040,6 +2043,7 @@ function EmptyLibrary({ adding = false, loading = false }) {
         {loading ? (
           <span
             aria-hidden="true"
+            data-corner-shape="round"
             className="size-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground"
           />
         ) : (

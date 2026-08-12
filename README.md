@@ -50,7 +50,9 @@ release concerns.
 Architecture decisions and current verification are recorded in
 [ARCHITECTURE.md](ARCHITECTURE.md) and
 [PROGRESS_TRACKER.md](PROGRESS_TRACKER.md). Source and license provenance is in
-[CURSOR_PACK_NOTICES.md](CURSOR_PACK_NOTICES.md).
+[CURSOR_PACK_NOTICES.md](CURSOR_PACK_NOTICES.md). Renderer conventions are in
+[the typography system](docs/typography-design-system.md) and
+[the shape system](docs/shape-design-system.md).
 
 ## Stack
 

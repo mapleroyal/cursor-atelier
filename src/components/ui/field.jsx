@@ -32,7 +32,7 @@ function FieldContent({ className, ...props }) {
     <div
       data-slot="field-content"
       className={cn(
-        "flex min-w-0 flex-1 flex-col gap-1 leading-snug",
+        "text-body-md flex min-w-0 flex-1 flex-col gap-1",
         className,
       )}
       {...props}
@@ -45,7 +45,7 @@ function FieldLabel({ className, ...props }) {
     <label
       data-slot="field-label"
       className={cn(
-        "flex w-fit gap-2 text-body-md font-medium leading-snug text-foreground",
+        "text-label-lg flex w-fit gap-2 text-foreground",
         className,
       )}
       {...props}
