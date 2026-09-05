@@ -249,22 +249,25 @@
       "type": "gnome-look",
       "directory": "remus",
       "productId": 2355234,
-      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2355234?format=json",
+      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2355234/archived?format=json",
       "archives": [
         {
           "name": "Remus-Black.zip",
+          "upstreamMd5": "c64a1ba23d568dee56e1353d1fa967a4",
           "sha256": "425e1aa9530c65cadb1b6b319b2b08ca3458c12dbd3484784f78f9f14c5dd225",
           "treeSha256": "3396aa76cc0090cbabbca38439b743c4d3c8011aaab8df7974ac115ac1bd5836",
           "treeEntries": 187
         },
         {
           "name": "Remus-Dark.zip",
+          "upstreamMd5": "5804dbd817924ae14de1bf8af43f6db1",
           "sha256": "d939e3642cda0cb3f51da08c2ba378754d532eb46d631386a94c4dd8769a51e7",
           "treeSha256": "2dd78451e98808ee011e97d61235f51a8ec96fe738480cf318314259520d6afe",
           "treeEntries": 187
         },
         {
           "name": "Remus-White.zip",
+          "upstreamMd5": "eb31d6ade24f5e5f07605c5f6e3e06a0",
           "sha256": "9d615720e41148e1d1f12ba8a1ae0811b7544d4b874385ddde91fd5439baedf7",
           "treeSha256": "7cc130b4fe37bbca528e6f07806ec4d72f044d8ba63cc564d12f0f9827c8d09d",
           "treeEntries": 187
@@ -276,28 +279,32 @@
       "type": "gnome-look",
       "directory": "drop",
       "productId": 2330173,
-      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2330173?format=json",
+      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2330173/archived?format=json",
       "archives": [
         {
           "name": "Drop-Alien.zip",
+          "upstreamMd5": "9e571cadf1fc81cc5eca778a3148dec3",
           "sha256": "983f230067062d36c842fc64bd5cf8689a19cb6f63ab9e22652ca9e23a6a8655",
           "treeSha256": "2e36ee9368900e265f1e1e11781d2fb27e0afd39bec83e5fede80ca6fc0c4944",
           "treeEntries": 187
         },
         {
           "name": "Drop-Blood.zip",
+          "upstreamMd5": "c6373e1b89edea3245f09c59303194cd",
           "sha256": "13c00a1ecf7b11f34c838d9f6df9d79ec5806cd99ca20ac7100ee421f1bd0dfb",
           "treeSha256": "cba8be40ae3e0f001dbbd2b6b6df1fed77991c618965b3c03a1c3a291e2c59a5",
           "treeEntries": 187
         },
         {
           "name": "Drop-Blue.zip",
+          "upstreamMd5": "75310a6515516025fc740a1a899e17a5",
           "sha256": "3d1937c1c2e71777c814f8862cbbea31cddd003b11c60b195dcec1a46ffe3cb4",
           "treeSha256": "ba1e946fe2641cb0ebf43be9be78156fad28365f416abcd6fc99e3713142a086",
           "treeEntries": 187
         },
         {
           "name": "Drop-BlueLayan.zip",
+          "upstreamMd5": "56780b9a87a63c5a63bfc555a0d74936",
           "sha256": "9e0eddc936ed5c0c9524d166d9ee5824f0b5cbbddae74745729af58d5a64c805",
           "treeSha256": "9d05f54cc7cf0d84b7946696bc3ff1dd3c3969a5b3f958fd7dec84daa31e83f3",
           "treeEntries": 187
@@ -309,22 +316,25 @@
       "type": "gnome-look",
       "directory": "moga-classic",
       "productId": 2296782,
-      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2296782?format=json",
+      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2296782/archived?format=json",
       "archives": [
         {
           "name": "Moga-Black.zip",
+          "upstreamMd5": "1e71e8378505bfd588cad1debe2a159e",
           "sha256": "f7d3602759eccb223dd9fdc0c6d9d8e3ee2657851732c0c3d227dde4919d7d7f",
           "treeSha256": "bf92e1dc379d632c296be98b1ef6807f87d8c45268bf2d691f08942ffd48a734",
           "treeEntries": 187
         },
         {
           "name": "Moga-Dark.zip",
+          "upstreamMd5": "28a95433b7d0e3aeff63359759226802",
           "sha256": "53ef5a707f63e4efbb818907999717792b63bdaa5596a1e85e36019ecf82ff7f",
           "treeSha256": "0a862748271583d89b7db8aa68bb86067065c25ca470323cbb295f6256eb028a",
           "treeEntries": 187
         },
         {
           "name": "Moga-White.zip",
+          "upstreamMd5": "751da320d40e306f039b4cb1e6ea678d",
           "sha256": "f7f7075dfeea6ef2e18b19a9b4bdfeff6587c7b9865c0d44ec481181ebfdb0b2",
           "treeSha256": "38ad87673d1a8441e1f1493e93c3a510fda8e70ba3f8fc26399f149b6571ba23",
           "treeEntries": 187
@@ -336,28 +346,32 @@
       "type": "gnome-look",
       "directory": "moga-candy",
       "productId": 2299255,
-      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2299255?format=json",
+      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2299255/archived?format=json",
       "archives": [
         {
           "name": "Moga-Candy-Blue.zip",
+          "upstreamMd5": "65258d2acce53d83e32cb7a7f89afc9d",
           "sha256": "b1572a542bb1a865c0f074457f534bb100c56e8c23ceeef2e22f8cddad90fd4d",
           "treeSha256": "5c9f9580cb49adb1bfee83fa873dbd509847ca95a679b54dc08e667514dd9ba4",
           "treeEntries": 187
         },
         {
           "name": "Moga-Candy-Caramel.zip",
+          "upstreamMd5": "eef256fdb44ac6cf91091ef0157b4d08",
           "sha256": "2d934a63a28c487f3d94942e898a8ea17a4b980ec3ac84f77b9c3cbf1187e2cd",
           "treeSha256": "4f884ba20497dc529003d7e2ff9394b8e160c41434a53813e2fc118c2db5033f",
           "treeEntries": 187
         },
         {
           "name": "Moga-Candy-Green.zip",
+          "upstreamMd5": "d8d19f7e5acfb46e8ab45b4bd32cf7b3",
           "sha256": "a3b989f1f5c833e44a18e741786dd3ba89f8e214053207fe033bbb80ad198a40",
           "treeSha256": "af6227bc646607736d409e9018cf4cfb55aaf47c657152d3e118ec228a787eac",
           "treeEntries": 187
         },
         {
           "name": "Moga-Candy-Grey.zip",
+          "upstreamMd5": "5f3ea716fdc9052616fcf60e41d03ed2",
           "sha256": "f0a4896ba78c11a469240615fc115bc943b10923fcc549839fb9aab40a2fc691",
           "treeSha256": "aa7339bcd613412a65094231227d554b103f23a5f5c077b5a7496481154d59bc",
           "treeEntries": 187
@@ -369,28 +383,32 @@
       "type": "gnome-look",
       "directory": "moga-colors",
       "productId": 2297654,
-      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2297654?format=json",
+      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2297654/archived?format=json",
       "archives": [
         {
           "name": "Moga-Blue.zip",
+          "upstreamMd5": "a3ceddec35c7885fd6b510253c955dbd",
           "sha256": "8105924dfbb67c1a2ad050be0299c61a4c05c0cf6d3022f959a367e1ac167eca",
           "treeSha256": "a9fe00646cc893a9e338e86084f596bc4533827d16ffb1d201e259af0719be18",
           "treeEntries": 187
         },
         {
           "name": "Moga-Cyan.zip",
+          "upstreamMd5": "e3944109cc1099a1f2822f68493c35ce",
           "sha256": "fe06db7762dcb8c75edccd6f211460a936d56ea86d2e66ff005c74da45bdaf31",
           "treeSha256": "020296b6d8e6573364190c1af943acc8f08b22373ba65de17c99690de56b8848",
           "treeEntries": 187
         },
         {
           "name": "Moga-Green.zip",
+          "upstreamMd5": "1eaef4af3eb46f9924f5de209873eb32",
           "sha256": "462610a5f77b11092a68e0575e0acfbf53defafa399b587b1ab2338f80d442c4",
           "treeSha256": "57149091cee16514814b5fb29b408d15bb4da4c8f317dad23b783de0cf372eda",
           "treeEntries": 187
         },
         {
           "name": "Moga-Grey.zip",
+          "upstreamMd5": "3a77bfe9f9fc7e5917a1225a1e1bc701",
           "sha256": "164d2517d0b68ef009324d7d00e5947a8e6b4c1e69f3a51b6e29acdb6ab5565d",
           "treeSha256": "9c3f385bd93370271139df0bedf46c017ebd49b4b92500a850ce8ea1bf068fee",
           "treeEntries": 187
@@ -402,28 +420,32 @@
       "type": "gnome-look",
       "directory": "moga-neon",
       "productId": 2302110,
-      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2302110?format=json",
+      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2302110/archived?format=json",
       "archives": [
         {
           "name": "Moga-Neon-Blue.zip",
+          "upstreamMd5": "8766adc21ea596de52da767e7a9eca71",
           "sha256": "f575712629e1e4af0282d2b0a40b72ed9f5d338d4cf0c635783a2d0aa9c6994f",
           "treeSha256": "c7dca5581552f8dd9ad7caf885c31e3bf36f7e862d34a31939f9fe9c69820387",
           "treeEntries": 187
         },
         {
           "name": "Moga-Neon-Butter.zip",
+          "upstreamMd5": "9b8d64d35c92218654b81f025c9c307b",
           "sha256": "abd2882fbd0aac3e91186a6f668a2dffe2460a0bc5626ef596225834c27a2fb0",
           "treeSha256": "640f35a10e86c47c2cbe8e4f0203bb84be897673bc9501db41f24a8e63ff6b8e",
           "treeEntries": 187
         },
         {
           "name": "Moga-Neon-Cyan.zip",
+          "upstreamMd5": "ae18d8f4e529a1983b7a35b38a339b8b",
           "sha256": "7c63c6abb6e7245844d1785c992711fbb9f48ddcb0cfc1722fcf2f551ffeeedf",
           "treeSha256": "f3b387f115833a6fd1e8605c9d61d3504eddf2588db0061f872e804e898a89f3",
           "treeEntries": 187
         },
         {
           "name": "Moga-Neon-Green.zip",
+          "upstreamMd5": "25e9a0f4df1f2bd4b749d687c2810c63",
           "sha256": "326a2810f5d711c57eb0ef1a4362a88ebfcba43ca6840f3cf2f0ef1d524e84ba",
           "treeSha256": "6b95f28bc9833550f5b61b398fcd8c6147e1fa19d85ec67674b74018da8b8772",
           "treeEntries": 187
@@ -435,10 +457,11 @@
       "type": "gnome-look",
       "directory": "moga-light",
       "productId": 2364891,
-      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2364891?format=json",
+      "metadataUrl": "https://api.opendesktop.org/ocs/v1/content/data/2364891/archived?format=json",
       "archives": [
         {
           "name": "Moga-Light-Blue.zip",
+          "upstreamMd5": "e6aa743f73218279ca99d554141d49e8",
           "sha256": "89e6648424adbe5834557586ae052c637ee7c5784ea399e3db410b9e2f45f607",
           "treeSha256": "b194799641b05a2ea459f9bb784414875b174a136198a71935e2d9f477642a3f",
           "treeEntries": 187

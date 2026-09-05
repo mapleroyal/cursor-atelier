@@ -138,7 +138,7 @@ describe("curated family service", () => {
           type: "variant-complete",
           identifier: familyId.toUpperCase(),
           artifactDirectory: `/work/${familyId}`,
-          progress: 100,
+          progress: 1,
         });
         await onEvent({ type: "done" });
         activeConversions -= 1;
@@ -191,7 +191,7 @@ describe("curated family service", () => {
             type: "variant-complete",
             identifier: "Future",
             artifactDirectory: "/work/Future",
-            progress: 50,
+            progress: 0.5,
           });
           await onEvent({ type: "failed", familyId: "future" });
           throw Object.assign(new Error("renderer crashed"), {
@@ -202,7 +202,7 @@ describe("curated family service", () => {
           type: "variant-complete",
           identifier: "FutureCyan",
           artifactDirectory: "/work/FutureCyan",
-          progress: 100,
+          progress: 1,
         });
         await onEvent({ type: "done" });
       },
@@ -245,6 +245,48 @@ describe("curated family service", () => {
 
     expect(() => service.start(["unknown"])).toThrow(/selection/);
     expect(() => service.start(["future", "future"])).toThrow(/selection/);
+  });
+
+  it("lets unavailable source imports be dismissed without converting or removing installed themes", async () => {
+    const store = makeStore();
+    const acquisition = deferred();
+    const convertFamily = vi.fn();
+    const installVariants = vi.fn();
+    const service = createCuratedFamilyService({
+      familyIds: ["future"],
+      variantsByFamily: { future: ["Future", "FutureCyan"] },
+      store,
+      getInstalledVariantIds: async () => ["Future"],
+      acquireFamilySources: async ({ onProgress }) => {
+        onProgress(null);
+        expect(store.get().jobs[0].progress).toBeNull();
+        onProgress(0.01);
+        expect(store.get().jobs[0].progress).toBe(1);
+        await acquisition.promise;
+        throw Object.assign(new Error("The pinned source is gone."), {
+          code: "SOURCE_UNAVAILABLE",
+        });
+      },
+      convertFamily,
+      installVariants,
+      onError: () => {},
+    });
+    service.start(["future"]);
+    expect(() => service.dismiss("future")).toThrow(/dismissal/);
+    acquisition.resolve();
+    await service.whenIdle();
+    expect(service.getState().jobs[0]).toMatchObject({
+      status: "failed",
+      installedVariantIds: ["Future"],
+      error:
+        "This source has changed or is unavailable. Dismiss this import or import a local cursor pack.",
+    });
+    expect(() => service.retry("future")).toThrow(/retry/);
+    expect(service.dismiss("future").jobs).toEqual([]);
+    expect(service.getState().completed).toBe(true);
+    expect(convertFamily).not.toHaveBeenCalled();
+    expect(installVariants).not.toHaveBeenCalled();
+    expect(() => service.dismiss("unknown")).toThrow(/selection/);
   });
 
   it("does not reacquire a family whose exact variants are already installed", async () => {

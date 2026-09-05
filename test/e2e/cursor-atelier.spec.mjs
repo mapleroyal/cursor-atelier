@@ -18,6 +18,26 @@ const completedOnboardingState = Object.freeze({
   error: null,
 });
 
+function failedMogaOnboardingState(code) {
+  return {
+    ...completedOnboardingState,
+    jobs: [
+      {
+        familyId: "moga",
+        status: "failed",
+        progress: null,
+        error: "Moga could not be added.",
+        failure: {
+          code,
+          message: "Moga-Neon-Blue.zip differs from its pinned archive.",
+        },
+        installedVariantIds: [],
+        currentVariant: null,
+      },
+    ],
+  };
+}
+
 function findPackagedAsar() {
   if (process.env.CURSOR_ATELIER_ASAR) {
     return path.resolve(process.env.CURSOR_ATELIER_ASAR);
@@ -378,7 +398,9 @@ test.describe("Cursor Atelier packaged UI", () => {
     await expect(page.locator("html")).not.toHaveClass(/dark/);
 
     await page.getByRole("radio", { name: "System" }).click();
-    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Close settings", exact: true })
+      .click();
     await expect(
       page
         .getByTestId("pack-rail-scroll")
@@ -417,29 +439,189 @@ test.describe("Cursor Atelier packaged UI", () => {
     ).toHaveCount(0);
   });
 
-  test("uses the pack drawer at the supported minimum window width", async ({
+  test("keeps the rail and settings reachable across narrow and desktop widths", async ({
     cursorPage: page,
   }) => {
-    await page.setViewportSize({ width: 760, height: 560 });
-    await expect(page.locator("aside")).toBeHidden();
-    await page.getByRole("button", { name: "Packs" }).click();
-
-    const drawer = page.getByRole("dialog", {
-      name: "Choose a cursor pack",
+    const widths =
+      process.platform === "linux"
+        ? [320, 480, 760, 959, 960, 1080]
+        : [760, 959, 960, 1080];
+    const railTrigger = page.getByRole("button", {
+      name: "Cursor packs",
+      exact: true,
     });
-    await expect(drawer).toBeVisible();
-    const drawerHeading = drawer.getByText("Cursor packs", { exact: true });
-    await expect(drawerHeading).toBeVisible();
-    expect((await drawerHeading.boundingBox())?.y).toBeGreaterThanOrEqual(48);
-    await expect(
-      drawer.getByRole("textbox", { name: "Search cursor packs" }),
-    ).toBeVisible();
-    await drawer.getByRole("button", { name: "Close cursor packs" }).click();
-    await expect(drawer).toBeHidden();
+    const settingsTrigger = page.getByRole("button", {
+      name: "Settings",
+      exact: true,
+    });
+    const drawer = page.getByRole("dialog", { name: "Choose a cursor pack" });
+    const settings = page.getByRole("dialog", {
+      name: "Settings",
+      exact: true,
+    });
 
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: 560 });
+      await expect(settingsTrigger).toBeInViewport();
+      if (width < 960) {
+        await expect(page.locator("aside")).toBeHidden();
+        await expect(railTrigger).toBeInViewport();
+        expect((await railTrigger.boundingBox()).x).toBeLessThan(
+          process.platform === "linux" ? 48 : 112,
+        );
+        await railTrigger.click();
+        await expect(drawer).toBeVisible();
+        const drawerHeading = drawer.getByText("Cursor packs", { exact: true });
+        await expect(drawerHeading).toBeVisible();
+        expect((await drawerHeading.boundingBox()).y).toBeGreaterThanOrEqual(
+          48,
+        );
+        await expect(
+          drawer.getByRole("textbox", { name: "Search cursor packs" }),
+        ).toBeVisible();
+        await drawer
+          .getByRole("button", { name: "Close cursor packs" })
+          .click();
+        await expect(drawer).toBeHidden();
+      } else {
+        await expect(page.locator("aside")).toBeVisible();
+        await expect(railTrigger).toBeHidden();
+      }
+
+      await settingsTrigger.click();
+      await expect(settings).toBeVisible();
+      await expect
+        .poll(async () => {
+          const bounds = await settings.boundingBox();
+          return Math.round(bounds.x + bounds.width);
+        })
+        .toBe(width);
+      expect((await settings.boundingBox()).width).toBeLessThanOrEqual(
+        Math.min(width, 672),
+      );
+      const settingsOverflow = await settings.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      );
+      expect(settingsOverflow).toBe(0);
+      await settings.getByRole("button", { name: "Close settings" }).click();
+      await expect(settings).toBeHidden();
+      await expect(settingsTrigger).toBeFocused();
+      const overflow = await page.evaluate(
+        () => document.body.scrollWidth - document.body.clientWidth,
+      );
+      expect(overflow).toBe(0);
+    }
+
+    await page.setViewportSize({ width: 760, height: 560 });
+    await railTrigger.click();
+    await expect(drawer).toBeVisible();
     await page.setViewportSize({ width: 960, height: 560 });
+    await expect(drawer).toBeHidden();
     await expect(page.locator("aside")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Packs" })).toBeHidden();
+    await page.setViewportSize({ width: 760, height: 560 });
+    await expect(railTrigger).toBeInViewport();
+    await expect(drawer).toBeHidden();
+  });
+
+  for (const code of ["SOURCE_UNAVAILABLE", "INTEGRITY_FAILED"]) {
+    test(`dismisses a failed Moga import persistently (${code})`, async () => {
+      const launch = await launchCursorAtelier({
+        onboardingState: failedMogaOnboardingState(code),
+      });
+      try {
+        const page = await firstWindow(launch.app);
+        const narrow = code === "SOURCE_UNAVAILABLE";
+        if (narrow) {
+          await page.setViewportSize({ width: 760, height: 560 });
+          await page
+            .getByRole("button", { name: "Cursor packs", exact: true })
+            .click();
+        }
+        const rail = page.getByTestId("pack-rail-scroll");
+        await expect(rail.getByText("Moga", { exact: true })).toBeVisible();
+        const retry = rail.getByRole("button", {
+          name: "Retry Moga",
+          exact: true,
+        });
+        if (code === "INTEGRITY_FAILED") {
+          await expect(retry).toBeVisible();
+        } else {
+          await expect(retry).toHaveCount(0);
+        }
+        await rail.getByRole("button", { name: "Dismiss Moga import" }).click();
+        await expect(rail.getByText("Moga", { exact: true })).toHaveCount(0);
+        await expect
+          .poll(() =>
+            page.evaluate(() => window.electronAPI.getOnboardingState()),
+          )
+          .toEqual(completedOnboardingState);
+        await page.reload();
+        if (narrow) {
+          await page
+            .getByRole("button", { name: "Cursor packs", exact: true })
+            .click();
+        }
+        await expect(
+          rail.getByText("No cursor packs", { exact: true }),
+        ).toBeVisible();
+        await expect(rail.getByText("Moga", { exact: true })).toHaveCount(0);
+      } finally {
+        await launch.cleanup();
+      }
+    });
+  }
+
+  test("shows a dismissal failure in the collapsed narrow pack rail", async () => {
+    const state = failedMogaOnboardingState("SOURCE_UNAVAILABLE");
+    const launch = await launchCursorAtelier({ onboardingState: state });
+    try {
+      const page = await firstWindow(launch.app);
+      await launch.app.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler("onboarding:dismiss");
+        ipcMain.handle("onboarding:dismiss", () => {
+          throw new Error("Write failed");
+        });
+      });
+      await page.setViewportSize({ width: 760, height: 560 });
+      await page
+        .getByRole("button", { name: "Cursor packs", exact: true })
+        .click();
+      const rail = page.getByTestId("pack-rail-scroll");
+      const family = rail.getByRole("button", { name: /^Moga/ });
+      await expect(family).toHaveAttribute("aria-expanded", "false");
+      const dismiss = rail.getByRole("button", { name: "Dismiss Moga import" });
+      await dismiss.click();
+      await expect(rail.getByRole("alert")).toHaveText("Write failed");
+      await expect(family).toBeVisible();
+      await expect(family).toHaveAttribute("aria-expanded", "false");
+      await expect(dismiss).toBeEnabled();
+      expect(
+        await page.evaluate(() => window.electronAPI.getOnboardingState()),
+      ).toEqual(state);
+    } finally {
+      await launch.cleanup();
+    }
+  });
+
+  test("shows import errors when the library is empty", async ({
+    cursorApp,
+    cursorPage: page,
+  }) => {
+    await cursorApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("cursor:import-pack");
+      ipcMain.handle("cursor:import-pack", () => {
+        throw new Error("The cursor archive is invalid.");
+      });
+    });
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    if (process.platform === "linux") {
+      await page
+        .getByRole("button", { name: "Import File…", exact: true })
+        .click();
+    }
+    await expect(page.getByRole("alert")).toContainText(
+      "The cursor archive is invalid.",
+    );
   });
 
   test("persists settings and reopens after the last window closes", async ({

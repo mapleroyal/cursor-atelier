@@ -12,6 +12,7 @@ function fixture({
   nativeTheme = { themeSource: "system" },
   onAppearanceChanged = vi.fn(),
   onAppearanceChangeError = vi.fn(),
+  assertMutationAvailable = vi.fn(),
   preferencesStore: providedPreferencesStore = null,
 } = {}) {
   const listeners = new Map();
@@ -43,6 +44,7 @@ function fixture({
     nativeTheme,
     isTrustedSender: (event) => event.trusted === true,
     getSystemAppearance: () => "light",
+    assertMutationAvailable,
     onAppearanceChanged,
     onAppearanceChangeError,
   });
@@ -59,6 +61,22 @@ function fixture({
 }
 
 describe("app appearance IPC", () => {
+  it("rejects appearance writes during data replacement before persisting or broadcasting", () => {
+    const error = new Error("Data import is in progress.");
+    const { handlers, nativeTheme, preferencesStore, onAppearanceChanged } =
+      fixture({
+        assertMutationAvailable: () => {
+          throw error;
+        },
+      });
+    expect(() =>
+      handlers.get(SET_APP_APPEARANCE_MODE_CHANNEL)({ trusted: true }, "light"),
+    ).toThrow(error);
+    expect(preferencesStore.setAppAppearanceMode).not.toHaveBeenCalled();
+    expect(nativeTheme.themeSource).toBe("system");
+    expect(onAppearanceChanged).not.toHaveBeenCalled();
+  });
+
   it("returns desktop appearance independently of a forced application mode", () => {
     const { listeners, nativeTheme } = fixture({
       nativeTheme: { themeSource: "dark" },

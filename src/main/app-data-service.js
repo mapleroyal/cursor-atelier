@@ -6,6 +6,7 @@ import {
   normalizeCursorPreferences,
 } from "../lib/cursor-preferences.js";
 import { normalizeOnboardingStoreState } from "./onboarding-store.js";
+import { isVerifiedRestoredStatus } from "./cursor-state-service.js";
 
 export const APP_DATA_ARCHIVE_SCHEMA_VERSION = 1;
 
@@ -280,17 +281,6 @@ async function removeOwnedTemporaryDirectory(userDataRoot, transactionRoot) {
   await fsPromises.rm(transactionRoot, { recursive: true });
 }
 
-function verifiedInactive(status) {
-  return Boolean(
-    status?.statusAvailable === true &&
-    status.desiredEnabled === false &&
-    status.effectiveApplied === false &&
-    status.persistedEffectiveApplied === false &&
-    status.loginItemRegistrationCurrent === false &&
-    status.launchAtLoginDesired === false,
-  );
-}
-
 function requiredDependencies(options) {
   const callbacks = [
     "validateImportedPacksRoot",
@@ -346,14 +336,25 @@ export function createAppDataService(options) {
     onResetComplete,
   } = options;
   let dataOperationActive = false;
+  let dataRecoveryRequired = false;
 
-  const beginDataOperation = async () => {
+  const assertMutationAvailable = () => {
+    if (dataRecoveryRequired) {
+      throw serviceError(
+        "DATA_RECOVERY_REQUIRED",
+        "Restart Cursor Atelier to recover the previous data operation before making changes.",
+      );
+    }
     if (dataOperationActive) {
       throw serviceError(
         "DATA_OPERATION_BUSY",
-        "Another data operation is already in progress.",
+        "Wait for the current data operation to finish before making changes.",
       );
     }
+  };
+
+  const beginDataOperation = async () => {
+    assertMutationAvailable();
     dataOperationActive = true;
     try {
       const entries = await fsPromises.readdir(userDataRoot, {
@@ -494,6 +495,7 @@ export function createAppDataService(options) {
   };
 
   return {
+    assertMutationAvailable,
     async reconcileTransactions() {
       const entries = await fsPromises.readdir(userDataRoot, {
         withFileTypes: true,
@@ -590,10 +592,10 @@ export function createAppDataService(options) {
               movedPaths: ["ImportedPacks"],
             };
             const restored = await bridge.restore();
-            if (!verifiedInactive(restored)) {
+            if (!isVerifiedRestoredStatus(restored)) {
               throw serviceError(
                 "CURSOR_RESTORE_UNVERIFIED",
-                "Apple cursors could not be verified before importing data.",
+                "System cursors could not be verified before importing data.",
               );
             }
             inactiveVerified = true;
@@ -640,6 +642,15 @@ export function createAppDataService(options) {
                 rollbackErrors.push(rollbackError);
               }
             }
+            if (rollbackErrors.length) {
+              dataRecoveryRequired = true;
+              cleanStage = !transactionStarted;
+              throw new AggregateError(
+                [error, ...rollbackErrors],
+                "Data import failed and could not be fully rolled back. Restart Cursor Atelier to recover it.",
+                { cause: error },
+              );
+            }
             if (automationPaused) {
               try {
                 resumeAutomation({ runLaunch: false, syncAppearance: false });
@@ -649,14 +660,6 @@ export function createAppDataService(options) {
                   resumeError,
                 );
               }
-            }
-            if (rollbackErrors.length) {
-              cleanStage = !transactionStarted;
-              throw new AggregateError(
-                [error, ...rollbackErrors],
-                "Data import failed and could not be fully rolled back.",
-                { cause: error },
-              );
             }
             throw error;
           }
@@ -717,10 +720,10 @@ export function createAppDataService(options) {
               movedPaths: [],
             };
             const restored = await bridge.restore();
-            if (!verifiedInactive(restored)) {
+            if (!isVerifiedRestoredStatus(restored)) {
               throw serviceError(
                 "CURSOR_RESTORE_UNVERIFIED",
-                "Apple cursors could not be verified before resetting data.",
+                "System cursors could not be verified before resetting data.",
               );
             }
             inactiveVerified = true;
@@ -794,21 +797,22 @@ export function createAppDataService(options) {
                 rollbackErrors.push(rollbackError);
               }
             }
+            if (rollbackErrors.length) {
+              dataRecoveryRequired = true;
+              throw new AggregateError(
+                [error, ...rollbackErrors],
+                "Data reset failed and could not be fully rolled back. Restart Cursor Atelier to recover it.",
+                { cause: error },
+              );
+            }
             resumeAutomation({ runLaunch: false, syncAppearance: false });
-            if (!rollbackErrors.length && transactionRoot) {
+            if (transactionRoot) {
               await removeOwnedTemporaryDirectory(
                 userDataRoot,
                 transactionRoot,
               );
             }
-            if (!rollbackErrors.length) {
-              throw error;
-            }
-            throw new AggregateError(
-              [error, ...rollbackErrors],
-              "Data reset failed and could not be fully rolled back.",
-              { cause: error },
-            );
+            throw error;
           }
 
           try {

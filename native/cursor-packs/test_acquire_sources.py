@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 import acquire_sources
@@ -50,6 +51,35 @@ class AcquisitionLockTests(unittest.TestCase):
             (expanded / "Theme/index.theme").write_text("modified")
             with self.assertRaisesRegex(ValueError, "does not match"):
                 acquire_sources._verify_expanded_zip(archive, expanded)
+
+    def test_gnome_downloads_select_the_pinned_archived_revision(self) -> None:
+        source = next(
+            entry
+            for entry in acquire_sources._json(acquire_sources.LOCKS / "curated-source-catalog.json")["sources"]
+            if entry.get("productId") == 2302110
+        )
+        data = {"id": 2302110}
+        for index, archive in enumerate(source["archives"], 101):
+            data[f"downloadname{index}"] = archive["name"]
+            data[f"downloadmd5sum{index}"] = archive["upstreamMd5"]
+            data[f"downloadlink{index}"] = f"https://example.test/pinned-{index}.zip"
+        data.update({
+            "downloadname201": source["archives"][0]["name"],
+            "downloadmd5sum201": "f" * 32,
+            "downloadlink201": "https://example.test/replacement.zip",
+        })
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({"data": [data]})
+        with patch.object(acquire_sources.urllib.request, "urlopen", return_value=response) as fetch:
+            downloads = acquire_sources._ocs_downloads(2302110)
+        self.assertEqual(downloads[source["archives"][0]["name"]], "https://example.test/pinned-101.zip")
+        self.assertIn("/2302110/archived?format=json", fetch.call_args.args[0].full_url)
+
+        del data["downloadmd5sum101"]
+        response.__enter__.return_value.read.return_value = json.dumps({"data": [data]})
+        with patch.object(acquire_sources.urllib.request, "urlopen", return_value=response):
+            with self.assertRaisesRegex(ValueError, "no longer lists the pinned revision"):
+                acquire_sources._ocs_downloads(2302110)
 
     def test_git_verification_rejects_dirty_build_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

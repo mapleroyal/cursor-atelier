@@ -70,6 +70,7 @@ describe("sandbox preload", () => {
     await api.getOnboardingState();
     await api.startOnboarding(["oreo"]);
     await api.retryOnboardingImport("oreo");
+    await api.dismissOnboardingImport("oreo");
     const unsubscribe = api.onOnboardingChanged(listener);
 
     expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(1, "onboarding:get");
@@ -84,6 +85,11 @@ describe("sandbox preload", () => {
     expect(ipcRenderer.on).toHaveBeenCalledWith(
       "onboarding:changed",
       expect.any(Function),
+    );
+    expect(ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      4,
+      "onboarding:dismiss",
+      "oreo",
     );
 
     unsubscribe();

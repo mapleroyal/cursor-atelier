@@ -1120,6 +1120,7 @@ async function startApplication() {
   const themeSizeCleanupReconciler = createCursorThemeSizeCleanupReconciler({
     bridge,
     preferencesStore,
+    runLibraryExclusive: runImportedLibraryExclusive,
     onRetryError: (error, { attempt }) => {
       console.error(
         `Deleted cursor size cleanup retry ${attempt} failed.`,
@@ -1355,11 +1356,18 @@ async function startApplication() {
   });
   ipcMain.handle("onboarding:start", (event, familyIds) => {
     requireTrustedSender(event);
+    appDataService.assertMutationAvailable();
     return curatedFamilyService.start(familyIds);
   });
   ipcMain.handle("onboarding:retry", (event, familyId) => {
     requireTrustedSender(event);
+    appDataService.assertMutationAvailable();
     return curatedFamilyService.retry(familyId);
+  });
+  ipcMain.handle("onboarding:dismiss", (event, familyId) => {
+    requireTrustedSender(event);
+    appDataService.assertMutationAvailable();
+    return curatedFamilyService.dismiss(familyId);
   });
   const disposeAppAppearanceIpc = registerAppAppearanceIpc({
     ipcMain,
@@ -1367,12 +1375,14 @@ async function startApplication() {
     nativeTheme,
     isTrustedSender,
     getSystemAppearance,
+    assertMutationAvailable: appDataService.assertMutationAvailable,
     onAppearanceChanged: notifyAppAppearanceChanged,
   });
   const rendererBridge = {
     status: () => bridge.status(),
     listThemes: () => bridge.listThemes(),
     setThemeSize: async (identifier, sizePercentage) => {
+      appDataService.assertMutationAvailable();
       const result = await bridge.setThemeSize(identifier, sizePercentage);
       notifyCursorChanged({
         reason: "renderer-size-preference",
@@ -1422,6 +1432,7 @@ async function startApplication() {
   });
   ipcMain.handle("cursor:import-pack", (event, options) => {
     requireTrustedSender(event);
+    appDataService.assertMutationAvailable();
     if (
       options !== undefined &&
       (options === null ||
@@ -1449,6 +1460,7 @@ async function startApplication() {
     return operation;
   });
   const enqueueImportedLibraryMutation = (operation) => {
+    appDataService.assertMutationAvailable();
     const result = importQueue.then(operation);
     importQueue = result.catch(() => undefined);
     return result;
@@ -1578,6 +1590,7 @@ async function startApplication() {
   });
   ipcMain.handle("preferences:update", (event, patch) => {
     requireTrustedSender(event);
+    appDataService.assertMutationAvailable();
     return preferencesStore.update(patch);
   });
   ipcMain.handle("data:export", async (event) => {

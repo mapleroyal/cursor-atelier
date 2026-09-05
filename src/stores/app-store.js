@@ -2,6 +2,7 @@ import { create } from "zustand";
 import themeSeedColors from "@/lib/theme-seed-colors";
 import {
   ONBOARDING_VERSION,
+  canRetryOnboardingJob,
   createOptimisticOnboardingState,
   failOnboardingJobs,
   normalizeOnboardingState,
@@ -129,6 +130,7 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
   let persistenceQueue = Promise.resolve();
   let onboardingRequest = 0;
   let onboardingHydration = null;
+  const onboardingRetryRequests = new Map();
 
   const initialOnboardingState = {
     version: ONBOARDING_VERSION,
@@ -288,6 +290,7 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
       return onboardingHydration;
     },
     completeOnboarding: (familyIds) => {
+      onboardingRetryRequests.clear();
       const optimistic = createOptimisticOnboardingState(familyIds);
       const request = ++onboardingRequest;
       set({ onboarding: optimistic, onboardingLoading: false });
@@ -324,59 +327,86 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
     },
     retryOnboardingImport: (familyId) => {
       const id = String(familyId ?? "").trim();
-      if (!id) {
+      if (
+        !canRetryOnboardingJob(
+          get().onboarding.jobs.find((job) => job.familyId === id),
+        )
+      ) {
         return Promise.resolve(get().onboarding);
       }
       const optimistic = queueOnboardingJob(get().onboarding, id);
       const request = ++onboardingRequest;
+      onboardingRetryRequests.set(id, request);
       set({ onboarding: optimistic });
-      const retry = resolveElectronAPI(electronAPI)?.retryOnboardingImport;
-      if (typeof retry !== "function") {
+      const failRetry = (error) => {
+        const current = get().onboarding;
+        if (
+          onboardingRetryRequests.get(id) !== request ||
+          !current.jobs.some(
+            (job) => job.familyId === id && job.status === "queued",
+          )
+        ) {
+          return current;
+        }
+        onboardingRetryRequests.delete(id);
+        const message = String(error?.message ?? error ?? "Retry failed.");
         const failed = {
-          ...optimistic,
-          jobs: optimistic.jobs.map((job) =>
+          ...current,
+          jobs: current.jobs.map((job) =>
             job.familyId === id
-              ? {
-                  ...job,
-                  status: "failed",
-                  error: "Retry is unavailable in this build.",
-                }
+              ? { ...job, status: "failed", error: message }
               : job,
           ),
         };
         set({ onboarding: failed });
-        return Promise.resolve(failed);
+        return failed;
+      };
+      const retry = resolveElectronAPI(electronAPI)?.retryOnboardingImport;
+      if (typeof retry !== "function") {
+        return Promise.resolve(
+          failRetry("Retry is unavailable in this build."),
+        );
       }
 
       return Promise.resolve()
         .then(() => retry(id))
-        .then(
-          (value) => {
-            const state = normalizeOnboardingState(value, optimistic);
-            if (request === onboardingRequest) {
-              set({ onboarding: state });
-            }
-            return state;
-          },
-          (error) => {
-            const message = String(error?.message ?? error ?? "Retry failed.");
-            const failed = {
-              ...optimistic,
-              jobs: optimistic.jobs.map((job) =>
-                job.familyId === id
-                  ? { ...job, status: "failed", error: message }
-                  : job,
-              ),
-            };
-            if (request === onboardingRequest) {
-              set({ onboarding: failed });
-            }
-            return failed;
-          },
-        );
+        .then((value) => {
+          const state = normalizeOnboardingState(value, optimistic);
+          if (request === onboardingRequest) {
+            set({ onboarding: state });
+          }
+          return state;
+        }, failRetry)
+        .finally(() => {
+          if (onboardingRetryRequests.get(id) === request) {
+            onboardingRetryRequests.delete(id);
+          }
+        });
+    },
+    dismissOnboardingImport: async (familyId) => {
+      const id = String(familyId ?? "").trim();
+      const job = get().onboarding.jobs.find(
+        (candidate) => candidate.familyId === id,
+      );
+      if (job?.status !== "failed") {
+        return get().onboarding;
+      }
+      const dismiss = resolveElectronAPI(electronAPI)?.dismissOnboardingImport;
+      if (typeof dismiss !== "function") {
+        throw new Error("Dismissing imports is unavailable in this build.");
+      }
+      const request = ++onboardingRequest;
+      const value = await dismiss(id);
+      const state = normalizeOnboardingState(value);
+      if (request === onboardingRequest) {
+        set({ onboarding: state });
+      }
+      return state;
     },
     syncOnboarding: (value) => {
       onboardingRequest += 1;
+      // Every job in this snapshot is authoritative, including queued jobs.
+      onboardingRetryRequests.clear();
       const onboarding = normalizeOnboardingState(value, get().onboarding);
       set({ onboarding, onboardingLoading: false });
       return onboarding;

@@ -13,7 +13,82 @@ function memoryCleanupStore(initial = []) {
   };
 }
 
+function createReconciler(options) {
+  return createCursorThemeSizeCleanupReconciler({
+    runLibraryExclusive: (operation) => operation(),
+    ...options,
+    bridge: {
+      listThemes: vi.fn().mockResolvedValue([]),
+      ...options.bridge,
+    },
+  });
+}
+
 describe("cursor theme size cleanup reconciler", () => {
+  it("retires stale deletion cleanup without erasing a reimported cursor's size", async () => {
+    const store = memoryCleanupStore(["ImportedOld", "ImportedBack"]);
+    const forgetThemeSizes = vi
+      .fn()
+      .mockResolvedValue({ failedIdentifiers: [] });
+    const reconciler = createReconciler({
+      bridge: {
+        listThemes: vi
+          .fn()
+          .mockResolvedValue([{ nativeThemeId: "ImportedBack" }]),
+        forgetThemeSizes,
+      },
+      preferencesStore: store,
+    });
+
+    await reconciler.reconcile();
+
+    expect(forgetThemeSizes).toHaveBeenCalledExactlyOnceWith(["ImportedOld"]);
+    expect(store.getPendingThemeSizeCleanupIds()).toEqual([]);
+  });
+
+  it("waits for library mutations without blocking their pending-cleanup writes", async () => {
+    let libraryQueue = Promise.resolve();
+    const runLibraryExclusive = (operation) => {
+      const result = libraryQueue.then(operation);
+      libraryQueue = result.catch(() => {});
+      return result;
+    };
+    let finishLibraryMutation;
+    const libraryMutation = runLibraryExclusive(
+      () =>
+        new Promise((resolve) => {
+          finishLibraryMutation = resolve;
+        }),
+    );
+    await vi.waitFor(() =>
+      expect(finishLibraryMutation).toBeTypeOf("function"),
+    );
+    const store = memoryCleanupStore(["ImportedOld"]);
+    const listThemes = vi.fn().mockResolvedValue([]);
+    const forgetThemeSizes = vi
+      .fn()
+      .mockResolvedValue({ failedIdentifiers: [] });
+    const reconciler = createReconciler({
+      preferencesStore: store,
+      bridge: { listThemes, forgetThemeSizes },
+      runLibraryExclusive,
+      setTimer: vi.fn(() => ({ unref: vi.fn() })),
+      clearTimer: vi.fn(),
+    });
+    const cleanup = reconciler.reconcile();
+    await reconciler.recordPending(["ImportedNew"]);
+    expect(listThemes).not.toHaveBeenCalled();
+    finishLibraryMutation();
+    await libraryMutation;
+    await cleanup;
+    expect(forgetThemeSizes).toHaveBeenCalledExactlyOnceWith([
+      "ImportedOld",
+      "ImportedNew",
+    ]);
+    expect(store.getPendingThemeSizeCleanupIds()).toEqual([]);
+    reconciler.stop();
+  });
+
   it("persists exact failed identifiers and clears them on a bounded retry", async () => {
     const store = memoryCleanupStore();
     const bridge = {
@@ -24,7 +99,7 @@ describe("cursor theme size cleanup reconciler", () => {
     };
     const timers = [];
     const timer = { unref: vi.fn() };
-    const reconciler = createCursorThemeSizeCleanupReconciler({
+    const reconciler = createReconciler({
       bridge,
       preferencesStore: store,
       retryDelaysMs: [10, 20],
@@ -60,7 +135,7 @@ describe("cursor theme size cleanup reconciler", () => {
     };
     const timers = [];
     const onRetryError = vi.fn();
-    const reconciler = createCursorThemeSizeCleanupReconciler({
+    const reconciler = createReconciler({
       bridge,
       preferencesStore: store,
       retryDelaysMs: [1, 2],
@@ -89,7 +164,7 @@ describe("cursor theme size cleanup reconciler", () => {
     const store = memoryCleanupStore();
     const clearTimer = vi.fn();
     const handle = { unref: vi.fn() };
-    const reconciler = createCursorThemeSizeCleanupReconciler({
+    const reconciler = createReconciler({
       bridge: { forgetThemeSizes: vi.fn() },
       preferencesStore: store,
       setTimer: vi.fn(() => handle),
@@ -114,7 +189,7 @@ describe("cursor theme size cleanup reconciler", () => {
           }),
       ),
     };
-    const reconciler = createCursorThemeSizeCleanupReconciler({
+    const reconciler = createReconciler({
       bridge,
       preferencesStore: store,
       setTimer: vi.fn(() => ({ unref: vi.fn() })),
@@ -134,7 +209,7 @@ describe("cursor theme size cleanup reconciler", () => {
   it("starts a fresh bounded retry incident when new work arrives after exhaustion", async () => {
     const store = memoryCleanupStore(["ImportedOld"]);
     const timers = [];
-    const reconciler = createCursorThemeSizeCleanupReconciler({
+    const reconciler = createReconciler({
       bridge: {
         forgetThemeSizes: vi.fn().mockResolvedValue({
           failedIdentifiers: ["ImportedOld"],

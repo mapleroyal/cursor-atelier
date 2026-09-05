@@ -33,6 +33,19 @@ decoded from the OCS download URL; `md5` is the publisher's OCS value and
 `sha256` is computed from the downloaded archive.  Per-pack `SHA256SUMS`
 files can be checked with `shasum -a 256 -c SHA256SUMS` from that pack folder.
 
+Runtime and build acquisition use the OCS
+`content/data/<product-id>/archived?format=json` endpoint, which includes
+current and archived revisions. They select each filename by the published
+MD5 recorded here, then verify the downloaded bytes against the original
+SHA-256 lock. MD5 is only a revision selector, never an integrity check.
+The runtime also verifies its pinned extracted cursor tree before promotion.
+
+Verified on 2026-09-05: Moga Neon Blue and Butter had been replaced in the
+current listing by version 1.3, but the archived listing still served their
+original pinned bytes (file IDs 1754641872 and 1755252863). Both downloaded
+SHA-256 values matched the locks below. The archived API is documented by
+the [OpenDesktop maintainer](https://forum.opendesktop.org/t/api-download-archived-content/21180).
+
 ### Remus Cursor (product 2355234)
 
 Source page: <https://www.gnome-look.org/p/2355234>  

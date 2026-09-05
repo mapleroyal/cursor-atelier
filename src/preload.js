@@ -97,6 +97,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     electron.ipcRenderer.invoke("onboarding:start", familyIds),
   retryOnboardingImport: (familyId) =>
     electron.ipcRenderer.invoke("onboarding:retry", familyId),
+  dismissOnboardingImport: (familyId) =>
+    electron.ipcRenderer.invoke("onboarding:dismiss", familyId),
   onCursorPreferencesChanged: (callback) =>
     subscribe("preferences:changed", callback),
   onCursorChanged: (callback) => subscribe("cursor:changed", callback),

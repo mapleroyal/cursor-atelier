@@ -42,12 +42,14 @@ function normalizeStatus(value) {
 }
 
 function normalizeProgress(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
   const progress = Number(value);
   if (!Number.isFinite(progress)) {
     return null;
   }
-  const percentage = progress > 0 && progress <= 1 ? progress * 100 : progress;
-  return Math.round(Math.min(100, Math.max(0, percentage)));
+  return Math.round(Math.min(100, Math.max(0, progress)));
 }
 
 function errorMessage(value) {
@@ -185,6 +187,23 @@ export function queueOnboardingJob(state, familyId) {
 export function isOnboardingJobVisible(job) {
   const status = normalizeStatus(job?.status);
   return RUNNING_STATUSES.has(status) || status === "failed";
+}
+
+export function canRetryOnboardingJob(job) {
+  return (
+    job?.status === "failed" &&
+    !["SOURCE_CHANGED", "SOURCE_UNAVAILABLE"].includes(job.failure?.code)
+  );
+}
+
+export function getOnboardingFailureMessage(job) {
+  if (job?.status === "failed" && !canRetryOnboardingJob(job)) {
+    return "This source has changed or is unavailable. Dismiss this import or import a local cursor pack.";
+  }
+  if (job?.failure?.code === "INTEGRITY_FAILED") {
+    return "The download could not be verified. Retry or dismiss this import.";
+  }
+  return errorMessage(job?.error) ?? "Import failed. Try again or dismiss.";
 }
 
 export function getOnboardingJobLabel(job) {

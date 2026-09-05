@@ -1,3 +1,8 @@
+import {
+  canRetryOnboardingJob,
+  getOnboardingFailureMessage,
+} from "../lib/onboarding.js";
+
 const FAMILY_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const THEME_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -12,17 +17,23 @@ function serviceError(code, message, cause) {
 }
 
 function normalizeProgress(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
   const number = Number(value);
   if (!Number.isFinite(number)) {
     return null;
   }
-  const percentage = number > 0 && number <= 1 ? number * 100 : number;
-  return Math.round(Math.min(100, Math.max(0, percentage)));
+  return Math.round(Math.min(1, Math.max(0, number)) * 100);
 }
 
 function userFacingFailure(error) {
-  if (error?.code === "INTEGRITY_FAILED") {
-    return "The source download could not be verified. Try again.";
+  if (
+    ["SOURCE_CHANGED", "SOURCE_UNAVAILABLE", "INTEGRITY_FAILED"].includes(
+      error?.code,
+    )
+  ) {
+    return getOnboardingFailureMessage({ status: "failed", failure: error });
   }
   if (
     [
@@ -470,12 +481,20 @@ export function createCuratedFamilyService({
     },
     retry(familyId) {
       assertFamilyIds([familyId], allowedFamilyIds);
-      if (running.has(familyId)) {
+      const job = store.get().jobs.find((job) => job.familyId === familyId);
+      if (running.has(familyId) || !canRetryOnboardingJob(job)) {
         throw new TypeError("The starter family retry is invalid.");
       }
       const state = store.retry(familyId);
       schedule(familyId);
       return state;
+    },
+    dismiss(familyId) {
+      assertFamilyIds([familyId], allowedFamilyIds);
+      if (running.has(familyId)) {
+        throw new TypeError("The starter family dismissal is invalid.");
+      }
+      return store.dismiss(familyId);
     },
     subscribe(listener) {
       return store.subscribe(listener);

@@ -5,6 +5,7 @@ import {
   failOnboardingJobs,
   getOnboardingFailureDetail,
   getOnboardingJobLabel,
+  canRetryOnboardingJob,
   groupCursorFamilies,
   isOnboardingJobVisible,
   normalizeOnboardingState,
@@ -12,7 +13,7 @@ import {
 } from "./onboarding.js";
 
 describe("onboarding state", () => {
-  it("normalizes backend aliases and fractional progress", () => {
+  it("normalizes backend aliases and percentage progress", () => {
     expect(
       normalizeOnboardingState({
         version: 2,
@@ -21,7 +22,7 @@ describe("onboarding state", () => {
           {
             familyId: "oreo",
             phase: "fetching",
-            progress: 0.42,
+            progress: 42,
             currentVariant: "White",
             installedVariantIds: ["OreoBlack", "OreoBlack"],
           },
@@ -118,6 +119,37 @@ describe("onboarding state", () => {
     expect(getOnboardingJobLabel({ status: "converting", progress: 63 })).toBe(
       "Converting 63%",
     );
+  });
+
+  it("preserves one percent and indeterminate progress from the service", () => {
+    expect(getOnboardingJobLabel({ status: "downloading", progress: 1 })).toBe(
+      "Downloading 1%",
+    );
+    expect(
+      getOnboardingJobLabel({ status: "downloading", progress: null }),
+    ).toBe("Downloading…");
+  });
+
+  it("offers retries for transient failures but not unavailable pinned sources", () => {
+    expect(
+      canRetryOnboardingJob({
+        status: "failed",
+        failure: { code: "DOWNLOAD_FAILED" },
+      }),
+    ).toBe(true);
+    expect(
+      canRetryOnboardingJob({
+        status: "failed",
+        failure: { code: "SOURCE_CHANGED" },
+      }),
+    ).toBe(false);
+    expect(
+      canRetryOnboardingJob({
+        status: "failed",
+        failure: { code: "SOURCE_UNAVAILABLE" },
+      }),
+    ).toBe(false);
+    expect(canRetryOnboardingJob({ status: "downloading" })).toBe(false);
   });
 
   it("keeps installed families above families that are still being added", () => {

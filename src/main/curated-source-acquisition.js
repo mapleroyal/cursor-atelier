@@ -12,6 +12,7 @@ import catalogDocument from "../../native/cursor-packs/sources/curated-source-ca
 
 const openZip = promisify(yauzl.open);
 const SHA256 = /^[a-f0-9]{64}$/;
+const MD5 = /^[a-f0-9]{32}$/;
 const SAFE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const REVISION = /^[a-f0-9]{40}$/;
 const MARKER = ".cursor-atelier-source.json";
@@ -198,7 +199,8 @@ export function validateCuratedSourceCatalog(
         typeof archive.name !== "string" ||
         !archive.name.endsWith(".zip") ||
         path.basename(archive.name) !== archive.name ||
-        !SHA256.test(archive.sha256)
+        !SHA256.test(archive.sha256) ||
+        !MD5.test(archive.upstreamMd5)
       ) {
         fail("INVALID_CATALOG", `${candidate.id} archive ${index} is invalid.`);
       }
@@ -1541,16 +1543,45 @@ async function gnomeDownloadUrls(source, fetchImpl, signal) {
   if (!data || Number(data.id) !== source.productId) {
     fail("INTEGRITY_FAILED", "GNOME-Look returned the wrong product metadata.");
   }
-  const urls = new Map();
-  for (let index = 1; index < 100; index += 1) {
+  const downloads = [];
+  for (const key of Object.keys(data)) {
+    const index = /^downloadname([1-9][0-9]*)$/.exec(key)?.[1];
+    if (!index) {
+      continue;
+    }
     const name = data[`downloadname${index}`];
     const url = data[`downloadlink${index}`];
     if (name && url) {
-      urls.set(
-        String(name),
-        validateHttps(String(url), `${source.id}/${name} download URL`),
+      downloads.push({
+        name: String(name),
+        url: String(url),
+        md5: String(data[`downloadmd5sum${index}`] ?? "").toLowerCase(),
+      });
+    }
+  }
+  const urls = new Map();
+  for (const archive of source.archives) {
+    // The archived OCS endpoint includes multiple revisions with the same name.
+    // Its published MD5 selects the revision; the pinned SHA-256 and extracted
+    // tree below remain the integrity checks before anything is installed.
+    const download = downloads.find(
+      (candidate) =>
+        candidate.name === archive.name &&
+        candidate.md5 === archive.upstreamMd5,
+    );
+    if (!download) {
+      const changed = downloads.some(
+        (candidate) => candidate.name === archive.name,
+      );
+      fail(
+        changed ? "SOURCE_CHANGED" : "SOURCE_UNAVAILABLE",
+        `GNOME-Look no longer lists the pinned revision of ${archive.name}.`,
       );
     }
+    urls.set(
+      archive.name,
+      validateHttps(download.url, `${source.id}/${archive.name} download URL`),
+    );
   }
   return urls;
 }
@@ -1573,9 +1604,6 @@ async function acquireGnomeSource({
     throwIfAborted(signal);
     const archive = source.archives[index];
     const url = urls?.get(archive.name);
-    if (!localRoot && !url) {
-      fail("INTEGRITY_FAILED", `GNOME-Look no longer lists ${archive.name}.`);
-    }
     const archivePath = path.join(temporary, `.archive-${index}.zip`);
     report("downloading", index / source.archives.length, archive.name);
     await stageArchive({

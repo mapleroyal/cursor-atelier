@@ -58,6 +58,7 @@ export function registerAppAppearanceIpc({
   nativeTheme,
   isTrustedSender,
   getSystemAppearance,
+  assertMutationAvailable = () => {},
   onAppearanceChanged = () => {},
   onAppearanceChangeError = (error) =>
     console.error("Could not refresh the app appearance.", error),
@@ -98,6 +99,7 @@ export function registerAppAppearanceIpc({
     if (!isTrustedSender(event)) {
       throw new Error("App appearance IPC is unavailable to this page.");
     }
+    assertMutationAvailable();
 
     const previousPersistedMode = preferencesStore.getAppAppearanceMode();
     const previousNativeMode = nativeTheme.themeSource;

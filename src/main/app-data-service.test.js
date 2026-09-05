@@ -64,12 +64,17 @@ function onboardingStore(initial = normalizeOnboardingStoreState(null)) {
 
 function inactiveStatus() {
   return {
+    bridgeAvailable: true,
+    supported: true,
+    previewMode: false,
     statusAvailable: true,
+    currentSentinelsMatchTheme: false,
     desiredEnabled: false,
     effectiveApplied: false,
     persistedEffectiveApplied: false,
     loginItemRegistrationCurrent: false,
     launchAtLoginDesired: false,
+    transactionPending: false,
   };
 }
 
@@ -219,6 +224,75 @@ describe("app data archive document", () => {
 });
 
 describe("app data service", () => {
+  it.each(["import", "reset"])(
+    "blocks new settings and starter imports for the entire %s operation",
+    async (operation) => {
+      const context = fixture();
+      let finishPause;
+      context.pauseAutomation.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishPause = resolve;
+          }),
+      );
+      expect(() => context.service.assertMutationAvailable()).not.toThrow();
+      const pending =
+        operation === "import"
+          ? context.service.importFrom(
+              path.join(context.userDataRoot, "backup"),
+            )
+          : context.service.reset();
+
+      expect(() => context.service.assertMutationAvailable()).toThrow(
+        expect.objectContaining({ code: "DATA_OPERATION_BUSY" }),
+      );
+      await vi.waitFor(() => expect(finishPause).toBeTypeOf("function"));
+      expect(() => context.service.assertMutationAvailable()).toThrow(
+        expect.objectContaining({ code: "DATA_OPERATION_BUSY" }),
+      );
+      finishPause();
+      await pending;
+      expect(() => context.service.assertMutationAvailable()).not.toThrow();
+    },
+  );
+
+  it.each([
+    ["import", { transactionPending: true }],
+    ["import", { currentSentinelsMatchTheme: true }],
+    ["reset", { transactionPending: true }],
+    ["reset", { currentSentinelsMatchTheme: true }],
+  ])(
+    "rejects %s before replacing data when restore retains %j",
+    async (operation, residualState) => {
+      const context = fixture();
+      context.bridge.restore.mockReturnValue({
+        ...inactiveStatus(),
+        ...residualState,
+      });
+
+      await expect(
+        operation === "import"
+          ? context.service.importFrom(
+              path.join(context.userDataRoot, "backup"),
+            )
+          : context.service.reset(),
+      ).rejects.toMatchObject({ code: "CURSOR_RESTORE_UNVERIFIED" });
+
+      expect(
+        fs.readFileSync(
+          path.join(context.importedPacksRoot, "old.txt"),
+          "utf8",
+        ),
+      ).toBe("old");
+      expect(context.preferences.replaceDataSnapshot).not.toHaveBeenCalled();
+      expect(context.preferences.resetData).not.toHaveBeenCalled();
+      expect(context.bridge.replacePortablePreferences).not.toHaveBeenCalled();
+      expect(context.bridge.resetPreferences).not.toHaveBeenCalled();
+      expect(context.moveToTrash).not.toHaveBeenCalled();
+      expect(() => context.service.assertMutationAvailable()).not.toThrow();
+    },
+  );
+
   it("imports data only after restoring Apple cursors and never applies one", async () => {
     const importedPreferences = {
       ...createDefaultCursorPreferences(),
@@ -382,6 +456,38 @@ describe("app data service", () => {
     await expect(context.service.reset()).rejects.toMatchObject({
       code: "DATA_RECOVERY_REQUIRED",
     });
+    expect(context.resumeAutomation).not.toHaveBeenCalled();
+    expect(() => context.service.assertMutationAvailable()).toThrow(
+      expect.objectContaining({ code: "DATA_RECOVERY_REQUIRED" }),
+    );
+  });
+
+  it("keeps automation paused and data recoverable when reset rollback fails", async () => {
+    const context = fixture();
+    context.bridge.resetPreferences.mockRejectedValue(
+      new Error("reset failed"),
+    );
+    context.bridge.replacePortablePreferences.mockRejectedValue(
+      new Error("native settings unavailable"),
+    );
+
+    await expect(context.service.reset()).rejects.toBeInstanceOf(
+      AggregateError,
+    );
+
+    expect(
+      fs.readFileSync(path.join(context.importedPacksRoot, "old.txt"), "utf8"),
+    ).toBe("old");
+    expect(
+      fs
+        .readdirSync(context.userDataRoot)
+        .filter((name) => name.startsWith(".data-reset-")),
+    ).toHaveLength(1);
+    expect(context.resumeAutomation).not.toHaveBeenCalled();
+    expect(() => context.service.assertMutationAvailable()).toThrow(
+      expect.objectContaining({ code: "DATA_RECOVERY_REQUIRED" }),
+    );
+    expect(context.moveToTrash).not.toHaveBeenCalled();
   });
 
   it("leaves Apple cursors active instead of guessing at live state after a failed import", async () => {

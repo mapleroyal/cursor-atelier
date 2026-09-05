@@ -157,17 +157,40 @@ def _acquire_git(entry: dict[str, Any], cache: Path, verify_only: bool) -> None:
 
 
 def _ocs_downloads(product_id: int) -> dict[str, str]:
-    endpoint = f"https://api.opendesktop.org/ocs/v1/content/data/{product_id}?format=json"
-    request = urllib.request.Request(endpoint, headers={"User-Agent": "CursorAtelier-source-acquirer/1"})
+    source = next(
+        entry
+        for entry in _json(LOCKS / "curated-source-catalog.json")["sources"]
+        if entry.get("productId") == product_id
+    )
+    request = urllib.request.Request(
+        source["metadataUrl"],
+        headers={"User-Agent": "CursorAtelier-source-acquirer/1"},
+    )
     with urllib.request.urlopen(request, timeout=30) as response:
         payload = json.load(response)
     data = payload["data"][0]
+    if data.get("id") != product_id:
+        raise ValueError("GNOME-Look returned the wrong product metadata")
     downloads: dict[str, str] = {}
-    for index in range(1, 100):
-        name = data.get(f"downloadname{index}")
-        link = data.get(f"downloadlink{index}")
-        if name and link:
-            downloads[str(name)] = str(link)
+    for archive in source["archives"]:
+        for key, name in data.items():
+            if not key.startswith("downloadname") or name != archive["name"]:
+                continue
+            index = key.removeprefix("downloadname")
+            link = data.get(f"downloadlink{index}")
+            if (
+                link
+                and data.get(f"downloadmd5sum{index}", "").lower()
+                == archive["upstreamMd5"]
+            ):
+                # This is a revision selector; _acquire_gnome still verifies
+                # the archive's pinned SHA-256 before writing any source data.
+                downloads[name] = str(link)
+                break
+        if archive["name"] not in downloads:
+            raise ValueError(
+                f"GNOME-Look no longer lists the pinned revision of {archive['name']}"
+            )
     return downloads
 
 

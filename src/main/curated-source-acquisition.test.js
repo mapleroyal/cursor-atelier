@@ -182,6 +182,64 @@ function zipArchive(entries) {
   return Buffer.concat([...locals, centralBytes, end]);
 }
 
+async function gnomeFixture() {
+  const root = await temporaryRoot();
+  const local = path.join(root, "local", "fixture");
+  await fs.promises.mkdir(local, { recursive: true });
+  const zipBytes = zipArchive([
+    { name: "Theme/" },
+    { name: "Theme/cursors/" },
+    { name: "Theme/cursors/default", data: "cursor" },
+    { name: "Theme/windows/" },
+    { name: "Theme/windows/default.cur", data: "ignored" },
+  ]);
+  const archivePath = path.join(local, "Theme.zip");
+  await fs.promises.writeFile(archivePath, zipBytes);
+  const expected = path.join(root, "expected");
+  await fs.promises.mkdir(path.join(expected, "Theme/cursors"), {
+    recursive: true,
+  });
+  await fs.promises.writeFile(
+    path.join(expected, "Theme/cursors/default"),
+    "cursor",
+  );
+  const tree = await computeCuratedTreeDigest(expected, ["."]);
+  const catalog = {
+    schemaVersion: 1,
+    cacheVersion: 1,
+    families: [
+      {
+        id: "fixture",
+        name: "Fixture",
+        variantCount: 1,
+        sourceIds: ["fixture"],
+      },
+    ],
+    sources: [
+      {
+        id: "fixture",
+        type: "gnome-look",
+        directory: "fixture",
+        productId: 1,
+        metadataUrl: "https://example.test/metadata.json",
+        archives: [
+          {
+            name: "Theme.zip",
+            upstreamMd5: crypto
+              .createHash("md5")
+              .update(zipBytes)
+              .digest("hex"),
+            sha256: crypto.createHash("sha256").update(zipBytes).digest("hex"),
+            treeSha256: tree.sha256,
+            treeEntries: tree.entries,
+          },
+        ],
+      },
+    ],
+  };
+  return { root, local, zipBytes, catalog };
+}
+
 describe("curated source catalog", () => {
   it("pins every canonical family and the existing provenance locks", async () => {
     expect(CURATED_SOURCE_CATALOG.families.map((row) => row.id)).toEqual(
@@ -730,59 +788,7 @@ describe("curated source acquisition", () => {
   });
 
   it("acquires a pinned GNOME-Look ZIP from an injected archive root", async () => {
-    const root = await temporaryRoot();
-    const local = path.join(root, "local", "fixture");
-    await fs.promises.mkdir(local, { recursive: true });
-    const zipBytes = zipArchive([
-      { name: "Theme/" },
-      { name: "Theme/cursors/" },
-      { name: "Theme/cursors/default", data: "cursor" },
-      { name: "Theme/windows/" },
-      { name: "Theme/windows/default.cur", data: "ignored" },
-    ]);
-    const archivePath = path.join(local, "Theme.zip");
-    await fs.promises.writeFile(archivePath, zipBytes);
-    const expected = path.join(root, "expected");
-    await fs.promises.mkdir(path.join(expected, "Theme/cursors"), {
-      recursive: true,
-    });
-    await fs.promises.writeFile(
-      path.join(expected, "Theme/cursors/default"),
-      "cursor",
-    );
-    const tree = await computeCuratedTreeDigest(expected, ["."]);
-    const catalog = {
-      schemaVersion: 1,
-      cacheVersion: 1,
-      families: [
-        {
-          id: "fixture",
-          name: "Fixture",
-          variantCount: 1,
-          sourceIds: ["fixture"],
-        },
-      ],
-      sources: [
-        {
-          id: "fixture",
-          type: "gnome-look",
-          directory: "fixture",
-          productId: 1,
-          metadataUrl: "https://example.test/metadata.json",
-          archives: [
-            {
-              name: "Theme.zip",
-              sha256: crypto
-                .createHash("sha256")
-                .update(zipBytes)
-                .digest("hex"),
-              treeSha256: tree.sha256,
-              treeEntries: tree.entries,
-            },
-          ],
-        },
-      ],
-    };
+    const { root, local, catalog } = await gnomeFixture();
     await acquireCuratedFamilySources({
       familyIds: ["fixture"],
       cacheRoot: path.join(root, "cache"),
@@ -803,6 +809,110 @@ describe("curated source acquisition", () => {
         ),
       ),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("selects the pinned GNOME-Look revision when current and archived names collide", async () => {
+    const { root, catalog, zipBytes } = await gnomeFixture();
+    const pinned = catalog.sources[0].archives[0];
+    const fetchImpl = vi.fn(async (url) => {
+      if (url === catalog.sources[0].metadataUrl) {
+        return Response.json({
+          data: [
+            {
+              id: 1,
+              downloadname101: pinned.name,
+              downloadmd5sum101: pinned.upstreamMd5,
+              downloadlink101: "https://example.test/pinned.zip",
+              downloadname102: pinned.name,
+              downloadmd5sum102: "f".repeat(32),
+              downloadlink102: "https://example.test/replacement.zip",
+            },
+          ],
+        });
+      }
+      expect(url).toBe("https://example.test/pinned.zip");
+      return new Response(zipBytes);
+    });
+    await acquireCuratedFamilySources({
+      familyIds: ["fixture"],
+      cacheRoot: path.join(root, "cache"),
+      catalog,
+      fetchImpl,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    await expect(
+      fs.promises.readFile(
+        path.join(root, "cache/fixture/expanded/Theme/Theme/cursors/default"),
+        "utf8",
+      ),
+    ).resolves.toBe("cursor");
+  });
+
+  it.each([
+    ["SOURCE_CHANGED", "Theme.zip"],
+    ["SOURCE_UNAVAILABLE", "Another.zip"],
+  ])(
+    "reports %s before downloading an unavailable pinned revision",
+    async (code, name) => {
+      const { root, catalog } = await gnomeFixture();
+      const fetchImpl = vi.fn(async () =>
+        Response.json({
+          data: [
+            {
+              id: 1,
+              downloadname1: name,
+              downloadmd5sum1: "f".repeat(32),
+              downloadlink1: "https://example.test/replacement.zip",
+            },
+          ],
+        }),
+      );
+      await expect(
+        acquireCuratedFamilySources({
+          familyIds: ["fixture"],
+          cacheRoot: path.join(root, "cache"),
+          catalog,
+          fetchImpl,
+        }),
+      ).rejects.toMatchObject({ code });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(await fs.promises.readdir(path.join(root, "cache"))).toEqual([]);
+    },
+  );
+
+  it("still rejects changed archive bytes when GNOME-Look reports the pinned MD5", async () => {
+    const { root, catalog } = await gnomeFixture();
+    const pinned = catalog.sources[0].archives[0];
+    const fetchImpl = vi.fn(async (url) => {
+      if (url === catalog.sources[0].metadataUrl) {
+        return Response.json({
+          data: [
+            {
+              id: 1,
+              downloadname1: pinned.name,
+              downloadmd5sum1: pinned.upstreamMd5,
+              downloadlink1: "https://example.test/tampered.zip",
+            },
+          ],
+        });
+      }
+      return new Response(
+        zipArchive([
+          { name: "Theme/" },
+          { name: "Theme/cursors/" },
+          { name: "Theme/cursors/default", data: "changed cursor" },
+        ]),
+      );
+    });
+    await expect(
+      acquireCuratedFamilySources({
+        familyIds: ["fixture"],
+        cacheRoot: path.join(root, "cache"),
+        catalog,
+        fetchImpl,
+      }),
+    ).rejects.toMatchObject({ code: "INTEGRITY_FAILED" });
+    expect(await fs.promises.readdir(path.join(root, "cache"))).toEqual([]);
   });
 
   it.each([

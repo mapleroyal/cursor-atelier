@@ -1,21 +1,18 @@
-import * as React from "react";
+import { useSyncExternalStore } from "react";
 
 // The fixed pack rail needs enough room to leave a useful detail pane.
-const MOBILE_BREAKPOINT = 960;
+const MOBILE_QUERY = "(max-width: 959px)";
+
+function subscribe(onChange) {
+  const query = window.matchMedia(MOBILE_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function getSnapshot() {
+  return window.matchMedia(MOBILE_QUERY).matches;
+}
 
 export function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState(
-    () => window.innerWidth < MOBILE_BREAKPOINT,
-  );
-
-  React.useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = (event) => {
-      setIsMobile(event.matches);
-    };
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, []);
-
-  return isMobile;
+  return useSyncExternalStore(subscribe, getSnapshot);
 }

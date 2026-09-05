@@ -9,7 +9,7 @@ import {
   ArrowReloadHorizontalIcon,
   Cancel01Icon,
   CheckmarkCircle02Icon,
-  CommandIcon,
+  PanelLeftIcon,
   Cursor01Icon,
   Delete01Icon,
   FavouriteIcon,
@@ -137,7 +137,9 @@ import {
   ONBOARDING_FAMILIES_BY_ID,
 } from "@/lib/onboarding-catalog";
 import {
+  canRetryOnboardingJob,
   getOnboardingFailureDetail,
+  getOnboardingFailureMessage,
   getOnboardingJobLabel,
   groupCursorFamilies,
   isOnboardingJobVisible,
@@ -692,7 +694,7 @@ function FamilyJobStatus({ job }) {
         "flex min-w-0 shrink-0 items-center gap-1.5 text-[0.65rem] font-normal tracking-normal",
         failed ? "text-destructive" : "text-muted-foreground/80",
       )}
-      title={failed ? (job.error ?? "Import failed.") : job.currentVariant}
+      title={failed ? getOnboardingFailureMessage(job) : job.currentVariant}
     >
       {failed ? (
         <HugeiconsIcon
@@ -732,6 +734,7 @@ function PackRail({
   libraryActions = {},
   familyJobs = [],
   onRetryFamily,
+  onDismissFamily,
   loadError,
   loading = false,
   onClose,
@@ -739,6 +742,20 @@ function PackRail({
 }) {
   const optionRefs = useRef(new Map());
   const familyRefs = useRef(new Map());
+  const [dismissal, setDismissal] = useState(null);
+  const handleDismiss = async (familyId) => {
+    setDismissal({ familyId, pending: true, error: null });
+    try {
+      await onDismissFamily(familyId);
+      setDismissal(null);
+    } catch (error) {
+      setDismissal({
+        familyId,
+        pending: false,
+        error: getCursorErrorMessage(error),
+      });
+    }
+  };
   const [expandedFamilies, setExpandedFamilies] = useState(() => new Set());
   const [expandedPools, setExpandedPools] = useState(
     () => new Set(["light", "dark"]),
@@ -1364,12 +1381,13 @@ function PackRail({
                             </button>
                           </CollapsibleTrigger>
                         )}
-                        {familyFailed ? (
+                        {canRetryOnboardingJob(job) ? (
                           <Button
                             type="button"
                             variant="destructive-text"
                             size="icon-xs"
                             className="mr-1 shrink-0"
+                            disabled={dismissal?.pending}
                             onClick={() => onRetryFamily(job.familyId)}
                             aria-label={`Retry ${family}`}
                           >
@@ -1380,16 +1398,44 @@ function PackRail({
                             />
                           </Button>
                         ) : null}
+                        {familyFailed ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            className="mr-1 shrink-0"
+                            disabled={dismissal?.pending}
+                            onClick={() => void handleDismiss(job.familyId)}
+                            aria-label={`Dismiss ${family} import`}
+                            title="Dismiss failed import"
+                          >
+                            <HugeiconsIcon
+                              icon={Cancel01Icon}
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                          </Button>
+                        ) : null}
                       </div>
                     </FamilyContextActions>
+                    {dismissal?.familyId === job?.familyId &&
+                    dismissal?.error ? (
+                      <p
+                        role="alert"
+                        className="break-words px-2.5 py-1.5 text-body-sm text-destructive"
+                      >
+                        {dismissal.error}
+                      </p>
+                    ) : null}
                     <CollapsibleContent>
                       <div className="min-w-0 space-y-0.5 pb-1">
                         {familyFailed ? (
                           <p
                             role="alert"
+                            title={getOnboardingFailureDetail(job)}
                             className="select-text whitespace-pre-wrap break-words px-2.5 py-1.5 text-body-sm text-destructive"
                           >
-                            {getOnboardingFailureDetail(job)}
+                            {getOnboardingFailureMessage(job)}
                           </p>
                         ) : null}
                         {familyPacks.map((pack) => {
@@ -2030,7 +2076,7 @@ function CatalogueFailure({ onRetry, retrying }) {
   );
 }
 
-function EmptyLibrary({ adding = false, loading = false }) {
+function EmptyLibrary({ adding = false, loading = false, feedback }) {
   return (
     <section className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-8 text-center">
       <div
@@ -2058,6 +2104,17 @@ function EmptyLibrary({ adding = false, loading = false }) {
               ? "Adding cursor packs…"
               : "No cursor packs"}
         </p>
+        {feedback?.scope === "catalog" && feedback.message ? (
+          <p
+            role={feedback.type === "error" ? "alert" : "status"}
+            className={cn(
+              "max-w-sm break-words text-body-sm",
+              feedback.type === "error" && "text-destructive",
+            )}
+          >
+            {feedback.message}
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -2074,7 +2131,9 @@ function ImportButton({ disabled, importing, onImport }) {
       onClick={isLinux ? undefined : () => onImport()}
     >
       <HugeiconsIcon icon={Add01Icon} strokeWidth={2} aria-hidden="true" />
-      {importing ? "Importing…" : "Import"}
+      <span className="max-sm:sr-only">
+        {importing ? "Importing…" : "Import"}
+      </span>
     </Button>
   );
   if (!isLinux) {
@@ -2120,8 +2179,11 @@ export function HomeRoute() {
   const retryOnboardingImport = useAppStore(
     (state) => state.retryOnboardingImport,
   );
+  const dismissOnboardingImport = useAppStore(
+    (state) => state.dismissOnboardingImport,
+  );
   const syncOnboarding = useAppStore((state) => state.syncOnboarding);
-  const [view, setView] = useState("catalog");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [search, setSearch] = useState("");
   const [operation, setOperation] = useState("idle");
@@ -2232,11 +2294,11 @@ export function HomeRoute() {
       unsubscribers.push(
         api.onNavigate((destination) => {
           if (destination === "settings") {
-            setView("settings");
+            setSettingsOpen(true);
             setRailOpen(false);
             setFeedback(null);
           } else if (destination === "catalog") {
-            setView("catalog");
+            setSettingsOpen(false);
           }
         }),
       );
@@ -3383,254 +3445,253 @@ export function HomeRoute() {
     );
   }
 
+  if (!isMobile && railOpen) {
+    setRailOpen(false);
+  }
+
+  const packRail = (
+    <PackRail
+      packs={filteredPacks}
+      allPacks={packs}
+      selectedId={displayedSelectedId}
+      effectiveId={effectiveId}
+      verifiedActive={verifiedActive}
+      engineAvailable={engineAvailable}
+      preferencesAvailable={preferencesAvailable}
+      preferences={preferences}
+      search={search}
+      onSearch={handleSearchChange}
+      onSelect={handleSelect}
+      onClearSearch={() => handleSearchChange("")}
+      onToggleCursorFavorite={handleToggleCursorFavorite}
+      onToggleFamilyFavorite={handleToggleFamilyFavorite}
+      onAssignAppearanceCursor={handleAssignAppearanceCursor}
+      libraryActions={libraryActions}
+      familyJobs={onboardingFamilyJobs}
+      onRetryFamily={(familyId) => void retryOnboardingImport(familyId)}
+      loadError={catalogueLoadError}
+      loading={initialCursorDataLoading}
+      onDismissFamily={dismissOnboardingImport}
+      onClose={isMobile ? () => setRailOpen(false) : undefined}
+    />
+  );
+
   return (
     <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background">
-      {view === "catalog" ? (
-        <header
-          className={cn(
-            "titlebar-drag flex h-12 shrink-0 items-center justify-end border-b border-border/60 pr-3 sm:pr-4",
-            isLinux ? "pl-3" : "pl-[78px]",
-          )}
-        >
-          <div className="titlebar-no-drag flex shrink-0 items-center gap-2">
-            <TooltipProvider>
-              <div className="flex items-center gap-0.5">
-                <ImportButton
-                  onImport={handleImport}
-                  disabled={operation !== "idle" || pendingPreferenceCount > 0}
-                  importing={operation === "importing"}
+      <header
+        className={cn(
+          "titlebar-drag flex h-12 shrink-0 items-center gap-2 border-b border-border/60 pr-3 sm:pr-4",
+          isLinux ? "pl-3" : "pl-[78px]",
+        )}
+      >
+        {isMobile ? (
+          <Sheet open={railOpen} onOpenChange={setRailOpen}>
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Cursor packs"
+                className="titlebar-no-drag shrink-0"
+              >
+                <HugeiconsIcon
+                  icon={PanelLeftIcon}
+                  strokeWidth={2}
+                  aria-hidden="true"
                 />
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        aria-disabled={restoreDisabled}
-                        className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-                        onClick={() => {
-                          if (!restoreDisabled) {
-                            void handleRestore();
-                          }
-                        }}
-                      />
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={ArrowReloadHorizontalIcon}
-                      strokeWidth={2}
-                      aria-hidden="true"
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="left"
+              showCloseButton={false}
+              className="max-w-[340px] overflow-hidden p-0"
+              style={{ width: "min(88vw, 340px)" }}
+            >
+              <div className="titlebar-drag h-12 shrink-0" aria-hidden="true" />
+              <SheetHeader className="sr-only">
+                <SheetTitle>Choose a cursor pack</SheetTitle>
+                <SheetDescription>Choose a cursor pack.</SheetDescription>
+              </SheetHeader>
+              {packRail}
+            </SheetContent>
+          </Sheet>
+        ) : null}
+        <div className="titlebar-no-drag ml-auto flex shrink-0 items-center gap-2">
+          <TooltipProvider>
+            <div className="flex items-center gap-0.5">
+              <ImportButton
+                onImport={handleImport}
+                disabled={operation !== "idle" || pendingPreferenceCount > 0}
+                importing={operation === "importing"}
+              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-disabled={restoreDisabled}
+                      className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                      onClick={() => {
+                        if (!restoreDisabled) {
+                          void handleRestore();
+                        }
+                      }}
                     />
-                    {operation === "restoring" ? "Restoring…" : "Restore"}
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Restore the cursor your desktop was using before Cursor
-                    Atelier
-                  </TooltipContent>
-                </Tooltip>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void handleRandomize()}
-                  disabled={
-                    !canRandomize ||
-                    operation !== "idle" ||
-                    pendingPreferenceCount > 0
                   }
                 >
                   <HugeiconsIcon
-                    icon={ShuffleIcon}
+                    icon={ArrowReloadHorizontalIcon}
                     strokeWidth={2}
                     aria-hidden="true"
                   />
+                  <span className="max-sm:sr-only">
+                    {operation === "restoring" ? "Restoring…" : "Restore"}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Restore the cursor your desktop was using before Cursor
+                  Atelier
+                </TooltipContent>
+              </Tooltip>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleRandomize()}
+                disabled={
+                  !canRandomize ||
+                  operation !== "idle" ||
+                  pendingPreferenceCount > 0
+                }
+              >
+                <HugeiconsIcon
+                  icon={ShuffleIcon}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span className="max-sm:sr-only">
                   {operation === "randomizing" ? "Randomizing…" : "Randomize"}
-                </Button>
-              </div>
-            </TooltipProvider>
-            {isMobile ? (
-              <Sheet open={railOpen} onOpenChange={setRailOpen}>
-                <SheetTrigger asChild>
-                  <Button variant="ghost" size="sm">
-                    <HugeiconsIcon
-                      icon={CommandIcon}
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                    Packs
-                  </Button>
-                </SheetTrigger>
-                <SheetContent
-                  side="left"
-                  showCloseButton={false}
-                  className="max-w-[340px] overflow-hidden p-0"
-                  style={{ width: "min(88vw, 340px)" }}
-                >
-                  <div
-                    className="titlebar-drag h-12 shrink-0"
-                    aria-hidden="true"
-                  />
-                  <SheetHeader className="sr-only">
-                    <SheetTitle>Choose a cursor pack</SheetTitle>
-                    <SheetDescription>Choose a cursor pack.</SheetDescription>
-                  </SheetHeader>
-                  <PackRail
-                    packs={filteredPacks}
-                    allPacks={packs}
-                    selectedId={displayedSelectedId}
-                    effectiveId={effectiveId}
-                    verifiedActive={verifiedActive}
-                    engineAvailable={engineAvailable}
-                    preferencesAvailable={preferencesAvailable}
-                    preferences={preferences}
-                    search={search}
-                    onSearch={handleSearchChange}
-                    onSelect={handleSelect}
-                    onClearSearch={() => handleSearchChange("")}
-                    onToggleCursorFavorite={handleToggleCursorFavorite}
-                    onToggleFamilyFavorite={handleToggleFamilyFavorite}
-                    onAssignAppearanceCursor={handleAssignAppearanceCursor}
-                    libraryActions={libraryActions}
-                    familyJobs={onboardingFamilyJobs}
-                    onRetryFamily={(familyId) =>
-                      void retryOnboardingImport(familyId)
-                    }
-                    loadError={catalogueLoadError}
-                    loading={initialCursorDataLoading}
-                    onClose={() => setRailOpen(false)}
-                  />
-                </SheetContent>
-              </Sheet>
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Settings"
-              onClick={() => {
-                setFeedback(null);
-                setView("settings");
-              }}
+                </span>
+              </Button>
+            </div>
+          </TooltipProvider>
+          <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Settings"
+                onClick={() => {
+                  setFeedback(null);
+                  setRailOpen(false);
+                }}
+              >
+                <HugeiconsIcon
+                  icon={Settings02Icon}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="right"
+              showCloseButton={false}
+              aria-describedby={undefined}
+              className="overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl"
             >
-              <HugeiconsIcon
-                icon={Settings02Icon}
-                strokeWidth={2}
-                aria-hidden="true"
+              <SettingsScreen
+                packs={catalogueLoadError ? [] : packs}
+                preferences={preferences}
+                appearanceMode={themeMode}
+                onAppearanceModeChange={setThemeMode}
+                onChange={handlePreferenceChange}
+                onRandomize={() => void handleRandomize()}
+                randomizing={operation === "randomizing"}
+                cursorOperationBusy={operation !== "idle"}
+                saving={pendingPreferenceCount > 0}
+                canRandomize={canRandomize}
+                canScheduleRandomization={canScheduleRandomization}
+                scheduleUnavailableMessage={scheduleUnavailableMessage}
+                randomizationAvailable={engineAvailable}
+                randomizationPoolSize={randomizationPoolSizes[systemAppearance]}
+                systemAppearance={systemAppearance}
+                preferencesAvailable={preferencesAvailable}
+                preferencesError={preferencesQuery.isError}
+                preferencesErrorMessage={preferencesErrorMessage}
+                preferencesRetrying={preferencesQuery.isFetching}
+                onRetryPreferences={() => void preferencesQuery.refetch()}
+                themeError={themeError}
+                feedback={feedback}
               />
-            </Button>
-          </div>
-        </header>
-      ) : null}
-
-      {view === "settings" ? (
-        <SettingsScreen
-          packs={catalogueLoadError ? [] : packs}
-          preferences={preferences}
-          appearanceMode={themeMode}
-          onAppearanceModeChange={setThemeMode}
-          onChange={handlePreferenceChange}
-          onRandomize={() => void handleRandomize()}
-          randomizing={operation === "randomizing"}
-          cursorOperationBusy={operation !== "idle"}
-          saving={pendingPreferenceCount > 0}
-          canRandomize={canRandomize}
-          canScheduleRandomization={canScheduleRandomization}
-          scheduleUnavailableMessage={scheduleUnavailableMessage}
-          randomizationAvailable={engineAvailable}
-          randomizationPoolSize={randomizationPoolSizes[systemAppearance]}
-          systemAppearance={systemAppearance}
-          preferencesAvailable={preferencesAvailable}
-          preferencesError={preferencesQuery.isError}
-          preferencesErrorMessage={preferencesErrorMessage}
-          preferencesRetrying={preferencesQuery.isFetching}
-          onRetryPreferences={() => void preferencesQuery.refetch()}
-          themeError={themeError}
-          feedback={feedback}
-          onClose={() => setView("catalog")}
-        />
-      ) : (
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          <aside className="hidden min-h-0 min-w-0 w-[276px] shrink-0 overflow-hidden border-r border-border/60 bg-sidebar/45 min-[960px]:flex lg:w-[296px]">
-            <PackRail
-              packs={filteredPacks}
-              allPacks={packs}
-              selectedId={displayedSelectedId}
-              effectiveId={effectiveId}
-              verifiedActive={verifiedActive}
-              engineAvailable={engineAvailable}
-              preferencesAvailable={preferencesAvailable}
-              preferences={preferences}
-              search={search}
-              onSearch={handleSearchChange}
-              onSelect={handleSelect}
-              onClearSearch={() => handleSearchChange("")}
-              onToggleCursorFavorite={handleToggleCursorFavorite}
-              onToggleFamilyFavorite={handleToggleFamilyFavorite}
-              onAssignAppearanceCursor={handleAssignAppearanceCursor}
-              libraryActions={libraryActions}
-              familyJobs={onboardingFamilyJobs}
-              onRetryFamily={(familyId) => void retryOnboardingImport(familyId)}
-              loadError={catalogueLoadError}
-              loading={initialCursorDataLoading}
-            />
-          </aside>
-          {catalogueLoadError ? (
-            <CatalogueFailure
-              onRetry={() => void nativeThemesQuery.refetch()}
-              retrying={nativeThemesQuery.isFetching}
-            />
-          ) : initialCursorDataLoading ? (
-            <EmptyLibrary loading />
-          ) : selectedPack ? (
-            <PackDetails
-              key={selectedPack.id}
-              pack={selectedPack}
-              active={active}
-              favorite={selectedFavorite}
-              appearanceRoles={selectedAppearanceRoles}
-              randomizationRoles={selectedRandomizationRoles}
-              selectedBySystem={selectedBySystem}
-              operation={operation}
-              operationTargetPackId={operationTargetPackId}
-              preferencesSaving={pendingPreferenceCount > 0}
-              onApply={() => void handleApply()}
-              onSizeCommit={handleSizeCommit}
-              onToggleFavorite={() =>
-                handleToggleCursorFavorite(
-                  selectedPreferenceId,
-                  !selectedFavorite,
-                )
-              }
-              onAssignAppearanceCursor={(role) =>
-                void handleAssignAppearanceCursor(selectedPreferenceId, role)
-              }
-              onToggleRandomizationRole={(role) =>
-                handleToggleRandomizationRole(
-                  selectedPreferenceId,
-                  role,
-                  !selectedRandomizationRoles.includes(role),
-                )
-              }
-              onOpenLoginSettings={handleOpenLoginSettings}
-              feedback={feedback}
-              engineAvailable={engineAvailable}
-              preferencesAvailable={preferencesAvailable}
-              preferencesError={preferencesQuery.isError}
-              preferencesErrorMessage={preferencesErrorMessage}
-              onRetryPreferences={() => void preferencesQuery.refetch()}
-              preferencesRetrying={preferencesQuery.isFetching}
-              loginApprovalRequired={loginApprovalRequired}
-              statusError={statusUnavailable}
-              statusErrorMessage={statusErrorMessage}
-              onRetryStatus={() => void statusQuery.refetch()}
-              statusRetrying={statusQuery.isFetching}
-            />
-          ) : (
-            <EmptyLibrary adding={addingCursorPacks} />
-          )}
+            </SheetContent>
+          </Sheet>
         </div>
-      )}
+      </header>
+
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        {!isMobile ? (
+          <aside className="flex min-h-0 min-w-0 w-[276px] shrink-0 overflow-hidden border-r border-border/60 bg-sidebar/45 lg:w-[296px]">
+            {packRail}
+          </aside>
+        ) : null}
+        {catalogueLoadError ? (
+          <CatalogueFailure
+            onRetry={() => void nativeThemesQuery.refetch()}
+            retrying={nativeThemesQuery.isFetching}
+          />
+        ) : initialCursorDataLoading ? (
+          <EmptyLibrary loading />
+        ) : selectedPack ? (
+          <PackDetails
+            key={selectedPack.id}
+            pack={selectedPack}
+            active={active}
+            favorite={selectedFavorite}
+            appearanceRoles={selectedAppearanceRoles}
+            randomizationRoles={selectedRandomizationRoles}
+            selectedBySystem={selectedBySystem}
+            operation={operation}
+            operationTargetPackId={operationTargetPackId}
+            preferencesSaving={pendingPreferenceCount > 0}
+            onApply={() => void handleApply()}
+            onSizeCommit={handleSizeCommit}
+            onToggleFavorite={() =>
+              handleToggleCursorFavorite(
+                selectedPreferenceId,
+                !selectedFavorite,
+              )
+            }
+            onAssignAppearanceCursor={(role) =>
+              void handleAssignAppearanceCursor(selectedPreferenceId, role)
+            }
+            onToggleRandomizationRole={(role) =>
+              handleToggleRandomizationRole(
+                selectedPreferenceId,
+                role,
+                !selectedRandomizationRoles.includes(role),
+              )
+            }
+            onOpenLoginSettings={handleOpenLoginSettings}
+            feedback={feedback}
+            engineAvailable={engineAvailable}
+            preferencesAvailable={preferencesAvailable}
+            preferencesError={preferencesQuery.isError}
+            preferencesErrorMessage={preferencesErrorMessage}
+            onRetryPreferences={() => void preferencesQuery.refetch()}
+            preferencesRetrying={preferencesQuery.isFetching}
+            loginApprovalRequired={loginApprovalRequired}
+            statusError={statusUnavailable}
+            statusErrorMessage={statusErrorMessage}
+            onRetryStatus={() => void statusQuery.refetch()}
+            statusRetrying={statusQuery.isFetching}
+          />
+        ) : (
+          <EmptyLibrary adding={addingCursorPacks} feedback={feedback} />
+        )}
+      </div>
 
       <Dialog
         open={Boolean(familyEditor)}

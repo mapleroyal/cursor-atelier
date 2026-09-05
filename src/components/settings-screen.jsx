@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
-  ArrowLeft01Icon,
   Cancel01Icon,
   InformationCircleIcon,
 } from "@hugeicons/core-free-icons";
@@ -29,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SheetClose, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
@@ -505,7 +505,6 @@ export function SettingsScreen({
   onRetryPreferences,
   themeError,
   feedback,
-  onClose,
 }) {
   const [dataOperation, setDataOperation] = useState(null);
   const [dataFeedback, setDataFeedback] = useState(null);
@@ -571,49 +570,38 @@ export function SettingsScreen({
   };
 
   return (
-    <section
-      aria-labelledby="settings-title"
-      className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
-    >
-      <header className="titlebar-drag relative h-12 shrink-0 border-b border-border/60 px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto flex h-full w-full max-w-3xl items-center gap-2">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <header className="titlebar-drag flex h-12 shrink-0 items-center gap-3 border-b border-border/60 px-4 sm:px-6">
+        <SheetTitle className="text-title-md">Settings</SheetTitle>
+        {saving ? (
+          <span
+            role="status"
+            className="ml-auto text-body-sm text-muted-foreground"
+          >
+            Saving…
+          </span>
+        ) : null}
+        <SheetClose asChild>
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label="Back"
+            aria-label="Close settings"
             className={cn(
-              "titlebar-no-drag absolute top-1/2 shrink-0 -translate-y-1/2 active:-translate-y-1/2",
-              isLinux
-                ? "left-[max(16px,calc((100%_-_48rem)/2_-_0.5rem))]"
-                : "left-[max(78px,calc((100%_-_48rem)/2_-_0.5rem))]",
+              "titlebar-no-drag -mr-1 shrink-0",
+              !saving && "ml-auto",
             )}
-            onClick={onClose}
           >
             <HugeiconsIcon
-              icon={ArrowLeft01Icon}
+              icon={Cancel01Icon}
               strokeWidth={2}
               aria-hidden="true"
             />
           </Button>
-          <h1
-            id="settings-title"
-            className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-title-md"
-          >
-            Settings
-          </h1>
-          {saving ? (
-            <span
-              role="status"
-              className="ml-auto text-body-sm text-muted-foreground"
-            >
-              Saving…
-            </span>
-          ) : null}
-        </div>
+        </SheetClose>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 lg:px-8">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6">
         <div className="mx-auto w-full max-w-3xl py-6">
           {displayedPreferenceError || themeError ? (
             <div className="grid gap-2 pb-5">
@@ -948,7 +936,7 @@ export function SettingsScreen({
                     void runDataOperation(
                       "import",
                       () => window.electronAPI.importAppData(),
-                      "Data imported. Apple cursor remains active.",
+                      "Data imported. System cursor remains active.",
                     )
                   }
                 >

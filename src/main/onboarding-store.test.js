@@ -120,6 +120,29 @@ describe("onboarding store", () => {
     });
   });
 
+  it("persists dismissal of only a failed job without restarting onboarding", () => {
+    const store = createOnboardingStore({
+      directory: "/state",
+      Store: MemoryStore,
+    });
+    store.start(["moga", "oreo"]);
+    store.updateJob("moga", {
+      status: "failed",
+      installedVariantIds: ["MogaClassic"],
+    });
+    expect(() => store.dismiss("oreo")).toThrow(/Only failed/);
+    store.dismiss("moga");
+    const relaunched = createOnboardingStore({
+      directory: "/state",
+      Store: MemoryStore,
+    });
+    expect(relaunched.get()).toMatchObject({
+      completed: true,
+      jobs: [{ familyId: "oreo", status: "queued" }],
+    });
+    expect(relaunched.get().jobs).toHaveLength(1);
+  });
+
   it("keeps concise structured failure details only on failed jobs", () => {
     expect(
       normalizeOnboardingStoreState({

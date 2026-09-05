@@ -464,4 +464,139 @@ describe("app store onboarding behavior", () => {
     await result;
     expect(store.getState().onboarding.jobs[0].status).toBe("converting");
   });
+
+  it("settles a rejected retry when an overlapping dismissal also fails", async () => {
+    let rejectRetry;
+    let rejectDismiss;
+    const electronAPI = {
+      ...createElectronAPI(),
+      retryOnboardingImport: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            rejectRetry = reject;
+          }),
+      ),
+      dismissOnboardingImport: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            rejectDismiss = reject;
+          }),
+      ),
+    };
+    const store = createAppStore({ electronAPI });
+    store.getState().syncOnboarding({
+      completed: true,
+      jobs: [
+        { familyId: "moga", status: "failed" },
+        { familyId: "oreo", status: "failed" },
+      ],
+    });
+    const retry = store.getState().retryOnboardingImport("moga");
+    const dismissal = store.getState().dismissOnboardingImport("oreo");
+    const rejectedDismissal = expect(dismissal).rejects.toThrow("Write failed");
+    await Promise.resolve();
+    rejectDismiss(new Error("Write failed"));
+    rejectRetry(new Error("Import unavailable"));
+    await Promise.all([retry, rejectedDismissal]);
+    expect(store.getState().onboarding.jobs).toMatchObject([
+      { familyId: "moga", status: "failed", error: "Import unavailable" },
+      { familyId: "oreo", status: "failed", error: null },
+    ]);
+  });
+
+  it("keeps authoritative queued work when an older retry rejection arrives", async () => {
+    let rejectRetry;
+    const electronAPI = {
+      ...createElectronAPI(),
+      retryOnboardingImport: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            rejectRetry = reject;
+          }),
+      ),
+    };
+    const store = createAppStore({ electronAPI });
+    store.getState().syncOnboarding({
+      completed: true,
+      jobs: [{ familyId: "moga", status: "failed" }],
+    });
+    const retry = store.getState().retryOnboardingImport("moga");
+    await Promise.resolve();
+    store.getState().syncOnboarding({
+      completed: true,
+      jobs: [
+        { familyId: "moga", status: "queued" },
+        { familyId: "oreo", status: "downloading", progress: 15 },
+      ],
+    });
+    rejectRetry(new Error("Older request rejected"));
+    await retry;
+    expect(store.getState().onboarding.jobs).toMatchObject([
+      { familyId: "moga", status: "queued", error: null },
+      { familyId: "oreo", status: "downloading", progress: 15 },
+    ]);
+  });
+
+  it("dismisses failed imports only after main confirms the persisted change", async () => {
+    let resolveDismiss;
+    const electronAPI = {
+      ...createElectronAPI(),
+      dismissOnboardingImport: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveDismiss = resolve;
+          }),
+      ),
+    };
+    const store = createAppStore({ electronAPI });
+    store.getState().syncOnboarding({
+      completed: true,
+      jobs: [{ familyId: "moga", status: "failed" }],
+    });
+    const pending = store.getState().dismissOnboardingImport("moga");
+    expect(store.getState().onboarding.jobs).toHaveLength(1);
+    resolveDismiss({ completed: true, jobs: [] });
+    await pending;
+    expect(store.getState().onboarding.jobs).toHaveLength(0);
+  });
+
+  it("retains failed jobs when dismissal fails and keeps newer progress on a late reply", async () => {
+    const electronAPI = {
+      ...createElectronAPI(),
+      dismissOnboardingImport: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Write failed")),
+    };
+    const store = createAppStore({ electronAPI });
+    store.getState().syncOnboarding({
+      completed: true,
+      jobs: [{ familyId: "moga", status: "failed" }],
+    });
+    await expect(
+      store.getState().dismissOnboardingImport("moga"),
+    ).rejects.toThrow("Write failed");
+    expect(store.getState().onboarding.jobs).toHaveLength(1);
+    let resolveDismiss;
+    electronAPI.dismissOnboardingImport.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDismiss = resolve;
+        }),
+    );
+    const pending = store.getState().dismissOnboardingImport("moga");
+    store.getState().syncOnboarding({
+      completed: true,
+      jobs: [{ familyId: "oreo", status: "downloading", progress: 15 }],
+    });
+    resolveDismiss({
+      completed: true,
+      jobs: [{ familyId: "oreo", status: "queued" }],
+    });
+    await pending;
+    expect(store.getState().onboarding.jobs[0]).toMatchObject({
+      familyId: "oreo",
+      status: "downloading",
+      progress: 15,
+    });
+  });
 });

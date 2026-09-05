@@ -249,6 +249,19 @@ export function createOnboardingStore({
         currentVariant: null,
       });
     },
+    dismiss(familyId) {
+      const job = state.jobs.find(
+        (candidate) => candidate.familyId === familyId,
+      );
+      if (!job || job.status !== "failed") {
+        throw new Error("Only failed starter family imports can be dismissed.");
+      }
+      return replace({
+        ...state,
+        jobs: state.jobs.filter((candidate) => candidate.familyId !== familyId),
+        error: null,
+      });
+    },
     interruptRunning() {
       const jobs = state.jobs.map((job) =>
         RUNNING_STATUSES.has(job.status)

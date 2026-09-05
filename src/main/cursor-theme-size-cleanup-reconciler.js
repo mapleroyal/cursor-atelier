@@ -1,3 +1,5 @@
+import { getCursorPreferenceId } from "../lib/cursor-preferences.js";
+
 const DEFAULT_RETRY_DELAYS_MS = Object.freeze([1_000, 5_000, 30_000]);
 
 function cleanupPendingError(identifiers) {
@@ -12,13 +14,23 @@ function cleanupPendingError(identifiers) {
 export function createCursorThemeSizeCleanupReconciler({
   bridge,
   preferencesStore,
+  runLibraryExclusive,
   retryDelaysMs = DEFAULT_RETRY_DELAYS_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   onRetryError = () => {},
 } = {}) {
-  if (!bridge || typeof bridge.forgetThemeSizes !== "function") {
+  if (
+    !bridge ||
+    typeof bridge.forgetThemeSizes !== "function" ||
+    typeof bridge.listThemes !== "function"
+  ) {
     throw new TypeError("A native cursor cleanup bridge is required.");
+  }
+  if (typeof runLibraryExclusive !== "function") {
+    throw new TypeError(
+      "A cursor library transaction coordinator is required.",
+    );
   }
   if (
     !preferencesStore ||
@@ -59,10 +71,26 @@ export function createCursorThemeSizeCleanupReconciler({
     if (identifiers.length === 0) {
       return [];
     }
-    const result = await bridge.forgetThemeSizes(identifiers);
+    const themes = await bridge.listThemes();
+    if (!Array.isArray(themes)) {
+      throw new Error("The cursor catalogue is unavailable for size cleanup.");
+    }
+    const installed = new Set(
+      themes
+        .map(getCursorPreferenceId)
+        .filter(Boolean)
+        .map((identifier) => identifier.toLowerCase()),
+    );
+    // A reimport or data restore supersedes cleanup queued for an older removal.
+    const deletedIdentifiers = identifiers.filter(
+      (identifier) => !installed.has(identifier.toLowerCase()),
+    );
+    const result = deletedIdentifiers.length
+      ? await bridge.forgetThemeSizes(deletedIdentifiers)
+      : { failedIdentifiers: [] };
     const failedIdentifiers = Array.isArray(result?.failedIdentifiers)
       ? result.failedIdentifiers
-      : identifiers;
+      : deletedIdentifiers;
     const failedKeys = new Set(
       failedIdentifiers.map((identifier) => identifier.toLowerCase()),
     );
@@ -103,7 +131,7 @@ export function createCursorThemeSizeCleanupReconciler({
         return;
       }
       retryTimer = null;
-      void enqueue(perform).then(
+      void runLibraryExclusive(() => enqueue(perform)).then(
         () => {
           retryIndex = 0;
         },
@@ -154,7 +182,7 @@ export function createCursorThemeSizeCleanupReconciler({
       clearRetry();
       retryIndex = 0;
       try {
-        return await enqueue(perform);
+        return await runLibraryExclusive(() => enqueue(perform));
       } catch (error) {
         scheduleRetry();
         throw error;
