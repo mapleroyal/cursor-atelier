@@ -2,7 +2,7 @@
   "name": "cursor-atelier",
   "productName": "Cursor Atelier",
   "version": "0.1.0",
-  "description": "A quiet macOS cursor pack manager built with Electron.",
+  "description": "A quiet cursor pack manager for macOS and Linux built with Electron.",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
@@ -10,7 +10,7 @@
     "package:clean": "node scripts/clean-package-output.mjs",
     "make": "electron-forge make",
     "native:packs": "python3 native/cursor-packs/build_all.py",
-    "native:build": "native/oreo/build.sh",
+    "native:build": "node scripts/native-build.mjs",
     "native:preflight": "node scripts/native-preflight.mjs",
     "curated:build": "scripts/build-curated-converter.sh",
     "curated:verify": "native/cursor-packs/build/curated-converter/curated-cursor-converter/curated-cursor-converter self-test",
@@ -21,7 +21,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "npm run package && playwright test",
-    "shadcn:list": "node -e 'const { execFileSync } = require(\"node:child_process\"); const get = (o, l) => JSON.parse(execFileSync(\"npx\", [\"shadcn@latest\", \"list\", \"@shadcn\", \"-l\", String(l), \"-o\", String(o)], { encoding: \"utf8\" })); const total = get(0, 1).pagination?.total ?? 0; const seen = new Set(); for (let o = 0; o < total; o += 100) for (const item of get(o, 100).items ?? []) if (item.type === \"registry:ui\" && !seen.has(item.name)) { seen.add(item.name); console.log(item.name); }'"
+    "shadcn:list": "node -e 'const { execFileSync } = require(\"node:child_process\"); const get = (o, l) => JSON.parse(execFileSync(\"npx\", [\"shadcn@latest\", \"list\", \"@shadcn\", \"-l\", String(l), \"-o\", String(o)], { encoding: \"utf8\" })); const total = get(0, 1).pagination?.total ?? 0; const seen = new Set(); for (let o = 0; o < total; o += 100) for (const item of get(o, 100).items ?? []) if (item.type === \"registry:ui\" && !seen.has(item.name)) { seen.add(item.name); console.log(item.name); }'",
+    "app:install": "node scripts/install-linux.mjs"
   },
   "keywords": [],
   "author": "Cursor Atelier contributors",
@@ -72,5 +73,8 @@
     "yauzl": "^3.4.0",
     "zustand": "^5.0.14"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0 <23"
+  }
 }

@@ -10,6 +10,7 @@ import {
   normalizeCursorTheme,
 } from "../lib/cursor-catalog.js";
 import { CURSOR_DTO_SCHEMA_VERSION } from "../lib/cursor-dto.js";
+import { createLinuxCursorBackend } from "./linux-cursor-backend.js";
 import {
   assignImportedCursorFamily,
   isBoundedCursorManifestText,
@@ -1205,6 +1206,8 @@ export function createCursorBridge({
   commandRunner = null,
   trashImportedArtifact = null,
   persistPendingThemeSizeCleanup = null,
+  linuxStateDirectory = null,
+  onStatus = () => {},
 } = {}) {
   if (
     persistPendingThemeSizeCleanup !== null &&
@@ -1215,6 +1218,24 @@ export function createCursorBridge({
     );
   }
   const resolution = { isPackaged, resourcesPath, appPath, verifySignature };
+  const linuxBackend = process.platform === "linux" && linuxStateDirectory;
+  if (linuxBackend && !commandRunner) {
+    commandRunner = createLinuxCursorBackend({
+      stateDirectory: linuxStateDirectory,
+      getThemes: () => {
+        resetManifestIndex();
+        return ensureManifestIndex()
+          .filter((theme) => theme.resourceInstalled && theme.resourcePath)
+          .map((theme) => ({
+            identifier: theme.nativeThemeId,
+            displayName: theme.displayName,
+            resourcePath: theme.resourcePath,
+            sha256: theme.sha256,
+            uuid: theme.uuid,
+          }));
+      },
+    }).commandRunner;
+  }
   let bridgePath = null;
   if (nativePath && isExecutableFile(nativePath)) {
     bridgePath =
@@ -1230,9 +1251,9 @@ export function createCursorBridge({
   }
 
   let fallbackState = createUnavailableState(
-    process.platform === "darwin"
+    ["darwin", "linux"].includes(process.platform)
       ? "The native cursor component is unavailable."
-      : "Cursor changes require macOS.",
+      : "Cursor changes require macOS or a supported Linux desktop.",
   );
   let mutationQueue = Promise.resolve();
   let loadedManifest;
@@ -1256,7 +1277,7 @@ export function createCursorBridge({
     // listing them, and every mutation independently revalidates its target.
     // Avoid synchronously rereading every imported cursor on Electron's main
     // thread merely to duplicate that work.
-    if (bridgePath) {
+    if (bridgePath && !linuxBackend) {
       return true;
     }
     try {
@@ -1473,6 +1494,17 @@ export function createCursorBridge({
                   }
                 : {}),
               resourceFile,
+              resourcePath: manifest.imported
+                ? safeImportedFile(manifest, resourceFile, {
+                    extensions: new Set([".cursor"]),
+                    maxBytes: MAX_IMPORTED_CURSOR_BYTES,
+                    direct: true,
+                  })
+                : safeManifestFile(
+                    manifest,
+                    resourceFile,
+                    new Set([".cursor"]),
+                  ),
               resourceInstalled,
               resourceAvailable: resourceInstalled,
               canApply: false,
@@ -1705,7 +1737,7 @@ export function createCursorBridge({
       previewMode: false,
       reason:
         desiredEnabled && !liveApplied
-          ? "The selected cursor is not currently active in macOS."
+          ? "The selected cursor is not currently active on the desktop."
           : null,
       selectedVariantId,
       requestedVariantId: desiredEnabled ? selectedVariantId : null,
@@ -1731,6 +1763,7 @@ export function createCursorBridge({
         persistedEffectiveApplied !== liveApplied,
       lastError: actionError ? String(actionError) : null,
     };
+    onStatus(fallbackState);
     return { ...fallbackState };
   };
 

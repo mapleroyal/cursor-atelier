@@ -96,7 +96,7 @@ export function createWindowLifecycle({
       return true;
     },
     handleWindowClose(event, window) {
-      if (isStopping() || !isMacOS || hasVisibleWindows(window)) {
+      if (isStopping() || hasVisibleWindows(window)) {
         return "close";
       }
 
@@ -121,7 +121,7 @@ export function createWindowLifecycle({
       return requestQuit() ? "quit" : "stay";
     },
     handleAllWindowsClosed() {
-      if (!isStopping() && isMacOS && getShouldStayRunning() === true) {
+      if (!isStopping() && getShouldStayRunning() === true) {
         setPolicy("accessory");
         return "stay";
       }

@@ -10,7 +10,26 @@ const { FuseV1Options, FuseVersion } = require("@electron/fuses");
 const productVersion = require("./package.json").version;
 const curatedFamilyCatalog = require("./native/cursor-packs/curated-family-catalog.json");
 
+if (Number(process.versions.node.split(".")[0]) !== 22) {
+  throw new Error(
+    "Use Node.js 22 LTS for this repository (.nvmrc). Forge's ZIP extractor is incompatible with newer Node stream behavior.",
+  );
+}
 const rootDirectory = __dirname;
+const isMac = process.platform === "darwin";
+const linuxAssetsDirectory = path.join(
+  rootDirectory,
+  "native",
+  "cursor-packs",
+  "build",
+  "linux",
+);
+const {
+  applicationId,
+  packageInventory,
+  verifyElf,
+  verifyLinuxPackage,
+} = require("./scripts/linux-package.cjs");
 // A packaged app is only a staging artifact. Keep it out of Spotlight so it
 // cannot compete with the authoritative /Applications installation while it
 // is being verified and installed.
@@ -120,14 +139,27 @@ function verifyCuratedConverter(executable, arch) {
     throw new Error("The curated source converter is missing.");
   }
   fs.accessSync(executable, fs.constants.X_OK);
-  const expectedArchitecture = arch === "x64" ? "x86_64" : arch;
-  const architectures = execFileSync("/usr/bin/lipo", ["-archs", executable], {
-    encoding: "utf8",
-  })
-    .trim()
-    .split(/\s+/);
-  if (architectures.length !== 1 || architectures[0] !== expectedArchitecture) {
-    throw new Error("The curated source converter has the wrong architecture.");
+  if (process.platform === "linux") {
+    verifyElf(executable, arch);
+  } else {
+    const expectedArchitecture = arch === "x64" ? "x86_64" : arch;
+    const architectures = execFileSync(
+      "/usr/bin/lipo",
+      ["-archs", executable],
+      {
+        encoding: "utf8",
+      },
+    )
+      .trim()
+      .split(/\s+/);
+    if (
+      architectures.length !== 1 ||
+      architectures[0] !== expectedArchitecture
+    ) {
+      throw new Error(
+        "The curated source converter has the wrong architecture.",
+      );
+    }
   }
   const result = JSON.parse(
     execFileSync(executable, ["self-test"], { encoding: "utf8" }).trim(),
@@ -253,8 +285,19 @@ function electronSignOptions(filePath) {
 }
 
 function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
-  if (platform !== "darwin") {
+  if (platform === "linux") {
+    for (const outputPath of outputPaths) {
+      verifyLinuxPackage(outputPath, { checkManifest: false });
+      fs.writeFileSync(
+        path.join(outputPath, "resources", "install-manifest.json"),
+        JSON.stringify(packageInventory(outputPath)),
+      );
+      verifyLinuxPackage(outputPath, { selfTest: false });
+    }
     return;
+  }
+  if (platform !== "darwin") {
+    throw new Error(`Unsupported package platform: ${platform}`);
   }
   if (arch !== "arm64" && arch !== "x64") {
     throw new Error(`The macOS package architecture is unsupported: ${arch}.`);
@@ -528,7 +571,45 @@ function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
   }
 }
 
-function runPackagePreflight() {
+function runPackagePreflight(forgeConfig, platform, arch) {
+  if (platform !== process.platform || arch !== process.arch) {
+    throw new Error(
+      "Build on the target OS and architecture so the frozen converter and native dependencies match Electron.",
+    );
+  }
+  if (platform === "linux") {
+    execFileSync(
+      process.execPath,
+      [path.join(rootDirectory, "scripts", "native-build.mjs")],
+      { cwd: rootDirectory, stdio: "inherit" },
+    );
+    const identityPath = path.join(linuxAssetsDirectory, "build-info.json");
+    const previous = fs.existsSync(identityPath)
+      ? BigInt(JSON.parse(fs.readFileSync(identityPath, "utf8")).buildVersion)
+      : 0n;
+    const requested = process.env.CURSOR_ATELIER_BUILD_VERSION;
+    if (
+      requested &&
+      (!/^\d+$/.test(requested) || BigInt(requested) <= previous)
+    ) {
+      throw new Error(
+        "CURSOR_ATELIER_BUILD_VERSION must be numeric and newer than the previous build.",
+      );
+    }
+    const timestamp = BigInt(Date.now());
+    const buildVersion =
+      requested || String(timestamp > previous ? timestamp : previous + 1n);
+    fs.writeFileSync(
+      identityPath,
+      `${JSON.stringify({ applicationId, version: productVersion, buildVersion, platform, arch }, null, 2)}\n`,
+    );
+    forgeConfig.packagerConfig.buildVersion = buildVersion;
+    verifyCuratedConverter(curatedConverterPath, arch);
+    return;
+  }
+  if (platform !== "darwin") {
+    throw new Error(`Unsupported package platform: ${platform}`);
+  }
   execFileSync(path.join(rootDirectory, "scripts", "build-icon.sh"), [], {
     cwd: rootDirectory,
     stdio: "inherit",
@@ -553,10 +634,13 @@ module.exports = {
     // Keep the outer bundle on the same exact-build identity as the signed
     // native app and login helper. CFBundleShortVersionString remains the
     // human-facing package version.
-    buildVersion: plistValue(
-      path.join(nativeAppPath, "Contents", "Info.plist"),
-      "CFBundleVersion",
-    ),
+    buildVersion: isMac
+      ? plistValue(
+          path.join(nativeAppPath, "Contents", "Info.plist"),
+          "CFBundleVersion",
+        )
+      : undefined,
+    executableName: isMac ? "Cursor Atelier" : "cursor-atelier",
     // Sharp's native addon links a sibling libvips dylib. The generic native
     // unpack plugin below covers .node files; this rule keeps that dylib and
     // the rest of its @img runtime package beside the extracted addon.
@@ -572,10 +656,12 @@ module.exports = {
     appCategoryType: "public.app-category.utilities",
     appCopyright: "Cursor Atelier contributors",
     darwinDarkModeSupport: true,
-    icon: [
-      path.join(rootDirectory, "assets", "AppIcon.icon"),
-      path.join(rootDirectory, "assets", "AppIcon.icns"),
-    ],
+    icon: isMac
+      ? [
+          path.join(rootDirectory, "assets", "AppIcon.icon"),
+          path.join(rootDirectory, "assets", "AppIcon.icns"),
+        ]
+      : path.join(linuxAssetsDirectory, "AppIcon.png"),
     extendInfo: {
       LSMinimumSystemVersion: "13.0",
       NSAppTransportSecurity: {
@@ -587,30 +673,52 @@ module.exports = {
     // stable Apple-issued identity used by the signed native cursor helper.
     // The native app is staged by postPackage and the outer resource seal is
     // then refreshed without altering the nested signature.
-    osxSign: {
-      identity: outerSigningIdentity(),
-      continueOnError: false,
-      preEmbedProvisioningProfile: false,
-      optionsForFile: electronSignOptions,
-    },
+    osxSign: isMac
+      ? {
+          identity: outerSigningIdentity(),
+          continueOnError: false,
+          preEmbedProvisioningProfile: false,
+          optionsForFile: electronSignOptions,
+        }
+      : undefined,
     // Keep the menu-bar template at the Resources root so Electron can load
     // the correct raster density without unpacking the application archive.
     extraResource: [
       path.join(rootDirectory, "assets", "MenuBarIconTemplate.png"),
       path.join(rootDirectory, "assets", "MenuBarIconTemplate@2x.png"),
       curatedConverterDirectory,
+      ...(!isMac
+        ? [
+            path.join(linuxAssetsDirectory, "AppIcon.png"),
+            path.join(linuxAssetsDirectory, "build-info.json"),
+          ]
+        : []),
     ],
-    afterCopyExtraResources: [removeUnusedElectronMetadata],
+    afterCopyExtraResources: isMac ? [removeUnusedElectronMetadata] : [],
   },
   rebuildConfig: {},
   hooks: {
+    preStart: () => {
+      if (process.platform === "linux") {
+        const script =
+          fs.existsSync(curatedConverterPath) &&
+          fs.existsSync(path.join(linuxAssetsDirectory, "AppIcon.png"))
+            ? "linux-preflight.mjs"
+            : "native-build.mjs";
+        execFileSync(
+          process.execPath,
+          [path.join(rootDirectory, "scripts", script)],
+          { cwd: rootDirectory, stdio: "inherit" },
+        );
+      }
+    },
     prePackage: runPackagePreflight,
     postPackage: verifyPackagedApp,
   },
   makers: [
     {
       name: "@electron-forge/maker-zip",
-      platforms: ["darwin"],
+      platforms: ["darwin", "linux"],
     },
   ],
   plugins: [
@@ -649,7 +757,7 @@ module.exports = {
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
       [FuseV1Options.EnableNodeCliInspectArguments]: false,
-      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: isMac,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],

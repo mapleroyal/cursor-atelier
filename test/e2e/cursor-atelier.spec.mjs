@@ -25,10 +25,10 @@ function findPackagedAsar() {
 
   const expectedAsar = path.join(
     packagedOutput,
-    `Cursor Atelier-darwin-${process.arch}`,
-    "Cursor Atelier.app",
-    "Contents",
-    "Resources",
+    `Cursor Atelier-${process.platform}-${process.arch}`,
+    ...(process.platform === "darwin"
+      ? ["Cursor Atelier.app", "Contents", "Resources"]
+      : ["resources"]),
     "app.asar",
   );
   if (!fs.existsSync(expectedAsar)) {
@@ -40,6 +40,9 @@ function findPackagedAsar() {
 }
 
 function applicationDataDirectory(profileDirectory) {
+  if (process.platform !== "darwin") {
+    return path.join(profileDirectory, "config", "Cursor Atelier");
+  }
   return path.join(
     profileDirectory,
     "Library",
@@ -114,8 +117,14 @@ async function launchCursorAtelier({
   delete environment.CURSOR_PACK_MANIFEST;
   delete environment.CURSOR_ATELIER_CURATED_ARCHIVE_ROOT;
   environment.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION = "1";
-  environment.HOME = profileDirectory;
-  environment.CFFIXED_USER_HOME = profileDirectory;
+  environment.CURSOR_ATELIER_USER_DATA =
+    applicationDataDirectory(profileDirectory);
+  environment.XDG_CONFIG_HOME = path.join(profileDirectory, "config");
+  environment.XDG_DATA_HOME = path.join(profileDirectory, "data");
+  if (process.platform === "darwin") {
+    environment.HOME = profileDirectory;
+    environment.CFFIXED_USER_HOME = profileDirectory;
+  }
 
   // Launching app.asar directly gives it Electron's temporary resources
   // directory instead of the packaged native bundle. Cursor mutation controls
@@ -125,12 +134,12 @@ async function launchCursorAtelier({
     cwd: os.tmpdir(),
     env: environment,
   });
+  const child = app.process();
 
   return {
     app,
     profileDirectory,
     async cleanup() {
-      const child = app.process();
       if (child.exitCode === null && child.signalCode === null) {
         await app.close();
       }
@@ -141,6 +150,9 @@ async function launchCursorAtelier({
 
 async function firstWindow(app) {
   const page = await app.firstWindow();
+  // A tiling Linux compositor may resize the native window at launch. Keep
+  // desktop-shell assertions independent of that user's workspace layout.
+  await page.setViewportSize({ width: 1080, height: 760 });
   await page.waitForLoadState("domcontentloaded");
   await expect(page).toHaveTitle("Cursor Atelier");
   return page;
@@ -169,8 +181,8 @@ const test = base.extend({
 
 test.describe("Cursor Atelier packaged UI", () => {
   test.skip(
-    process.platform !== "darwin",
-    "The production cursor manager is a macOS app; run this suite on macOS.",
+    !["darwin", "linux"].includes(process.platform),
+    "Run the packaged UI suite on macOS or Linux.",
   );
 
   test("starts with 15 selected families and makes the whole row selectable", async () => {
@@ -315,13 +327,15 @@ test.describe("Cursor Atelier packaged UI", () => {
     for (const label of ["Light", "System", "Dark"]) {
       await expect(page.getByRole("radio", { name: label })).toBeVisible();
     }
-    await expect(page.getByText("App Icon", { exact: true })).toBeVisible();
-    await expect(
-      page.getByText(
-        "Follows System Settings → Appearance → Icon & widget style → Dark → Auto",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    if (process.platform === "darwin") {
+      await expect(page.getByText("App Icon", { exact: true })).toBeVisible();
+      await expect(
+        page.getByText(
+          "Follows System Settings → Appearance → Icon & widget style → Dark → Auto",
+          { exact: true },
+        ),
+      ).toBeVisible();
+    }
 
     const dark = page.getByRole("radio", { name: "Dark" });
     await dark.click();
@@ -403,7 +417,10 @@ test.describe("Cursor Atelier packaged UI", () => {
     });
     await appearanceSwitch.click();
     const menuBarSwitch = page.getByRole("switch", {
-      name: "Show in Menu Bar",
+      name:
+        process.platform === "darwin"
+          ? "Show in Menu Bar"
+          : "Show in System Tray",
     });
     if (await menuBarSwitch.isChecked()) {
       await menuBarSwitch.click();
@@ -428,6 +445,7 @@ test.describe("Cursor Atelier packaged UI", () => {
     const reopenedWindow = cursorApp.waitForEvent("window");
     await cursorApp.evaluate(({ app }) => app.emit("activate"));
     const reopenedPage = await reopenedWindow;
+    await reopenedPage.setViewportSize({ width: 1080, height: 760 });
     await reopenedPage.waitForLoadState("domcontentloaded");
     await expect(reopenedPage).toHaveTitle("Cursor Atelier");
     await expect(
@@ -435,7 +453,7 @@ test.describe("Cursor Atelier packaged UI", () => {
     ).toBeVisible();
   });
 
-  test("registers Command-Q and fully exits through native Quit", async () => {
+  test("registers the platform quit shortcut and fully exits through Quit", async () => {
     const launch = await launchCursorAtelier();
     try {
       await firstWindow(launch.app);

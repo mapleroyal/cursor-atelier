@@ -12,6 +12,7 @@ export default defineConfig([
       ".vite/**",
       "dist/**",
       "build/**",
+      "native/**/build/**",
       "coverage/**",
     ],
   },

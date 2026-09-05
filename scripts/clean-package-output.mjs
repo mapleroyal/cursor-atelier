@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+if (process.platform === "linux") {
+  await import("./clean-linux-package-output.mjs");
+  process.exit(0);
+}
+
 const expectedBundleId = "com.cursoratelier.CursorAtelier";
 const expectedNativeBundleId = "com.cursoratelier.CursorAtelier.NativeCursor";
 const expectedHelperBundleId =

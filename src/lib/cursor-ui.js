@@ -314,12 +314,12 @@ export async function openLoginItemsSettings() {
   return open();
 }
 
-export async function importCursorPack() {
+export async function importCursorPack(options) {
   const importPack = window.electronAPI?.importCursorPack;
   if (typeof importPack !== "function") {
     throw new Error("Importing cursor packs is unavailable in this build.");
   }
-  return importPack();
+  return options === undefined ? importPack() : importPack(options);
 }
 
 export async function assignImportedCursorFamily(identifiers, family) {

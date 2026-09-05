@@ -1,77 +1,67 @@
 # Native cursor system
 
-The native layer is the only part of Cursor Atelier that touches macOS cursor
-registrations. `native/oreo` contains the Objective-C engine adapted from the
-Oreo proof of concept; `native/cursor-packs` acquires, converts, previews, and
-validates the requested upstream packs at build time. Electron main invokes
-the signed native executable through a small JSON command contract.
+All platforms use the same locked source acquisition, source-specific conversion
+recipes, 47-role intermediate cursor contract, and PNG/APNG previews. The
+on-demand converter is frozen with the pinned Python/Pillow dependencies. SVGs
+are rendered through the app's existing Sharp/libvips/librsvg bridge. Porting
+Linux changes the final system application layer, not those conversion recipes.
 
-## Build flow
+## Build and runtime flow
 
 ```text
-pinned upstream cache
-  -> cursor-packs/build_all.py
-     -> ignored generated/ (221 external .cursor files + unified manifest/previews)
-        -> oreo/build.sh
-           -> signed Oreo Cursor.app (240 runtime resources + login helper)
-              -> Forge package under Cursor Atelier.app/Contents/Resources/
+pinned upstream source archive selected in the app
+  -> existing source-specific frozen Python converter + Sharp SVG renderer
+     -> verified .cursor intermediate and PNG/APNG previews
+        -> per-user ImportedPacks store
+           -> macOS: signed Objective-C CoreGraphics/AppKit engine
+           -> Linux: Xcursor theme + desktop settings integration
 ```
 
-The 19 Oreo `.cursor` files are vendored in
-`native/oreo/Resources/Themes`. The converter adds 221 external resources and
-generates schema-v2 metadata/previews for all 240 variants. Every variant has
-the same 47 explicit native identifiers. The current preview corpus contains
-9,328 unique PNGs; role aliases may reference the same PNG.
+The packaged app starts with an empty library. It contains conversion recipes,
+source lock metadata, and 45 tiny first-run previews, without the generated
+240-theme cursor corpus. `native/cursor-packs/build_all.py` remains an optional
+developer corpus build for comparing all 19 Oreo and 221 external variants.
 
-The acquisition cache and `generated/` are ignored build artifacts. The app
-contains neither one: only the nested signed native runtime app, its 240
-`.cursor` files, schema-v2 manifest, previews, and runtime notices are staged
-outside `app.asar`.
+## Linux
 
-## Build
+Follow the [Linux build instructions](../README.md#linux-build-install-use).
+`npm run package` builds the frozen converter for the current Linux architecture,
+exports the checked-in application icon, compiles Electron, and verifies all
+packaged resources. `npm run native:build` prepares converter/assets separately;
+`npm start` also prepares them when missing. No Objective-C or Apple signing
+tools are required. The packaged converter and native importer addons must
+match Electron's architecture; cross-compilation is rejected.
 
-On macOS 13 or newer, install librsvg and the pinned Python dependency, then
-populate or verify the source cache:
+Linux retains the validated `.cursor` representation internally for lossless
+portable import/export with macOS. The final Xcursor encoding uses xcursorgen,
+retaining available frame sizes, hotspots, and animation timing. Omarchy/Hyprland
+is the primary Linux environment; GNOME and KDE integrations use desktop-specific
+settings and still require broader live testing. A desktop whose cursor state
+cannot be verified does not receive an invented active result.
 
-```sh
-brew install librsvg
-python3 -m pip install -r native/oreo/ArtworkSource/requirements.txt
-python3 native/cursor-packs/acquire_sources.py
-python3 native/cursor-packs/acquire_sources.py --verify-only
-npm run native:packs
-```
+## macOS
 
-Build with a stable Apple-issued signing identity visible to
-`security find-identity -v -p codesigning`:
+Build the signed native bridge on macOS 13 or newer:
 
 ```sh
 OREO_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" npm run native:build
 npm run native:preflight
+npm run package
 ```
 
-The result is:
-
-```text
-native/oreo/build/Release/Oreo Cursor.app
-```
-
-Ad-hoc signing is rejected for this nested app because `SMAppService` must
-recognize the login helper across launches. The native app and helper must
-retain the same nonempty TeamIdentifier while using distinct identifiers:
+`native/oreo/build/Release/Oreo Cursor.app` is copied outside `app.asar` into the
+outer app. The native app and login helper retain the same Apple development
+TeamIdentifier with distinct identifiers:
 
 - `com.cursoratelier.CursorAtelier.NativeCursor`
 - `com.cursoratelier.CursorAtelier.NativeCursor.LoginHelper`
 
-Both versions are stamped from the root `package.json`. The outer personal
-Electron app uses `com.cursoratelier.CursorAtelier`; Forge signs it with the
-same Apple Development identity so its background launch registration is
-stable across builds. Developer ID distribution signing and notarization are
-not required for the personal build.
-
-`native:preflight` verifies signatures, identities, versions, macOS 13.0,
-exact inventory digests, every resource SHA-256, 47 role previews per theme,
-native list parity, and a read-only native decode of all 240 resources. Forge
-runs the same preflight before package and make.
+The visible release version comes from `package.json`; all three apps share a
+distinct, increasing build identity. The outer bundle uses
+`com.cursoratelier.CursorAtelier`. `native:preflight` verifies signatures,
+identities, versions, the empty bundled library, and installed-theme validation
+using isolated user state. See [the main README](../README.md#macos-local-build)
+for install and cleanup requirements.
 
 ## Schema-v2 manifest
 
@@ -119,12 +109,19 @@ again before packaging.
 
 ## Runtime contract
 
-The native executable supports status, list, validate, atomic apply, complete
+On macOS, the native executable supports status, list, validate, atomic apply, complete
 teardown, Login Items settings, and lower-level diagnostic commands. Electron
 uses `--apply-theme <identifier>` rather than a select/enable sequence and
 uses `--teardown` rather than a superficial disable. See
 `native/oreo/POC-README.md` for the full CLI and native recovery details.
 
-If the signed component cannot be discovered or validated, Electron exposes a
-read-only preview catalogue. It does not substitute an in-memory apply, enable
-the action buttons, or claim the system cursor changed.
+Linux exposes the corresponding operations through its main-process desktop
+adapter. It records the original desktop settings before application, verifies
+the chosen theme through that desktop's control interface, and restores the
+saved settings on teardown. Hyprland also updates the systemd user activation
+environment when present, so apps launched through UWSM receive the selected
+cursor theme and size; Restore returns those variables to their original values.
+
+When a platform component cannot be discovered or validated, the UI leaves
+assignment unavailable and reports the missing capability. It does not
+substitute an in-memory apply or claim the system cursor changed.

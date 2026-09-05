@@ -37,6 +37,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { isLinux } from "@/lib/platform";
 
 const SCHEDULE_OPTIONS = [
   ["launch", "At app launch"],
@@ -581,7 +582,12 @@ export function SettingsScreen({
             variant="ghost"
             size="icon-sm"
             aria-label="Back"
-            className="titlebar-no-drag absolute top-1/2 left-[max(78px,calc((100%_-_48rem)/2_-_0.5rem))] shrink-0 -translate-y-1/2 active:-translate-y-1/2"
+            className={cn(
+              "titlebar-no-drag absolute top-1/2 shrink-0 -translate-y-1/2 active:-translate-y-1/2",
+              isLinux
+                ? "left-[max(16px,calc((100%_-_48rem)/2_-_0.5rem))]"
+                : "left-[max(78px,calc((100%_-_48rem)/2_-_0.5rem))]",
+            )}
             onClick={onClose}
           >
             <HugeiconsIcon
@@ -693,15 +699,17 @@ export function SettingsScreen({
                 />
               </Field>
 
-              <Field orientation="responsive">
-                <FieldContent>
-                  <p className="text-title-md text-foreground">App Icon</p>
-                </FieldContent>
-                <p className="max-w-md text-body-sm text-muted-foreground sm:text-right">
-                  Follows System Settings → Appearance → Icon &amp; widget style
-                  → Dark → Auto
-                </p>
-              </Field>
+              {!isLinux && (
+                <Field orientation="responsive">
+                  <FieldContent>
+                    <p className="text-title-md text-foreground">App Icon</p>
+                  </FieldContent>
+                  <p className="max-w-md text-body-sm text-muted-foreground sm:text-right">
+                    Follows System Settings → Appearance → Icon &amp; widget
+                    style → Dark → Auto
+                  </p>
+                </Field>
+              )}
 
               <Field orientation="horizontal">
                 <FieldContent>
@@ -722,7 +730,7 @@ export function SettingsScreen({
               <Field orientation="horizontal">
                 <FieldContent>
                   <FieldLabel htmlFor="menu-bar-visible">
-                    Show in Menu Bar
+                    {isLinux ? "Show in System Tray" : "Show in Menu Bar"}
                   </FieldLabel>
                 </FieldContent>
                 <Switch

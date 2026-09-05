@@ -97,8 +97,12 @@ function withIsolatedNativeUserState(callback) {
   }
 }
 
+if (process.platform === "linux") {
+  await import("./linux-preflight.mjs");
+  process.exit(0);
+}
 if (process.platform !== "darwin") {
-  fail("Cursor Atelier packaging is supported on macOS only.");
+  fail("Cursor Atelier supports macOS and Linux.");
 }
 if (!fs.existsSync(nativeApp) || !fs.statSync(nativeApp).isDirectory()) {
   fail("The signed native application bundle is missing.");

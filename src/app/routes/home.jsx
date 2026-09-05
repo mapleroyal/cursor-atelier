@@ -84,6 +84,7 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SettingsScreen } from "@/components/settings-screen";
 import { OnboardingScreen } from "@/components/onboarding-screen";
+import { isLinux } from "@/lib/platform";
 import * as catalog from "@/lib/cursor-catalog";
 import { CURSOR_DTO_SCHEMA_VERSION } from "@/lib/cursor-dto";
 import {
@@ -2066,6 +2067,49 @@ function EmptyLibrary({ adding = false, loading = false }) {
   );
 }
 
+function ImportButton({ disabled, importing, onImport }) {
+  const [open, setOpen] = useState(false);
+  const button = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled={disabled}
+      onClick={isLinux ? undefined : () => onImport()}
+    >
+      <HugeiconsIcon icon={Add01Icon} strokeWidth={2} aria-hidden="true" />
+      {importing ? "Importing…" : "Import"}
+    </Button>
+  );
+  if (!isLinux) {
+    return button;
+  }
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>{button}</PopoverTrigger>
+      <PopoverContent align="end" className="grid w-40 gap-1 p-1">
+        {[
+          [false, "Import File…"],
+          [true, "Import Folder…"],
+        ].map(([directory, label]) => (
+          <Button
+            key={label}
+            variant="ghost"
+            size="sm"
+            className="justify-start"
+            onClick={() => {
+              setOpen(false);
+              void onImport({ directory });
+            }}
+          >
+            {label}
+          </Button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function HomeRoute() {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
@@ -2961,7 +3005,7 @@ export function HomeRoute() {
       const result = await restoreCursorState();
       const nextStatus = result?.status;
       if (!isStatusVerifiedRestored(nextStatus)) {
-        throw new Error("The macOS cursor restore could not be verified.");
+        throw new Error("The system cursor restore could not be verified.");
       }
       queryClient.setQueryData(["cursor-status"], nextStatus);
       if (result?.preferences) {
@@ -2977,7 +3021,7 @@ export function HomeRoute() {
       setFeedback({
         scope: "catalog",
         type: "success",
-        message: "macOS cursor restored.",
+        message: "System cursor restored.",
       });
     } catch (error) {
       const message = getCursorErrorMessage(error);
@@ -3004,73 +3048,76 @@ export function HomeRoute() {
     refreshStatus,
   ]);
 
-  const handleImport = useCallback(async () => {
-    const token = beginOperation("importing");
-    if (!token) {
-      return;
-    }
-    setFeedback(null);
-    try {
-      const result = await importCursorPack();
-      if (result?.canceled) {
+  const handleImport = useCallback(
+    async (options) => {
+      const token = beginOperation("importing");
+      if (!token) {
         return;
       }
+      setFeedback(null);
+      try {
+        const result = await importCursorPack(options);
+        if (result?.canceled) {
+          return;
+        }
 
-      await queryClient.invalidateQueries({ queryKey: ["cursor-themes"] });
-      const nextThemes = await queryClient.fetchQuery({
-        queryKey: ["cursor-themes"],
-        queryFn: readThemesSnapshot,
-      });
-      const identifiers = new Set(
-        Array.isArray(result?.identifiers)
-          ? result.identifiers.map(String)
-          : [],
-      );
-      const importedPack = nextThemes
-        .map(normalisePack)
-        .find(
-          (pack) =>
-            identifiers.has(pack.nativeThemeId) || identifiers.has(pack.id),
+        await queryClient.invalidateQueries({ queryKey: ["cursor-themes"] });
+        const nextThemes = await queryClient.fetchQuery({
+          queryKey: ["cursor-themes"],
+          queryFn: readThemesSnapshot,
+        });
+        const identifiers = new Set(
+          Array.isArray(result?.identifiers)
+            ? result.identifiers.map(String)
+            : [],
         );
-      if (importedPack) {
-        setSelectionWasChanged(true);
-        setSearch("");
-        setSelectedId(importedPack.id);
-      }
+        const importedPack = nextThemes
+          .map(normalisePack)
+          .find(
+            (pack) =>
+              identifiers.has(pack.nativeThemeId) || identifiers.has(pack.id),
+          );
+        if (importedPack) {
+          setSelectionWasChanged(true);
+          setSearch("");
+          setSelectedId(importedPack.id);
+        }
 
-      const importedCount = Number(result?.importedCount ?? identifiers.size);
-      const duplicateCount = Number(result?.duplicateCount ?? 0);
-      const warning = Array.isArray(result?.warnings)
-        ? result.warnings[0]
-        : null;
-      const message = importedCount
-        ? `Imported ${importedCount} cursor ${importedCount === 1 ? "pack" : "packs"}.`
-        : duplicateCount
-          ? "That cursor pack is already imported."
-          : "Cursor import completed.";
-      setFeedback({
-        scope: "catalog",
-        type: "success",
-        message: warning ? `${message} ${warning}` : message,
-      });
-    } catch (error) {
-      const message = getCursorErrorMessage(error);
-      await Promise.allSettled([refreshLibraryQueries()]);
-      setFeedback({
-        scope: "catalog",
-        type: "error",
-        message,
-      });
-    } finally {
-      endOperation(token);
-    }
-  }, [
-    beginOperation,
-    endOperation,
-    queryClient,
-    readThemesSnapshot,
-    refreshLibraryQueries,
-  ]);
+        const importedCount = Number(result?.importedCount ?? identifiers.size);
+        const duplicateCount = Number(result?.duplicateCount ?? 0);
+        const warning = Array.isArray(result?.warnings)
+          ? result.warnings[0]
+          : null;
+        const message = importedCount
+          ? `Imported ${importedCount} cursor ${importedCount === 1 ? "pack" : "packs"}.`
+          : duplicateCount
+            ? "That cursor pack is already imported."
+            : "Cursor import completed.";
+        setFeedback({
+          scope: "catalog",
+          type: "success",
+          message: warning ? `${message} ${warning}` : message,
+        });
+      } catch (error) {
+        const message = getCursorErrorMessage(error);
+        await Promise.allSettled([refreshLibraryQueries()]);
+        setFeedback({
+          scope: "catalog",
+          type: "error",
+          message,
+        });
+      } finally {
+        endOperation(token);
+      }
+    },
+    [
+      beginOperation,
+      endOperation,
+      queryClient,
+      readThemesSnapshot,
+      refreshLibraryQueries,
+    ],
+  );
 
   const handleAssignFamily = useCallback(
     async (pack, family) => {
@@ -3350,24 +3397,20 @@ export function HomeRoute() {
   return (
     <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background">
       {view === "catalog" ? (
-        <header className="titlebar-drag flex h-12 shrink-0 items-center justify-end border-b border-border/60 pr-3 pl-[78px] sm:pr-4">
+        <header
+          className={cn(
+            "titlebar-drag flex h-12 shrink-0 items-center justify-end border-b border-border/60 pr-3 sm:pr-4",
+            isLinux ? "pl-3" : "pl-[78px]",
+          )}
+        >
           <div className="titlebar-no-drag flex shrink-0 items-center gap-2">
             <TooltipProvider>
               <div className="flex items-center gap-0.5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleImport}
+                <ImportButton
+                  onImport={handleImport}
                   disabled={operation !== "idle" || pendingPreferenceCount > 0}
-                >
-                  <HugeiconsIcon
-                    icon={Add01Icon}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                  {operation === "importing" ? "Importing…" : "Import"}
-                </Button>
+                  importing={operation === "importing"}
+                />
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -3393,7 +3436,8 @@ export function HomeRoute() {
                     {operation === "restoring" ? "Restoring…" : "Restore"}
                   </TooltipTrigger>
                   <TooltipContent>
-                    Restore the cursor macOS was using before Cursor Atelier
+                    Restore the cursor your desktop was using before Cursor
+                    Atelier
                   </TooltipContent>
                 </Tooltip>
                 <Button

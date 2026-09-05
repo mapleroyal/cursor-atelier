@@ -22,10 +22,10 @@ const projectRoot = path.resolve(
 const converterExecutable = path.join(
   projectRoot,
   "out.noindex",
-  `Cursor Atelier-darwin-${process.arch}`,
-  "Cursor Atelier.app",
-  "Contents",
-  "Resources",
+  `Cursor Atelier-${process.platform}-${process.arch}`,
+  ...(process.platform === "darwin"
+    ? ["Cursor Atelier.app", "Contents", "Resources"]
+    : ["resources"]),
   "curated-cursor-converter",
   "curated-cursor-converter",
 );

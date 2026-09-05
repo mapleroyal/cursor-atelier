@@ -1,42 +1,45 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
-script_directory=${0:A:h}
-repository_root=${script_directory:h}
+script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+repository_root=$(cd -- "${script_directory}/.." && pwd -P)
 runtime_root="${repository_root}/native/cursor-packs"
 build_root="${runtime_root}/build/curated-converter"
-host_arch=$(/usr/bin/uname -m)
+host_arch=$(uname -m)
+host_platform=$(uname -s)
 
 case "${host_arch}" in
-  arm64) package_arch=arm64 ;;
+  arm64|aarch64) package_arch=arm64 ;;
   x86_64) package_arch=x64 ;;
   *)
-    print -u2 "Unsupported converter build architecture: ${host_arch}"
+    printf '%s\n' >&2 "Unsupported converter build architecture: ${host_arch}"
     exit 65
     ;;
 esac
 
 python_command=${CURSOR_ATELIER_PYTHON:-python3}
 if ! command -v "${python_command}" >/dev/null 2>&1; then
-  print -u2 "Python interpreter not found: ${python_command}"
+  printf '%s\n' >&2 "Python interpreter not found: ${python_command}"
   exit 69
 fi
 
 /bin/mkdir -p "${build_root}"
-build_root=${build_root:A}
+build_root=$(cd -- "${build_root}" && pwd -P)
 staging=$(/usr/bin/mktemp -d "${build_root}/.curated-staging-XXXXXXXX")
-tooling="${build_root}/tooling-${package_arch}"
+tooling="${build_root}/tooling-${host_platform}-${package_arch}"
 target="${build_root}/curated-cursor-converter"
 previous="${build_root}/.previous-${package_arch}"
 
 safe_remove() {
-  local candidate=${1:A}
-  if [[ "${candidate:h}" != "${build_root}" ]] || [[ "${candidate:t}" != .curated-staging-* && "${candidate:t}" != .previous-* ]]; then
-    print -u2 "Refusing unsafe converter cleanup path: ${candidate}"
+  local candidate=$1
+  local candidate_name
+  candidate_name=$(basename -- "${candidate}")
+  if [[ "$(dirname -- "${candidate}")" != "${build_root}" ]] || [[ "${candidate_name}" != .curated-staging-* && "${candidate_name}" != .previous-* ]]; then
+    printf '%s\n' >&2 "Refusing unsafe converter cleanup path: ${candidate}"
     exit 70
   fi
   if [[ -L "${candidate}" ]]; then
-    print -u2 "Refusing converter cleanup through symlink: ${candidate}"
+    printf '%s\n' >&2 "Refusing converter cleanup through symlink: ${candidate}"
     exit 70
   fi
   if [[ -d "${candidate}" ]]; then
@@ -67,6 +70,8 @@ from pathlib import Path
 candidates = (
     Path(sysconfig.get_path("stdlib")) / "LICENSE.txt",
     Path(sys.base_prefix) / "LICENSE.txt",
+    Path(sys.base_prefix) / "share/licenses/python/LICENSE",
+    Path(sys.base_prefix) / f"share/doc/python{sys.version_info.major}.{sys.version_info.minor}/copyright",
 )
 matches = [path.resolve() for path in candidates if path.is_file()]
 if not matches:
@@ -97,7 +102,7 @@ pillow_license=$(metadata_license Pillow "licenses/LICENSE")
 pyinstaller_license=$(metadata_license pyinstaller "licenses/COPYING.txt")
 for runtime_license in "${python_license}" "${pillow_license}" "${pyinstaller_license}"; do
   if [[ -z "${runtime_license}" || ! -f "${runtime_license}" || -L "${runtime_license}" ]]; then
-    print -u2 "Invalid converter runtime license path: ${runtime_license}"
+    printf '%s\n' >&2 "Invalid converter runtime license path: ${runtime_license}"
     exit 70
   fi
 done
@@ -124,7 +129,7 @@ done
 built="${staging}/dist/curated-cursor-converter"
 executable="${built}/curated-cursor-converter"
 if [[ ! -x "${executable}" ]]; then
-  print -u2 "PyInstaller did not create the curated converter executable."
+  printf '%s\n' >&2 "PyInstaller did not create the curated converter executable."
   exit 70
 fi
 /bin/mkdir "${built}/licenses"
@@ -134,11 +139,11 @@ fi
 "${executable}" self-test >/dev/null
 
 if [[ -e "${previous}" || -L "${previous}" ]]; then
-  print -u2 "Refusing promotion while converter recovery path exists: ${previous}"
+  printf '%s\n' >&2 "Refusing promotion while converter recovery path exists: ${previous}"
   exit 70
 fi
 if [[ -L "${target}" || ( -e "${target}" && ! -d "${target}" ) ]]; then
-  print -u2 "Refusing unexpected converter target: ${target}"
+  printf '%s\n' >&2 "Refusing unexpected converter target: ${target}"
   exit 70
 fi
 if [[ -d "${target}" ]]; then
@@ -154,4 +159,4 @@ if [[ -d "${previous}" ]]; then
   safe_remove "${previous}"
 fi
 
-print "${target}"
+printf '%s\n' "${target}"

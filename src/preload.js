@@ -34,6 +34,7 @@ function subscribeToNavigation(callback) {
 }
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  platform: process.platform,
   getAppAppearanceMode: () => {
     const mode = electron.ipcRenderer.sendSync("app:get-appearance-mode");
     return ["system", "light", "dark"].includes(mode) ? mode : "system";
@@ -42,7 +43,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     electron.ipcRenderer.invoke("app:set-appearance-mode", mode),
   getCursorStatus: () => electron.ipcRenderer.invoke("cursor:status"),
   listCursorThemes: () => electron.ipcRenderer.invoke("cursor:list-themes"),
-  importCursorPack: () => electron.ipcRenderer.invoke("cursor:import-pack"),
+  importCursorPack: (options) =>
+    options === undefined
+      ? electron.ipcRenderer.invoke("cursor:import-pack")
+      : electron.ipcRenderer.invoke("cursor:import-pack", options),
   assignImportedCursorFamily: (identifiers, family) =>
     electron.ipcRenderer.invoke(
       "cursor:assign-imported-family",

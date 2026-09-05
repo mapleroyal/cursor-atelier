@@ -25,6 +25,7 @@ function loadPreload({ appearanceMode = "dark" } = {}) {
     "utf8",
   );
   vm.runInNewContext(source, {
+    process: { platform: process.platform },
     require(identifier) {
       if (identifier === "electron") {
         return electron;

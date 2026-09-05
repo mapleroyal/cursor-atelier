@@ -1,0 +1,9 @@
+node_modules/
+out/
+out.noindex/
+.vite/
+build/
+native/**/build/
+native/cursor-packs/generated/
+native/cursor-packs/sources/
+coverage/

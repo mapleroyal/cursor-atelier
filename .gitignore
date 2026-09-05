@@ -110,3 +110,7 @@ Desktop.ini
 .claude/
 .codex/
 .cursorrules
+
+# Python build/test bytecode
+__pycache__/
+*.py[cod]

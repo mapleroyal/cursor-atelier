@@ -278,4 +278,23 @@ describe("window lifecycle", () => {
 
     expect(setActivationPolicy).not.toHaveBeenCalled();
   });
+
+  it("keeps Linux tray and scheduled features available after the last window closes", () => {
+    const tray = fixture({ isMacOS: false });
+    const window = {};
+    tray.addVisibleWindow(window);
+    expect(tray.lifecycle.handleWindowClose(closeEvent(), window)).toBe("hide");
+    expect(tray.hideWindow).toHaveBeenCalledWith(window);
+    expect(tray.lifecycle.handleAllWindowsClosed()).toBe("stay");
+    expect(tray.setActivationPolicy).not.toHaveBeenCalled();
+
+    const scheduled = fixture({
+      isMacOS: false,
+      menuBarVisible: false,
+      automaticRandomization: true,
+      randomizationMode: "interval",
+    });
+    expect(scheduled.lifecycle.handleAllWindowsClosed()).toBe("stay");
+    expect(scheduled.quit).not.toHaveBeenCalled();
+  });
 });

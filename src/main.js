@@ -66,6 +66,8 @@ import {
 } from "./main/curated-source-acquisition";
 import { createCuratedVariantInstaller } from "./main/curated-variant-installer";
 import { createMainLoginItemReconciler } from "./main/main-login-item-reconciler";
+import { createLinuxLoginItem } from "./main/linux-login-item";
+import { createLinuxSystemAppearance } from "./main/linux-system-appearance";
 import { createOnboardingStore } from "./main/onboarding-store";
 import { broadcastToRendererWindows } from "./main/renderer-broadcast";
 import { createRendererNavigation } from "./main/renderer-navigation";
@@ -91,6 +93,7 @@ let trayRefreshGeneration = 0;
 let runtime = null;
 let windowLifecycle = null;
 let lastSystemAppearance = "light";
+let linuxSystemAppearance = null;
 const rendererNavigation = createRendererNavigation({
   canSend: (webContents) =>
     trustedWebContents.has(webContents.id) &&
@@ -101,9 +104,60 @@ const rendererNavigation = createRendererNavigation({
 // The native helper and Electron must share one canonical Application Support
 // store. Pinning userData here also keeps the single-instance lock aligned with
 // that store when Chromium is launched with a custom --user-data-dir argument.
-const applicationDataRoot = path.join(app.getPath("appData"), "Cursor Atelier");
+const userDataOverride = process.env.CURSOR_ATELIER_USER_DATA;
+if (userDataOverride && !path.isAbsolute(userDataOverride)) {
+  throw new Error("CURSOR_ATELIER_USER_DATA must be an absolute path.");
+}
+const applicationDataRoot =
+  userDataOverride ?? path.join(app.getPath("appData"), "Cursor Atelier");
 fs.mkdirSync(applicationDataRoot, { recursive: true, mode: 0o700 });
 app.setPath("userData", applicationDataRoot);
+const buildInfoPath = path.join(process.resourcesPath, "build-info.json");
+const linuxPackagedRuntime =
+  process.platform === "linux" &&
+  app.isPackaged &&
+  fs.existsSync(buildInfoPath);
+const buildInfo = linuxPackagedRuntime
+  ? JSON.parse(fs.readFileSync(buildInfoPath, "utf8"))
+  : null;
+const installationCheckPath = process.argv
+  .find((argument) => argument.startsWith("--installation-check="))
+  ?.slice("--installation-check=".length);
+if (
+  installationCheckPath &&
+  (!path.isAbsolute(installationCheckPath) ||
+    !userDataOverride ||
+    process.env.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION !== "1")
+) {
+  throw new Error(
+    "Installation checks require an absolute result path, isolated user data, and disabled login registration.",
+  );
+}
+const runtimeIdentityPath = path.join(applicationDataRoot, "runtime.json");
+function writeRuntimeIdentity(rendererReady = false) {
+  if (!linuxPackagedRuntime) {
+    return;
+  }
+  const identity = {
+    buildVersion: buildInfo.buildVersion,
+    executablePath: process.execPath,
+    pid: process.pid,
+    rendererReady,
+  };
+  fs.writeFileSync(runtimeIdentityPath, JSON.stringify(identity), {
+    mode: 0o600,
+  });
+  if (installationCheckPath && rendererReady) {
+    fs.writeFileSync(installationCheckPath, JSON.stringify(identity), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    app.quit();
+  }
+}
+if (process.platform === "linux") {
+  app.setDesktopName("com.cursoratelier.CursorAtelier.desktop");
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -135,7 +189,9 @@ function getWindowBackgroundColor() {
 
 function getSystemAppearance() {
   if (process.platform !== "darwin") {
-    lastSystemAppearance = nativeTheme.shouldUseDarkColors ? "dark" : "light";
+    lastSystemAppearance =
+      linuxSystemAppearance?.get() ??
+      (nativeTheme.shouldUseDarkColors ? "dark" : "light");
     return lastSystemAppearance;
   }
   try {
@@ -299,12 +355,25 @@ function createWindow({ showWhenReady = true } = {}) {
   const mainWindow = new BrowserWindow({
     width: 1080,
     height: 760,
-    minWidth: 760,
-    minHeight: 560,
+    minWidth: process.platform === "linux" ? 320 : 760,
+    minHeight: process.platform === "linux" ? 480 : 560,
     show: false,
     title: "Cursor Atelier",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 18 },
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 18 } }
+      : {
+          autoHideMenuBar: true,
+          icon: app.isPackaged
+            ? path.join(process.resourcesPath, "AppIcon.png")
+            : path.join(
+                app.getAppPath(),
+                "native",
+                "cursor-packs",
+                "build",
+                "linux",
+                "AppIcon.png",
+              ),
+        }),
     backgroundColor: getWindowBackgroundColor(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -471,9 +540,21 @@ function installApplicationMenu() {
 }
 
 function createMenuBarIcon() {
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "MenuBarIconTemplate.png")
-    : path.join(app.getAppPath(), "assets", "MenuBarIconTemplate.png");
+  const iconPath =
+    process.platform === "linux"
+      ? app.isPackaged
+        ? path.join(process.resourcesPath, "AppIcon.png")
+        : path.join(
+            app.getAppPath(),
+            "native",
+            "cursor-packs",
+            "build",
+            "linux",
+            "AppIcon.png",
+          )
+      : app.isPackaged
+        ? path.join(process.resourcesPath, "MenuBarIconTemplate.png")
+        : path.join(app.getAppPath(), "assets", "MenuBarIconTemplate.png");
   const source = nativeImage.createFromPath(iconPath);
   if (source.isEmpty()) {
     console.error(`Could not load the menu bar icon at ${iconPath}.`);
@@ -484,7 +565,7 @@ function createMenuBarIcon() {
     console.error(`Could not resize the menu bar icon at ${iconPath}.`);
     return null;
   }
-  image.setTemplateImage(true);
+  image.setTemplateImage(process.platform === "darwin");
   return image;
 }
 
@@ -493,7 +574,7 @@ function currentCursorMenuLabel(status) {
     status?.effectiveApplied !== true ||
     status?.currentSentinelsMatchTheme !== true
   ) {
-    return "Current cursor: macOS";
+    return "Current cursor: System default";
   }
 
   const name =
@@ -531,7 +612,10 @@ function setTrayMenu(currentLabel = "Current cursor: Checking…") {
       },
       { type: "separator" },
       {
-        label: "Hide Menu Bar Item",
+        label:
+          process.platform === "darwin"
+            ? "Hide Menu Bar Item"
+            : "Hide System Tray Icon",
         click: () =>
           runtime.preferencesStore.update({ menuBar: { visible: false } }),
       },
@@ -584,6 +668,7 @@ function syncTray(preferences) {
     }
     tray = new Tray(icon);
     tray.setToolTip("Cursor Atelier");
+    tray.on("click", () => requestMainWindow());
     setTrayMenu();
   }
   void refreshTrayMenu();
@@ -613,6 +698,20 @@ function curatedConverterInvocation() {
       commandArguments: [],
     };
   }
+  if (process.platform === "linux") {
+    return {
+      command: path.join(
+        app.getAppPath(),
+        "native",
+        "cursor-packs",
+        "build",
+        "curated-converter",
+        "curated-cursor-converter",
+        "curated-cursor-converter",
+      ),
+      commandArguments: [],
+    };
+  }
   return {
     command: "/usr/bin/python3",
     commandArguments: [
@@ -626,7 +725,12 @@ function curatedConverterInvocation() {
   };
 }
 
-async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
+async function chooseAndImportCursorPack(
+  event,
+  bridge,
+  importedPacksRoot,
+  { directory = false } = {},
+) {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);
   const options = {
     title: "Import cursor pack",
@@ -640,7 +744,10 @@ async function chooseAndImportCursorPack(event, bridge, importedPacksRoot) {
       },
       { name: "All files", extensions: ["*"] },
     ],
-    properties: ["openFile", "openDirectory"],
+    properties:
+      process.platform === "darwin"
+        ? ["openFile", "openDirectory"]
+        : [directory ? "openDirectory" : "openFile"],
   };
   const selection = parentWindow
     ? await dialog.showOpenDialog(parentWindow, options)
@@ -764,10 +871,26 @@ async function startApplication() {
   const onboardingStore = createOnboardingStore({
     directory: app.getPath("userData"),
   });
+  if (process.platform === "linux") {
+    linuxSystemAppearance = createLinuxSystemAppearance({
+      nativeTheme,
+      onChange: () => {
+        void runtime?.automation.appearanceChanged();
+      },
+      onError: (error) =>
+        console.error("Could not read the Linux system appearance.", error),
+    });
+    await linuxSystemAppearance.start();
+  }
   getSystemAppearance();
   nativeTheme.themeSource = preferencesStore.getAppAppearanceMode();
   let automation = null;
   let mainLoginItemReconciler = null;
+  let linuxLoginItem = null;
+  let cursorDesiredEnabled = false;
+  const shouldRegisterLoginItem = (preferences) =>
+    shouldRegisterMainAppLoginItem(preferences) ||
+    (process.platform === "linux" && cursorDesiredEnabled);
   const persistPendingThemeSizeCleanup = (identifiers) => {
     const pending = preferencesStore.getPendingThemeSizeCleanupIds();
     const seen = new Set(pending.map((identifier) => identifier.toLowerCase()));
@@ -784,6 +907,27 @@ async function startApplication() {
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
     importedPacksRoot,
+    linuxStateDirectory:
+      process.platform === "linux" &&
+      (MAIN_WINDOW_VITE_DEV_SERVER_URL || linuxPackagedRuntime)
+        ? path.join(applicationDataRoot, "linux-cursors")
+        : null,
+    onStatus: (status) => {
+      cursorDesiredEnabled = status.desiredEnabled === true;
+      mainLoginItemReconciler?.sync(
+        shouldRegisterLoginItem(preferencesStore.get()),
+      );
+      if (process.env.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION !== "1") {
+        try {
+          linuxLoginItem?.syncCursorHook(cursorDesiredEnabled);
+        } catch (error) {
+          console.error(
+            "Could not reconcile the Omarchy cursor theme hook.",
+            error,
+          );
+        }
+      }
+    },
     trashImportedArtifact: (artifactPath) => shell.trashItem(artifactPath),
     persistPendingThemeSizeCleanup,
   });
@@ -1031,14 +1175,24 @@ async function startApplication() {
   // Launching app.asar directly (including the Playwright preview) can still
   // report app.isPackaged. Requiring the verified packaged native component
   // keeps that read-only preview from registering a system login item.
+  linuxLoginItem =
+    process.platform === "linux"
+      ? createLinuxLoginItem({ buildVersion: buildInfo?.buildVersion })
+      : null;
   const backgroundRegistrationAvailable = Boolean(
     app.isPackaged &&
-    process.platform === "darwin" &&
+    (process.platform === "darwin" ||
+      (linuxPackagedRuntime && linuxLoginItem?.available)) &&
     bridge.nativePath &&
     process.env.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION !== "1",
   );
+  backgroundLaunch =
+    process.platform === "linux" && process.argv.includes("--background");
+  if (process.platform === "linux") {
+    await bridge.status();
+  }
   let loginItemReconciliation = Promise.resolve();
-  if (backgroundRegistrationAvailable) {
+  if (backgroundRegistrationAvailable && process.platform === "darwin") {
     try {
       backgroundLaunch = Boolean(
         app.getLoginItemSettings({ type: "mainAppService" }).wasOpenedAtLogin,
@@ -1049,8 +1203,14 @@ async function startApplication() {
   }
   mainLoginItemReconciler = createMainLoginItemReconciler({
     available: backgroundRegistrationAvailable,
-    setLoginItemSettings: (settings) => app.setLoginItemSettings(settings),
-    getLoginItemSettings: (settings) => app.getLoginItemSettings(settings),
+    setLoginItemSettings: (settings) =>
+      linuxLoginItem
+        ? linuxLoginItem.setLoginItemSettings(settings)
+        : app.setLoginItemSettings(settings),
+    getLoginItemSettings: (settings) =>
+      linuxLoginItem
+        ? linuxLoginItem.getLoginItemSettings(settings)
+        : app.getLoginItemSettings(settings),
     onUnsatisfied: ({ desired, status }) => {
       if (desired && status === "requires-approval") {
         console.warn(
@@ -1088,12 +1248,10 @@ async function startApplication() {
   // Reconcile the Electron login item before handling a stale background
   // launch so an app with no resident feature does not relaunch headlessly at
   // the next login. The native cursor helper has its own lifecycle.
-  mainLoginItemReconciler.sync(
-    shouldRegisterMainAppLoginItem(initialPreferences),
-  );
+  mainLoginItemReconciler.sync(shouldRegisterLoginItem(initialPreferences));
   if (backgroundLaunch) {
     windowLifecycle.enterBackground();
-    if (!shouldRegisterMainAppLoginItem(initialPreferences)) {
+    if (!shouldRegisterLoginItem(initialPreferences)) {
       mainLoginItemReconciler.stop();
       libraryPreferencesReconciler.stop();
       themeSizeCleanupReconciler.stop();
@@ -1228,13 +1386,22 @@ async function startApplication() {
     bridge: rendererBridge,
     isTrustedSender,
   });
-  ipcMain.handle("cursor:import-pack", (event) => {
+  ipcMain.handle("cursor:import-pack", (event, options) => {
     requireTrustedSender(event);
+    if (
+      options !== undefined &&
+      (options === null ||
+        typeof options !== "object" ||
+        typeof options.directory !== "boolean")
+    ) {
+      throw new TypeError("A valid import selection is required.");
+    }
     const operation = importQueue.then(async () => {
       const result = await chooseAndImportCursorPack(
         event,
         bridge,
         importedPacksRoot,
+        options,
       );
       if (!result.canceled) {
         notifyLibraryChanged({
@@ -1411,6 +1578,7 @@ async function startApplication() {
   ipcMain.on("app:navigation-ready", (event) => {
     if (isTrustedSender(event)) {
       rendererNavigation.markReady(event.sender);
+      writeRuntimeIdentity(true);
     }
   });
   ipcMain.on("app:navigation-not-ready", (event) => {
@@ -1430,7 +1598,7 @@ async function startApplication() {
     menuBarVisible = nextMenuBarVisible;
     shouldStayRunning = nextShouldStayRunning;
     broadcastToRenderers("preferences:changed", preferences);
-    mainLoginItemReconciler.sync(shouldRegisterMainAppLoginItem(preferences));
+    mainLoginItemReconciler.sync(shouldRegisterLoginItem(preferences));
     syncTray(preferences);
     if (backgroundPreferenceChanged) {
       windowLifecycle?.handleBackgroundPreferenceChanged(nextShouldStayRunning);
@@ -1490,6 +1658,7 @@ async function startApplication() {
       disposeAppAppearanceIpc();
       unsubscribePreferences();
       nativeTheme.off("updated", handleNativeThemeUpdated);
+      linuxSystemAppearance?.stop();
       powerMonitor.off("resume", handleWake);
       powerMonitor.off("unlock-screen", handleWake);
       for (const identifier of localNotificationIds) {
@@ -1502,6 +1671,20 @@ async function startApplication() {
       tray?.destroy();
       tray = null;
       runtime = null;
+      if (linuxPackagedRuntime) {
+        try {
+          if (
+            JSON.parse(fs.readFileSync(runtimeIdentityPath, "utf8")).pid ===
+            process.pid
+          ) {
+            fs.unlinkSync(runtimeIdentityPath);
+          }
+        } catch (error) {
+          if (error.code !== "ENOENT") {
+            console.error("Could not remove the runtime identity.", error);
+          }
+        }
+      }
     },
     exit: (code) => app.exit(code),
   });
@@ -1513,6 +1696,16 @@ async function startApplication() {
   });
 
   applicationStarted = true;
+  if (
+    backgroundLaunch &&
+    process.platform === "linux" &&
+    !shouldRegisterMainAppLoginItem(initialPreferences)
+  ) {
+    await loginItemReconciliation;
+    app.quit();
+    return;
+  }
+  writeRuntimeIdentity();
   const shouldOpenWindow = !backgroundLaunch || pendingOpen;
   const navigation = pendingNavigation;
   pendingOpen = false;
@@ -1563,7 +1756,22 @@ async function startApplication() {
 }
 
 if (app.requestSingleInstanceLock()) {
-  app.on("second-instance", () => {
+  if (process.platform === "linux") {
+    process.on("SIGTERM", () => app.quit());
+    process.on("SIGINT", () => app.quit());
+  }
+  app.on("second-instance", (_event, arguments_) => {
+    if (process.platform === "linux" && arguments_.includes("--background")) {
+      void runtime?.bridge
+        .reconcileLoginItems()
+        .then((status) =>
+          notifyCursorChanged({ reason: "desktop-theme", status }),
+        )
+        .catch((error) =>
+          console.error("Could not reconcile the desktop cursor.", error),
+        );
+      return;
+    }
     requestMainWindow();
   });
   app
