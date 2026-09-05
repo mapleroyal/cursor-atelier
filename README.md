@@ -77,17 +77,17 @@ Other compositors are not automatically treated as supported. Hyprland uses
 through `gdbus` and the standard XDG Settings portal supplied by your desktop.
 
 Install Node.js 22 LTS (22.12 or newer in that major) with npm, Python 3.10 or newer with venv support,
-binutils, xcursorgen, and the desktop libraries used by Electron. For example:
+binutils, and the desktop libraries used by Electron. For example:
 
 ```sh
 # Omarchy / Arch
-sudo pacman -S --needed python binutils xorg-xcursorgen gtk3 nss alsa-lib glib2 desktop-file-utils
+sudo pacman -S --needed python binutils gtk3 nss alsa-lib glib2 desktop-file-utils
 
 # Ubuntu 24.04+ / Debian 13 (install a current Node.js separately if needed)
-sudo apt install python3 python3-venv binutils x11-apps libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libglib2.0-bin desktop-file-utils
+sudo apt install python3 python3-venv binutils libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libglib2.0-bin desktop-file-utils
 
 # Fedora
-sudo dnf install python3 binutils xcursorgen gtk3 nss alsa-lib mesa-libgbm glib2 desktop-file-utils
+sudo dnf install python3 binutils gtk3 nss alsa-lib mesa-libgbm glib2 desktop-file-utils
 ```
 
 Use `.nvmrc` with your Node version manager (`nvm install && nvm use`, or
@@ -105,10 +105,11 @@ npm run app:install
 
 The package command builds the existing frozen converter, compiles the app,
 and verifies its executable architecture, native importer dependencies,
-converter self-test, and complete file hashes. Python and Pillow are bundled
-in the converter; the installed app does not use system Python, a global pip
-installation, or a separate SVG conversion recipe. Build on the OS and CPU
-that will run the app: [PyInstaller does not bundle glibc](https://pyinstaller.org/en/stable/usage.html#making-gnu-linux-apps-forward-compatible).
+converter self-test, and complete file hashes. Python, Pillow, and the Clickgen
+Xcursor encoder are bundled in the converter; the installed app does not use
+xcursorgen, system Python, a global pip installation, or a separate SVG
+conversion recipe. Build on the OS and CPU that will run the app:
+[PyInstaller does not bundle glibc](https://pyinstaller.org/en/stable/usage.html#making-gnu-linux-apps-forward-compatible).
 `CURSOR_ATELIER_PYTHON=/path/to/python3` selects another build interpreter.
 
 The installer launches the installed app and adds **Cursor Atelier** to your
@@ -139,10 +140,12 @@ The full 240-theme developer corpus is optional and is never downloaded by
 
 Run in Background at Startup uses an XDG autostart entry. This is supported by
 Omarchy's UWSM session, GNOME, and KDE; no root service is installed. A selected
-cursor also keeps the startup registration so that its appearance assignment
-is restored at login, even when the separate background-startup preference
-is off. Restore removes that cursor-persistence requirement. Linux
-application data normally lives in `~/.config/Cursor Atelier`; XDG base
+cursor also keeps the startup registration. At login it selects the cursor
+assigned to the current desktop light/dark appearance, falling back to the
+selected cursor when that assignment is absent or unavailable, even when the
+separate background-startup preference is off. Restore removes that
+cursor-persistence requirement. Linux application data normally lives in
+`~/.config/Cursor Atelier`; XDG base
 directory overrides are respected. Cursor application state is stored in
 `linux-cursors/state.json`, and generated themes use owned `~/.icons/cursor-atelier-*`
 directories. On Omarchy an owned `theme-set.d/cursor-atelier` hook reapplies the
@@ -237,9 +240,9 @@ migrate the proof of concept's preferences, snapshots, or login item.
 
 On macOS, the production bridge lives in the nested signed app outside
 `app.asar`. On Linux, the desktop adapter is part of the Electron main process
-and encodes the final theme with xcursorgen. If the platform component or its
-required desktop interface is unavailable, cursor assignment and Restore are
-unavailable and the UI does not claim a system cursor is active.
+and encodes the final theme with the bundled Clickgen runtime. If the platform
+component or its required desktop interface is unavailable, cursor assignment
+and Restore are unavailable and the UI does not claim a system cursor is active.
 
 On first run, Cursor Atelier obtains only the curated families selected by the
 user. It downloads their pinned original upstream inputs over HTTPS, verifies

@@ -17,6 +17,13 @@ function memoryPreferences(initial) {
   };
 }
 
+function createReconciler(options) {
+  return createCursorLibraryPreferencesReconciler({
+    runLibraryExclusive: (operation) => Promise.resolve().then(operation),
+    ...options,
+  });
+}
+
 function theme(nativeThemeId, family) {
   return {
     id: nativeThemeId.toLowerCase(),
@@ -26,6 +33,52 @@ function theme(nativeThemeId, family) {
 }
 
 describe("cursor library preference reconciliation", () => {
+  it("finishes an old catalogue read before a data import replaces preferences", async () => {
+    let queue = Promise.resolve();
+    const runLibraryExclusive = (operation) => {
+      const result = queue.then(operation);
+      queue = result.catch(() => {});
+      return result;
+    };
+    let releaseListing;
+    const oldListing = new Promise((resolve) => {
+      releaseListing = resolve;
+    });
+    const bridge = {
+      listThemes: vi
+        .fn()
+        .mockReturnValueOnce(oldListing)
+        .mockResolvedValue([theme("NewCursor", "New")]),
+    };
+    const preferencesStore = memoryPreferences({
+      favorites: { cursorIds: ["OldCursor"] },
+    });
+    const reconciler = createReconciler({
+      bridge,
+      preferencesStore,
+      runLibraryExclusive,
+    });
+    const reconciling = reconciler.reconcile();
+    await vi.waitFor(() => expect(bridge.listThemes).toHaveBeenCalledOnce());
+    const replace = vi.fn(async () => {
+      preferencesStore.update({
+        favorites: { cursorIds: ["NewCursor"] },
+        appearance: { lightCursorId: "NewCursor" },
+        randomization: { pools: { light: ["NewCursor"] } },
+      });
+      await reconciler.reconcileInLibraryTransaction();
+    });
+    const importing = runLibraryExclusive(replace);
+    expect(replace).not.toHaveBeenCalled();
+    releaseListing([theme("OldCursor", "Old")]);
+    await Promise.all([reconciling, importing]);
+    expect(preferencesStore.get()).toMatchObject({
+      favorites: { cursorIds: ["NewCursor"] },
+      appearance: { lightCursorId: "NewCursor" },
+      randomization: { pools: { light: ["NewCursor"] } },
+    });
+  });
+
   it("removes stale identifiers and families against the authoritative catalogue", async () => {
     const preferencesStore = memoryPreferences({
       favorites: {
@@ -45,7 +98,7 @@ describe("cursor library preference reconciliation", () => {
         },
       },
     });
-    const reconciler = createCursorLibraryPreferencesReconciler({
+    const reconciler = createReconciler({
       bridge: { listThemes: vi.fn(async () => [theme("OreoWhite", "Oreo")]) },
       preferencesStore,
     });
@@ -74,7 +127,7 @@ describe("cursor library preference reconciliation", () => {
         .mockRejectedValueOnce(new Error("catalogue busy"))
         .mockResolvedValueOnce([theme("OreoWhite", "Oreo")]),
     };
-    const reconciler = createCursorLibraryPreferencesReconciler({
+    const reconciler = createReconciler({
       bridge,
       preferencesStore,
       retryDelaysMs: [1_000],
@@ -101,7 +154,7 @@ describe("cursor library preference reconciliation", () => {
   it("bounds automatic retry attempts", async () => {
     const timers = [];
     const retryErrors = [];
-    const reconciler = createCursorLibraryPreferencesReconciler({
+    const reconciler = createReconciler({
       bridge: {
         listThemes: vi.fn(async () => {
           throw new Error("still unavailable");
@@ -131,7 +184,7 @@ describe("cursor library preference reconciliation", () => {
 
   it("cancels a pending retry when stopped", async () => {
     let timer;
-    const reconciler = createCursorLibraryPreferencesReconciler({
+    const reconciler = createReconciler({
       bridge: {
         listThemes: vi.fn(async () => {
           throw new Error("still unavailable");

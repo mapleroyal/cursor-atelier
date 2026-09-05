@@ -35,6 +35,11 @@ export function getAppAppearanceMode(electronAPI) {
   }
 }
 
+export function getDesktopAppearance(electronAPI) {
+  const value = resolveElectronAPI(electronAPI)?.getSystemAppearance?.();
+  return isTheme(value) ? value : null;
+}
+
 export function getSystemTheme({ matchMedia } = {}) {
   const resolvedMatchMedia = resolveMatchMedia(matchMedia);
 
@@ -120,6 +125,7 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
   const initialThemeMode = getInitialThemeMode({ electronAPI });
   let confirmedThemeMode = initialThemeMode;
   let appearanceRequest = 0;
+  let appearanceRevision = 0;
   let persistenceQueue = Promise.resolve();
   let onboardingRequest = 0;
   let onboardingHydration = null;
@@ -134,6 +140,7 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
   return create((set, get) => ({
     themeMode: initialThemeMode,
     theme: resolveTheme(initialThemeMode, { matchMedia }),
+    systemAppearance: getDesktopAppearance(electronAPI),
     themeError: null,
     onboarding: initialOnboardingState,
     onboardingLoading: true,
@@ -144,6 +151,7 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
 
       const theme = resolveTheme(themeMode, { matchMedia });
       const request = ++appearanceRequest;
+      const revision = appearanceRevision;
 
       set({ themeMode, theme, themeError: null });
       const setter = resolveElectronAPI(electronAPI)?.setAppAppearanceMode;
@@ -152,7 +160,11 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
         return Promise.resolve(true);
       }
 
-      const persist = () => setter(themeMode);
+      // An imported or recovered preference supersedes older queued choices.
+      const persist = () =>
+        appearanceRevision === revision
+          ? setter(themeMode)
+          : confirmedThemeMode;
       const result = persistenceQueue.then(persist, persist);
       persistenceQueue = result.then(
         () => undefined,
@@ -164,8 +176,14 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
           const canonicalMode = isThemeMode(persistedMode)
             ? persistedMode
             : themeMode;
-          confirmedThemeMode = canonicalMode;
-          if (appearanceRequest === request && get().themeMode === themeMode) {
+          if (appearanceRevision === revision) {
+            confirmedThemeMode = canonicalMode;
+          }
+          if (
+            appearanceRevision === revision &&
+            appearanceRequest === request &&
+            get().themeMode === themeMode
+          ) {
             set({
               themeMode: canonicalMode,
               theme: resolveTheme(canonicalMode, {
@@ -177,7 +195,11 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
           return true;
         },
         (error) => {
-          if (appearanceRequest === request && get().themeMode === themeMode) {
+          if (
+            appearanceRevision === revision &&
+            appearanceRequest === request &&
+            get().themeMode === themeMode
+          ) {
             set({
               themeMode: confirmedThemeMode,
               theme: resolveTheme(confirmedThemeMode, {
@@ -198,6 +220,23 @@ export function createAppStore({ electronAPI, matchMedia } = {}) {
       return get().setThemeMode(theme);
     },
     followSystemTheme: () => get().setThemeMode("system"),
+    syncAppAppearanceMode: (mode) => {
+      if (!isThemeMode(mode)) {
+        return;
+      }
+      confirmedThemeMode = mode;
+      appearanceRevision += 1;
+      set({
+        themeMode: mode,
+        theme: resolveTheme(mode, { matchMedia }),
+        themeError: null,
+      });
+    },
+    syncDesktopAppearance: (appearance) => {
+      if (isTheme(appearance)) {
+        set({ systemAppearance: appearance });
+      }
+    },
     syncSystemTheme: (systemTheme) =>
       set((state) => {
         if (state.themeMode !== "system" || !isTheme(systemTheme)) {

@@ -284,7 +284,9 @@ async function launchInstalledApp(expectedBuild) {
 }
 
 const previous = fs.existsSync(installed)
-  ? verifyLinuxPackage(installed)
+  ? // Its own inventory verifies the recoverable prior build. Runtime checks
+    // describe the new converter and apply only to the staged/installed update.
+    verifyLinuxPackage(installed, { selfTest: false })
   : null;
 if (previous && BigInt(build.buildVersion) < BigInt(previous.buildVersion)) {
   throw new Error(

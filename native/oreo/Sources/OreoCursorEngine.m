@@ -2724,8 +2724,13 @@ OreoThemeCursorsByScalingGeometry(
 
 - (BOOL)persistAppliedState:(NSError **)error {
     NSUserDefaults *defaults = OreoCursorDefaults();
+    id previousSelection = [defaults objectForKey:OreoCursorThemeDefaultsKey];
     id previousSize =
         [defaults objectForKey:OreoCursorEffectiveThemeSizeDefaultsKey];
+    // Publish artwork identity and geometry before releasing Operation.lock.
+    // A resident helper must never observe the new effective size together
+    // with the previous selection after a completed registration change.
+    [defaults setObject:self.themeIdentifier forKey:OreoCursorThemeDefaultsKey];
     [defaults setInteger:self.themeSizePercentage
                   forKey:OreoCursorEffectiveThemeSizeDefaultsKey];
     if ([self persistDesiredState:YES
@@ -2733,6 +2738,11 @@ OreoThemeCursorsByScalingGeometry(
                   activeSnapshot:YES
                             error:error]) {
         return YES;
+    }
+    if (previousSelection) {
+        [defaults setObject:previousSelection forKey:OreoCursorThemeDefaultsKey];
+    } else {
+        [defaults removeObjectForKey:OreoCursorThemeDefaultsKey];
     }
     if (previousSize) {
         [defaults setObject:previousSize
@@ -4322,6 +4332,112 @@ OreoDecodedThemeCursors(NSData *data,
     _api.setSystemCursor(connection, 0);
 }
 
+- (BOOL)discardPreviousBootState:(NSError **)error {
+    NSUserDefaults *defaults = OreoCursorDefaults();
+    if (![defaults synchronize]) {
+        if (error) {
+            *error = OreoError(327, @"Could not read the durable cursor state.");
+        }
+        return NO;
+    }
+    NSString *activeBoot =
+        [defaults stringForKey:OreoCursorActiveBootDefaultsKey];
+    NSUUID *recordedBoot = activeBoot.length > 0
+        ? [[NSUUID alloc] initWithUUIDString:activeBoot] : nil;
+    NSUUID *currentBoot = [[NSUUID alloc] initWithUUIDString:self.bootSessionUUID];
+    if (!recordedBoot || !currentBoot || [recordedBoot isEqual:currentBoot]) {
+        // Missing boot identity is not proof that an effective registration
+        // is obsolete. Keep same-session/unknown ownership conservative.
+        return YES;
+    }
+
+    // No registration owned by an earlier boot can survive WindowServer's
+    // restart. This proof does not depend on a readable snapshot or journal.
+    // Keep the old boot marker until cleanup and persistence both succeed so
+    // a failed cleanup remains retryable after another launch.
+    if (![self removeItemIfPresentAtURL:_snapshotURL error:error] ||
+        ![self clearTransaction:error]) {
+        return NO;
+    }
+    return [self persistDesiredState:
+                     [defaults boolForKey:OreoCursorEnabledDefaultsKey]
+                      effectiveState:NO
+                      activeSnapshot:NO
+                                error:error];
+}
+
+- (OreoCursorEngine *)reconcileSelectedTheme:(BOOL *)didRecover
+                                      error:(NSError **)error {
+    NSAssert([NSThread isMainThread], @"Cursor engine requires the main thread");
+    if (didRecover) {
+        *didRecover = NO;
+    }
+    self.lastErrorMessage = nil;
+    if (!self.supported) {
+        [self reportedError:error fallback:OreoError(
+            328, @"This macOS version cannot safely reconcile cursors.")];
+        return nil;
+    }
+    NSError *localError = nil;
+    int lockDescriptor = [self acquireOperationLock:&localError];
+    if (lockDescriptor < 0) {
+        [self reportedError:error fallback:localError ?: OreoError(
+            329, @"Cursor reconciliation is busy.")];
+        return nil;
+    }
+    OreoCursorEngine *current = self;
+    BOOL success = NO;
+    @try {
+        BOOL recovered = NO;
+        if (![self recoverInterruptedTransactionLocked:&recovered
+                                                  error:&localError]) {
+            return nil;
+        }
+        if (recovered) {
+            if (didRecover) {
+                *didRecover = YES;
+            }
+            success = YES;
+        } else {
+            NSUserDefaults *defaults = OreoCursorDefaults();
+            NSString *selected = [OreoCursorEngine
+                selectedThemeIdentifierForResourceBundle:_themeResourceBundle];
+            BOOL effective =
+                [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
+            NSInteger expectedSize = effective
+                ? [OreoCursorEngine effectiveSizePercentage]
+                : [OreoCursorEngine sizePercentageForThemeIdentifier:selected];
+            if (!current.themeValid ||
+                ![current.themeIdentifier isEqualToString:selected] ||
+                current.themeSizePercentage != expectedSize) {
+                current = [[self.class alloc]
+                    initWithThemeIdentifier:selected
+                             resourceBundle:_themeResourceBundle
+                             sizePercentage:expectedSize
+                                      error:&localError];
+            }
+            if (current.supported) {
+                BOOL desired =
+                    [defaults boolForKey:OreoCursorEnabledDefaultsKey];
+                if (!current.themeValid || !desired) {
+                    success = [current restoreLocked:&localError];
+                } else {
+                    success = effective
+                        ? [current refreshIfNeededLocked:&localError]
+                        : [current applyLocked:&localError];
+                }
+            }
+        }
+    } @finally {
+        [self releaseOperationLock:lockDescriptor];
+        if (!success) {
+            [self reportedError:error fallback:localError ?: OreoError(
+                330, @"The selected cursor state could not be reconciled.")];
+        }
+    }
+    return success ? current : nil;
+}
+
 - (BOOL)recoverInterruptedTransaction:(BOOL *)didRecover
                                 error:(NSError **)error {
     NSAssert([NSThread isMainThread], @"Cursor engine requires the main thread");
@@ -4361,6 +4477,9 @@ OreoDecodedThemeCursors(NSData *data,
 
 - (BOOL)recoverInterruptedTransactionLocked:(BOOL *)didRecover
                                        error:(NSError **)error {
+    if (![self discardPreviousBootState:error]) {
+        return NO;
+    }
     if (![[NSFileManager defaultManager]
             fileExistsAtPath:_transactionURL.path]) {
         return YES;
@@ -4460,6 +4579,9 @@ OreoDecodedThemeCursors(NSData *data,
             *error = OreoError(
                 341, @"Cursor Atelier is unavailable on this system.");
         }
+        return NO;
+    }
+    if (![self discardPreviousBootState:error]) {
         return NO;
     }
     NSUserDefaults *defaults = OreoCursorDefaults();
@@ -4607,6 +4729,9 @@ OreoDecodedThemeCursors(NSData *data,
 }
 
 - (BOOL)restoreLocked:(NSError **)error {
+    if (![self discardPreviousBootState:error]) {
+        return NO;
+    }
     NSUserDefaults *defaults = OreoCursorDefaults();
     BOOL snapshotExists =
         [[NSFileManager defaultManager] fileExistsAtPath:_snapshotURL.path];

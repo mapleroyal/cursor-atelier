@@ -99,9 +99,16 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)recoverInterruptedTransaction:(BOOL * _Nullable)didRecover
                                 error:(NSError * _Nullable * _Nullable)error;
 
-/// Transactionally applies Oreo. A stock snapshot is durably written before
-/// the first cursor registration is changed.
+/// Transactionally applies and selects this theme. A stock snapshot is
+/// durably written before the first cursor registration is changed.
 - (BOOL)apply:(NSError * _Nullable * _Nullable)error;
+
+/// Reconciles the saved selection and enable intent under the operation lock.
+/// Returns the current engine, replacing a stale engine before any mutation.
+/// The resident helper must use this instead of choosing apply/restore from
+/// preferences read before acquiring the lock.
+- (nullable OreoCursorEngine *)reconcileSelectedTheme:(BOOL * _Nullable)didRecover
+                                               error:(NSError * _Nullable * _Nullable)error;
 
 /// Restores and verifies the pre-apply cursor registrations.
 - (BOOL)restore:(NSError * _Nullable * _Nullable)error;

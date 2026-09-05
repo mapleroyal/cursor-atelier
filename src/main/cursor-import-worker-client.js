@@ -65,7 +65,13 @@ export function importCursorSourceInWorker(
     };
 
     try {
-      worker = new WorkerConstructor(workerPath, { workerData: workerOptions });
+      worker = new WorkerConstructor(workerPath, {
+        workerData: workerOptions,
+        resourceLimits: {
+          maxOldGenerationSizeMb: 256,
+          maxYoungGenerationSizeMb: 32,
+        },
+      });
     } catch (error) {
       void finish(reject, error);
       return;
@@ -85,7 +91,17 @@ export function importCursorSourceInWorker(
         void finish(reject, workerError(message?.error));
       }
     });
-    worker.once("error", (error) => void finish(reject, error));
+    worker.once("error", (error) => {
+      if (error.code === "ERR_WORKER_OUT_OF_MEMORY") {
+        error = Object.assign(
+          new Error(
+            "The cursor import exceeded its memory limit and was stopped.",
+          ),
+          { code: "LIMIT_EXCEEDED" },
+        );
+      }
+      void finish(reject, error);
+    });
     worker.once("exit", (code) => {
       if (!settled) {
         void finish(

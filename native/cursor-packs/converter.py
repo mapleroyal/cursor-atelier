@@ -33,7 +33,7 @@ import sys
 import tempfile
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Union
 from xml.etree import ElementTree
@@ -107,7 +107,6 @@ BASE_REPRESENTATION_SIZES = (32, 64, 96)
 VECTOR_REPRESENTATION_SIZES = (*BASE_REPRESENTATION_SIZES, 128)
 MAX_REPRESENTATION_SIZE = 320
 DEFAULT_ANIMATION_DELAY_MS = 50.0
-MAX_HOTSPOT_ALIGNMENT_FRACTION = 0.25
 MAX_NATIVE_REPRESENTATIONS = 16
 MAX_NATIVE_SCALE = 10.0
 MAX_NATIVE_DECODED_DIMENSION = 8192
@@ -220,6 +219,7 @@ class Frame:
     hotspot_y: float
     delay_ms: float | None = None
     nominal_size: int | None = None
+    representation_size: int | None = None
 
 
 # A source may provide one raster sequence or independent sequences for
@@ -315,11 +315,11 @@ def _transparent_cursor() -> dict[str, Any]:
     }
 
 
-def _square_pad(image: Image.Image) -> Image.Image:
+def _square_pad(image: Image.Image, canvas_size: int | None = None) -> Image.Image:
     """Pad a raster at its bottom/right edge without changing its geometry."""
 
     image = image.convert("RGBA")
-    canvas_size = max(image.size)
+    canvas_size = canvas_size or max(image.size)
     if image.size == (canvas_size, canvas_size):
         return image
     padded = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
@@ -327,9 +327,13 @@ def _square_pad(image: Image.Image) -> Image.Image:
     return padded
 
 
-def _resize(image: Image.Image, size: int) -> Image.Image:
+def _resize(
+    image: Image.Image,
+    size: int,
+    box: tuple[float, float, float, float] | None = None,
+) -> Image.Image:
     image = _square_pad(image)
-    if image.size == (size, size):
+    if image.size == (size, size) and box is None:
         resized = image
     else:
         # Resampling straight-alpha RGBA independently lets fully transparent
@@ -338,7 +342,7 @@ def _resize(image: Image.Image, size: int) -> Image.Image:
         # PNG's required straight-alpha representation.
         resized = (
             image.convert("RGBa")
-            .resize((size, size), Image.Resampling.LANCZOS)
+            .resize((size, size), Image.Resampling.LANCZOS, box=box)
             .convert("RGBA")
         )
 
@@ -392,49 +396,78 @@ def _common_hotspot(groups: Mapping[int, Sequence[Frame]]) -> tuple[float, float
     )
 
 
+def _render_representations(
+    groups: Mapping[int, Sequence[Frame]],
+    sizes: Sequence[int],
+    frame_count: int,
+) -> list[tuple[int, list[tuple[Image.Image, tuple[float, float]]]]]:
+    representations = []
+    for size in sizes:
+        frames = _frames_for_size(groups, size)
+        indices = _phase_indices(frames, frame_count)
+        rendered = {
+            index: (_resize(frames[index].image, size), _normalized_hotspot(frames[index]))
+            for index in set(indices)
+        }
+        representations.append((size, [rendered[index] for index in indices]))
+    return representations
+
+
+def _common_canvas(
+    representations: Sequence[tuple[int, Sequence[tuple[Image.Image, tuple[float, float]]]]],
+    hotspot: tuple[float, float],
+) -> tuple[float, float, float]:
+    left, top, right, bottom = 0.0, 0.0, 1.0, 1.0
+    for size, frames in representations:
+        for image, source_hotspot in frames:
+            bounds = image.getchannel("A").getbbox()
+            if bounds is None:
+                continue
+            dx = hotspot[0] - source_hotspot[0]
+            dy = hotspot[1] - source_hotspot[1]
+            left = min(left, bounds[0] / size + dx)
+            top = min(top, bounds[1] / size + dy)
+            right = max(right, bounds[2] / size + dx)
+            bottom = max(bottom, bounds[3] / size + dy)
+    # Expand the same logical square for every frame and every output tier.
+    # Whole-point padding retains exact standard 1x/2x/3x/4x pixel dimensions.
+    left = math.floor(left * 32) / 32
+    top = math.floor(top * 32) / 32
+    side = math.ceil(max(right - left, bottom - top) * 32) / 32
+    return left, top, side
+
+
 def _aligned_frame(
-    frame: Frame,
+    image: Image.Image,
+    source_hotspot: tuple[float, float],
     size: int,
-    tier_hotspot: tuple[float, float],
+    hotspot: tuple[float, float],
+    canvas: tuple[float, float, float],
 ) -> Image.Image:
-    """Resize and align small authored hotspot drift without clipping artwork."""
-
-    image = _resize(frame.image, size)
-    source_hotspot = _normalized_hotspot(frame)
-    requested = (
-        (tier_hotspot[0] - source_hotspot[0]) * size,
-        (tier_hotspot[1] - source_hotspot[1]) * size,
+    left, top, side = canvas
+    canvas_size = side * size
+    padded_size = math.ceil(canvas_size)
+    padded = Image.new("RGBA", (padded_size, padded_size), (0, 0, 0, 0))
+    offset = (
+        round((hotspot[0] - source_hotspot[0] - left) * size),
+        round((hotspot[1] - source_hotspot[1] - top) * size),
     )
-    maximum_shift = size * MAX_HOTSPOT_ALIGNMENT_FRACTION
-    # A large discrepancy is almost always bad tier metadata, not animated
-    # artwork that should be moved across the canvas. The median hotspot still
-    # repairs the record, while leaving that frame's pixels undisturbed.
-    if any(abs(delta) > maximum_shift for delta in requested):
-        return image
-
-    shift_x, shift_y = (round(requested[0]), round(requested[1]))
-    alpha_bounds = image.getchannel("A").getbbox()
-    if alpha_bounds is None or (shift_x == 0 and shift_y == 0):
-        return image
-    left, top, right, bottom = alpha_bounds
-    shift_x = min(size - right, max(-left, shift_x))
-    shift_y = min(size - bottom, max(-top, shift_y))
-    if shift_x == 0 and shift_y == 0:
-        return image
-    aligned = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    aligned.alpha_composite(image, (shift_x, shift_y))
-    return aligned
+    padded.paste(image, offset)
+    # A fractional resize box keeps nonstandard source tiers on the same
+    # logical transform as the standard output tiers.
+    box = (0.0, 0.0, canvas_size, canvas_size)
+    return _resize(padded, size, box if side != 1 else None)
 
 
 def _compose(
-    frames: Sequence[Frame],
-    indices: Sequence[int],
+    frames: Sequence[tuple[Image.Image, tuple[float, float]]],
     size: int,
-    tier_hotspot: tuple[float, float],
+    hotspot: tuple[float, float],
+    canvas: tuple[float, float, float],
 ) -> bytes:
-    sheet = Image.new("RGBA", (size, size * len(indices)), (0, 0, 0, 0))
-    for output_index, source_index in enumerate(indices):
-        frame = _aligned_frame(frames[source_index], size, tier_hotspot)
+    sheet = Image.new("RGBA", (size, size * len(frames)), (0, 0, 0, 0))
+    for output_index, (image, source_hotspot) in enumerate(frames):
+        frame = _aligned_frame(image, source_hotspot, size, hotspot, canvas)
         sheet.paste(frame, (0, output_index * size))
     return _png_bytes(sheet)
 
@@ -454,35 +487,43 @@ def _frame_groups(source: FrameSource) -> tuple[dict[int, list[Frame]], bool]:
     return {source_size: frames}, False
 
 
+def _pixel_tiers(
+    groups: Mapping[int, Sequence[Frame]],
+) -> list[tuple[int, Sequence[Frame], int]]:
+    return [
+        (nominal, frames, frames[0].representation_size or nominal)
+        for nominal, frames in groups.items()
+    ]
+
+
 def _representation_sizes(
     groups: Mapping[int, Sequence[Frame]],
     scale_specific: bool,
 ) -> list[int]:
     sizes = set(BASE_REPRESENTATION_SIZES)
+    source_sizes = [size for _nominal, _frames, size in _pixel_tiers(groups)]
     if scale_specific:
         sizes.update(
             size
-            for size in groups
+            for size in source_sizes
             if BASE_REPRESENTATION_SIZES[0] <= size <= MAX_REPRESENTATION_SIZE
         )
-    elif groups:
-        # A single large bitmap can safely be reduced for a 4x master. The
-        # standard 1x/2x/3x ladder is always present; 4x is added only when the
-        # source actually contains enough information.
-        source_size = max(groups)
-        if source_size >= VECTOR_REPRESENTATION_SIZES[-1]:
-            sizes.add(VECTOR_REPRESENTATION_SIZES[-1])
+    elif source_sizes and max(source_sizes) >= VECTOR_REPRESENTATION_SIZES[-1]:
+        sizes.add(VECTOR_REPRESENTATION_SIZES[-1])
     return sorted(sizes)
 
 
 def _frames_for_size(
     groups: Mapping[int, Sequence[Frame]], target_size: int
 ) -> list[Frame]:
-    if target_size in groups:
-        return list(groups[target_size])
-    larger = [size for size in groups if size > target_size]
-    source_size = min(larger) if larger else max(groups)
-    return list(groups[source_size])
+    tiers = _pixel_tiers(groups)
+    larger = [size for _nominal, _frames, size in tiers if size >= target_size]
+    source_size = min(larger) if larger else max(size for _nominal, _frames, size in tiers)
+    _nominal, frames, _size = min(
+        (tier for tier in tiers if tier[2] == source_size),
+        key=lambda tier: (abs(tier[0] - target_size), tier[0]),
+    )
+    return list(frames)
 
 
 def _frame_delays(frames: Sequence[Frame]) -> tuple[list[float], bool]:
@@ -553,11 +594,16 @@ def _animation_timeline(
     if all_delays_absent:
         return output_count, DEFAULT_ANIMATION_DELAY_MS / 1000.0
 
-    canonical_size = min(
-        groups,
-        key=lambda size: (abs(size - BASE_REPRESENTATION_SIZES[0]), size),
+    _nominal, canonical_frames, _size = min(
+        _pixel_tiers(groups),
+        key=lambda tier: (
+            abs(tier[2] - BASE_REPRESENTATION_SIZES[0]),
+            tier[2],
+            abs(tier[0] - BASE_REPRESENTATION_SIZES[0]),
+            tier[0],
+        ),
     )
-    canonical_delays, _authored = _frame_delays(groups[canonical_size])
+    canonical_delays, _authored = _frame_delays(canonical_frames)
     cycle_ms = sum(canonical_delays)
     if max(canonical_delays) - min(canonical_delays) > 1e-9:
         dwell_count = math.ceil(cycle_ms / min(canonical_delays))
@@ -582,22 +628,18 @@ def build_cursor(frames: FrameSource) -> dict[str, Any]:
     representation_sizes = _representation_sizes(groups, scale_specific)
     frame_count, duration = _animation_timeline(groups)
     hotspot = _common_hotspot(groups)
+    representations = _render_representations(groups, representation_sizes, frame_count)
+    canvas = _common_canvas(representations, hotspot)
     return {
         "FrameCount": frame_count,
         "FrameDuration": duration,
-        "HotSpotX": hotspot[0] * 32.0,
-        "HotSpotY": hotspot[1] * 32.0,
+        "HotSpotX": (hotspot[0] - canvas[0]) * 32.0 / canvas[2],
+        "HotSpotY": (hotspot[1] - canvas[1]) * 32.0 / canvas[2],
         "PointsWide": 32.0,
         "PointsHigh": 32.0,
         "Representations": [
-            _compose(
-                tier_frames,
-                _phase_indices(tier_frames, frame_count),
-                size,
-                _tier_hotspot(tier_frames),
-            )
-            for size in representation_sizes
-            for tier_frames in [_frames_for_size(groups, size)]
+            _compose(tier_frames, size, hotspot, canvas)
+            for size, tier_frames in representations
         ],
     }
 
@@ -1534,11 +1576,23 @@ def _frames_from_xcursor(directory: Path) -> dict[str, FrameSource]:
             # reconstructed from the 32px artwork.
             groups: dict[int, list[Frame]] = defaultdict(list)
             for frame in all_frames:
-                # The Xcursor subtype is its requested desktop size, while the
-                # decoded bitmap width is the representation's actual pixel
-                # density. CoreGraphics infers scale from pixel dimensions, so
-                # preserve the latter as the MaCursor tier.
-                groups[max(frame.image.size)].append(frame)
+                groups[frame.nominal_size].append(frame)
+            # Animation frames may use different crops. A shared padded
+            # canvas preserves their artwork scale when each tier is resized.
+            for nominal_size, frames in groups.items():
+                canvas_size = max(max(frame.image.size) for frame in frames)
+                groups[nominal_size] = [
+                    replace(
+                        frame,
+                        representation_size=canvas_size,
+                        image=(
+                            frame.image
+                            if frame.image.size == (canvas_size, canvas_size)
+                            else _square_pad(frame.image, canvas_size)
+                        ),
+                    )
+                    for frame in frames
+                ]
             role = canonical_role(path.name)
             priority = _xcursor_role_priority(path.name)
             # Conventional themes commonly include both a canonical filename

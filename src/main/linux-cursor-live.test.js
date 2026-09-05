@@ -38,7 +38,7 @@ it.skipIf(process.env.CURSOR_LINUX_LIVE_SMOKE !== "1")(
     });
     const runCommand = async (command, args, options) => {
       const result = await runLinuxCursorCommand(command, args, options);
-      if (command !== "xcursorgen") {
+      if (!args.includes("encode-xcursor")) {
         const loggedResult =
           command === "systemctl" && args.includes("show-environment")
             ? JSON.stringify(
@@ -60,6 +60,9 @@ it.skipIf(process.env.CURSOR_LINUX_LIVE_SMOKE !== "1")(
       getThemes: () => [theme],
       desktop,
       runCommand,
+      encoderExecutable: path.resolve(
+        "native/cursor-packs/build/curated-converter/curated-cursor-converter/curated-cursor-converter",
+      ),
     });
     const run = (command, ...args) =>
       backend.commandRunner({ command, arguments: args });

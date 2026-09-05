@@ -67,6 +67,7 @@ export function createAuthoritativeLibraryPreferencesPatch(
 export function createCursorLibraryPreferencesReconciler({
   bridge,
   preferencesStore,
+  runLibraryExclusive,
   retryDelaysMs = DEFAULT_RETRY_DELAYS_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -74,6 +75,11 @@ export function createCursorLibraryPreferencesReconciler({
 } = {}) {
   if (!bridge || typeof bridge.listThemes !== "function") {
     throw new TypeError("A cursor catalogue bridge is required.");
+  }
+  if (typeof runLibraryExclusive !== "function") {
+    throw new TypeError(
+      "A cursor library transaction coordinator is required.",
+    );
   }
   if (
     !preferencesStore ||
@@ -94,7 +100,6 @@ export function createCursorLibraryPreferencesReconciler({
   let stopped = false;
   let retryTimer = null;
   let retryIndex = 0;
-  let operationQueue = Promise.resolve();
 
   const clearRetry = () => {
     if (retryTimer !== null) {
@@ -103,13 +108,10 @@ export function createCursorLibraryPreferencesReconciler({
     }
   };
 
-  const enqueue = (operation) => {
-    const result = operationQueue.then(operation, operation);
-    operationQueue = result.catch(() => undefined);
-    return result;
-  };
-
   const perform = async () => {
+    if (stopped) {
+      return preferencesStore.get();
+    }
     const themes = await bridge.listThemes();
     if (!Array.isArray(themes)) {
       throw new Error(
@@ -136,7 +138,7 @@ export function createCursorLibraryPreferencesReconciler({
         return;
       }
       retryTimer = null;
-      void enqueue(perform).then(
+      void runLibraryExclusive(perform).then(
         () => {
           retryIndex = 0;
         },
@@ -157,17 +159,21 @@ export function createCursorLibraryPreferencesReconciler({
     scheduledTimer?.unref?.();
   };
 
+  const reconcileInLibraryTransaction = async () => {
+    clearRetry();
+    retryIndex = 0;
+    try {
+      return await perform();
+    } catch (error) {
+      scheduleRetry();
+      throw error;
+    }
+  };
+
   return {
-    async reconcile() {
-      clearRetry();
-      retryIndex = 0;
-      try {
-        return await enqueue(perform);
-      } catch (error) {
-        scheduleRetry();
-        throw error;
-      }
-    },
+    reconcile: () => runLibraryExclusive(reconcileInLibraryTransaction),
+    // Only for callers that already hold the shared imported-library queue.
+    reconcileInLibraryTransaction,
     stop() {
       stopped = true;
       clearRetry();

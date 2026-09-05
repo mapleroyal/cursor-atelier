@@ -1,3 +1,4 @@
 Pillow==11.3.0
+clickgen==2.2.5
 pyinstaller==6.22.0
 pyinstaller-hooks-contrib==2026.6

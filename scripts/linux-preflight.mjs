@@ -33,11 +33,6 @@ for (const command of ["ldd", "objdump"]) {
     );
   }
 }
-if (spawnSync("xcursorgen", ["-help"], { encoding: "utf8" }).error) {
-  throw new Error(
-    "Install xcursorgen (Debian/Ubuntu: x11-apps; Fedora: xcursorgen; Arch: xorg-xcursorgen) to write Linux cursor themes.",
-  );
-}
 if (spawnSync("gdbus", ["help"], { encoding: "utf8" }).error) {
   throw new Error(
     "Install GLib's gdbus command to follow the desktop appearance portal.",

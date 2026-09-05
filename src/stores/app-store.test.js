@@ -65,6 +65,69 @@ function createMatchMediaController(initialTheme = "light") {
 }
 
 describe("app store theme behavior", () => {
+  it("keeps desktop appearance separate from an explicit application theme", async () => {
+    const electronAPI = {
+      ...createElectronAPI("dark"),
+      getSystemAppearance: () => "light",
+    };
+    const store = createAppStore({ electronAPI });
+    expect(store.getState()).toMatchObject({
+      theme: "dark",
+      systemAppearance: "light",
+    });
+    await store.getState().setThemeMode("light");
+    store.getState().syncDesktopAppearance("dark");
+    expect(store.getState()).toMatchObject({
+      theme: "light",
+      systemAppearance: "dark",
+    });
+  });
+
+  it("keeps imported appearance authoritative when an earlier save replies late", async () => {
+    let completeSave;
+    const electronAPI = createElectronAPI("system");
+    electronAPI.setAppAppearanceMode.mockReturnValue(
+      new Promise((resolve) => {
+        completeSave = resolve;
+      }),
+    );
+    const store = createAppStore({ electronAPI });
+    const saving = store.getState().setThemeMode("light");
+    await vi.waitFor(() =>
+      expect(electronAPI.setAppAppearanceMode).toHaveBeenCalled(),
+    );
+    store.getState().syncAppAppearanceMode("dark");
+    completeSave("light");
+    await saving;
+    expect(store.getState()).toMatchObject({
+      themeMode: "dark",
+      theme: "dark",
+      themeError: null,
+    });
+  });
+
+  it("discards an older queued appearance write after preferences are imported", async () => {
+    let completeSave;
+    const electronAPI = createElectronAPI("system");
+    electronAPI.setAppAppearanceMode.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          completeSave = resolve;
+        }),
+    );
+    const store = createAppStore({ electronAPI });
+    const first = store.getState().setThemeMode("dark");
+    const queued = store.getState().setThemeMode("light");
+    await vi.waitFor(() => expect(completeSave).toBeTypeOf("function"));
+    store.getState().syncAppAppearanceMode("system");
+    completeSave("dark");
+    await Promise.all([first, queued]);
+    expect(electronAPI.setAppAppearanceMode).toHaveBeenCalledExactlyOnceWith(
+      "dark",
+    );
+    expect(store.getState().themeMode).toBe("system");
+  });
+
   it("defaults to following the system theme when nothing is stored", () => {
     expect(getInitialThemeMode()).toBe("system");
   });

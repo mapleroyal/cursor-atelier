@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   GET_APP_APPEARANCE_MODE_CHANNEL,
+  GET_SYSTEM_APPEARANCE_CHANNEL,
   registerAppAppearanceIpc,
   SET_APP_APPEARANCE_MODE_CHANNEL,
   syncWindowBackgroundColors,
@@ -41,6 +42,7 @@ function fixture({
     preferencesStore,
     nativeTheme,
     isTrustedSender: (event) => event.trusted === true,
+    getSystemAppearance: () => "light",
     onAppearanceChanged,
     onAppearanceChangeError,
   });
@@ -57,6 +59,19 @@ function fixture({
 }
 
 describe("app appearance IPC", () => {
+  it("returns desktop appearance independently of a forced application mode", () => {
+    const { listeners, nativeTheme } = fixture({
+      nativeTheme: { themeSource: "dark" },
+    });
+    const event = { trusted: true };
+    listeners.get(GET_SYSTEM_APPEARANCE_CHANNEL)(event);
+    expect(event.returnValue).toBe("light");
+    expect(nativeTheme.themeSource).toBe("dark");
+    const untrusted = { trusted: false };
+    listeners.get(GET_SYSTEM_APPEARANCE_CHANNEL)(untrusted);
+    expect(untrusted.returnValue).toBeNull();
+  });
+
   it("returns the persisted mode synchronously only to a trusted renderer", () => {
     const { listeners, preferencesStore } = fixture();
     const listener = listeners.get(GET_APP_APPEARANCE_MODE_CHANNEL);
@@ -75,11 +90,12 @@ describe("app appearance IPC", () => {
     const { handlers, nativeTheme, onAppearanceChanged, preferencesStore } =
       fixture();
     const handler = handlers.get(SET_APP_APPEARANCE_MODE_CHANNEL);
+    const sender = { id: 7 };
 
-    expect(handler({ trusted: true }, "light")).toBe("light");
+    expect(handler({ trusted: true, sender }, "light")).toBe("light");
     expect(preferencesStore.setAppAppearanceMode).toHaveBeenCalledWith("light");
     expect(nativeTheme.themeSource).toBe("light");
-    expect(onAppearanceChanged).toHaveBeenCalledWith("light");
+    expect(onAppearanceChanged).toHaveBeenCalledWith("light", sender);
     expect(() => handler({ trusted: false }, "dark")).toThrow(
       "unavailable to this page",
     );
@@ -244,7 +260,7 @@ describe("app appearance IPC", () => {
 
     expect(listeners.has(GET_APP_APPEARANCE_MODE_CHANNEL)).toBe(false);
     expect(handlers.has(SET_APP_APPEARANCE_MODE_CHANNEL)).toBe(false);
-    expect(ipcMain.removeListener).toHaveBeenCalledOnce();
+    expect(ipcMain.removeListener).toHaveBeenCalledTimes(2);
     expect(ipcMain.removeHandler).toHaveBeenCalledOnce();
   });
 });

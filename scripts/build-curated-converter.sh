@@ -136,6 +136,33 @@ fi
 /bin/cp "${python_license}" "${built}/licenses/Python.txt"
 /bin/cp "${pillow_license}" "${built}/licenses/Pillow.txt"
 /bin/cp "${pyinstaller_license}" "${built}/licenses/PyInstaller.txt"
+"${tooling}/bin/python" - "${built}/licenses" <<'PY'
+import shutil
+import sys
+from importlib.metadata import distribution
+from pathlib import Path
+
+destination = Path(sys.argv[1])
+for package in ("clickgen", "numpy"):
+    dist = distribution(package)
+    copied = 0
+    for filename in dist.files or ():
+        parts = Path(filename).parts
+        if not parts[0].endswith(".dist-info"):
+            continue
+        relative = Path(*parts[1:])
+        if not any(
+            "license" in part.lower() or "copying" in part.lower()
+            for part in relative.parts
+        ):
+            continue
+        target_license = destination / package / relative
+        target_license.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(dist.locate_file(filename), target_license)
+        copied += 1
+    if not copied:
+        raise SystemExit(f"{package} runtime license was not found")
+PY
 "${executable}" self-test >/dev/null
 
 if [[ -e "${previous}" || -L "${previous}" ]]; then

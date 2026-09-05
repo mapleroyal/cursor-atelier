@@ -834,7 +834,7 @@
     if (success && desired) {
         success = [candidate apply:&error];
     }
-    if (success) {
+    if (success && !desired) {
         success =
             [OreoCursorEngine saveSelectedThemeIdentifier:identifier
                                                     error:&error];

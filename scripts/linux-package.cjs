@@ -143,6 +143,7 @@ function verifyLinuxPackage(
       result.type !== "self-test" ||
       result.themeCount !== 240 ||
       result.roleCount !== 47 ||
+      result.xcursorEncoderVersion !== "2.2.5" ||
       result.catalogSha256 !== catalog.sha256
     ) {
       throw new Error("The packaged curated converter failed its self-test.");

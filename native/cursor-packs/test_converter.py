@@ -24,6 +24,9 @@ def png_bytes(image: Image.Image) -> bytes:
 
 def xcursor_images(
     images: list[tuple[int, int, int, int, int | list[int]]],
+    *,
+    nominal_sizes: list[int] | None = None,
+    delays: list[int] | None = None,
 ) -> bytes:
     """Return an Xcursor file for ``(width, height, hot_x, hot_y, pixels)`` rows."""
 
@@ -31,7 +34,8 @@ def xcursor_images(
     chunk_offset = 16 + toc_size
     tocs: list[bytes] = []
     chunks: list[bytes] = []
-    for width, height, hot_x, hot_y, pixel_value in images:
+    for index, (width, height, hot_x, hot_y, pixel_value) in enumerate(images):
+        nominal_size = nominal_sizes[index] if nominal_sizes else width
         pixels = (
             pixel_value
             if isinstance(pixel_value, list)
@@ -44,17 +48,17 @@ def xcursor_images(
                 "<9I",
                 36,
                 0xFFFD0002,
-                width,
+                nominal_size,
                 1,
                 width,
                 height,
                 hot_x,
                 hot_y,
-                50,
+                delays[index] if delays else 50,
             )
             + b"".join(struct.pack("<I", pixel) for pixel in pixels)
         )
-        tocs.append(struct.pack("<3I", 0xFFFD0002, width, chunk_offset))
+        tocs.append(struct.pack("<3I", 0xFFFD0002, nominal_size, chunk_offset))
         chunks.append(chunk)
         chunk_offset += len(chunk)
     return (
@@ -355,6 +359,56 @@ png = 'wait-*.png'
         self.assertEqual(sheet.getpixel((6, 5)), (255, 255, 255, 255))
         self.assertEqual(sheet.getpixel((6, 32 + 5)), (255, 255, 255, 255))
 
+    def test_frames_align_to_the_hotspot_shared_by_output_tiers(self) -> None:
+        groups = {}
+        for size, positions in ((32, ((5, 4), (7, 6))), (64, ((16, 14), (16, 14)))):
+            frames = []
+            for x, y in positions:
+                image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+                image.putpixel((x, y), (255, 255, 255, 255))
+                frames.append(converter.Frame(image, x, y, 50))
+            groups[size] = frames
+
+        record = converter.build_cursor(groups)
+
+        self.assertEqual((record["HotSpotX"], record["HotSpotY"]), (7.0, 6.0))
+        for sheet in representation_images(record)[:2]:
+            x = 7 * sheet.width // 32
+            y = 6 * sheet.width // 32
+            for index in range(2):
+                self.assertEqual(
+                    sheet.getpixel((x, y + index * sheet.width)),
+                    (255, 255, 255, 255),
+                )
+
+    def test_edge_filled_frames_share_one_anchor_and_scale_across_tiers(self) -> None:
+        groups = {}
+        for size in (32, 64):
+            scale = size // 32
+            frames = []
+            for hotspot_x in (8, 24):
+                image = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+                for y in range(14 * scale, 19 * scale):
+                    for x in range((hotspot_x - 2) * scale, (hotspot_x + 3) * scale):
+                        image.putpixel((x, y), (0, 255, 0, 255))
+                frames.append(converter.Frame(image, hotspot_x * scale, 16 * scale, 50))
+            groups[size] = frames
+
+        record = converter.build_cursor(groups)
+
+        self.assertAlmostEqual(record["HotSpotX"], 16)
+        self.assertAlmostEqual(record["HotSpotY"], 32 / 3)
+        for sheet in representation_images(record)[:2]:
+            size = sheet.width
+            x = round(record["HotSpotX"] * size / 32)
+            y = round(record["HotSpotY"] * size / 32)
+            for index in range(2):
+                self.assertEqual(sheet.getpixel((x, y + index * size)), (0, 255, 0, 255))
+            self.assertGreater(sheet.getpixel((size - 1, y))[3], 0)
+            self.assertGreater(sheet.getpixel((0, size + y))[3], 0)
+            self.assertEqual(sheet.getpixel((0, y))[3], 0)
+            self.assertEqual(sheet.getpixel((size - 1, size + y))[3], 0)
+
     def test_identical_animated_wait_and_progress_synthesizes_progress(self) -> None:
         pointer = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
         pointer.putpixel((2, 3), (255, 0, 0, 255))
@@ -532,6 +586,71 @@ png = 'wait-*.png'
                     ),
                     (0, 0, 255, 255),
                 )
+
+    def test_xcursor_nominal_groups_preserve_varying_canvas_animation(self) -> None:
+        def marker(width: int, height: int, x: int, color: int) -> list[int]:
+            pixels = [0] * (width * height)
+            pixels[5 * width + x] = color
+            pixels[5 * width + x + 1] = color
+            return pixels
+
+        with tempfile.TemporaryDirectory() as temporary:
+            cursors = Path(temporary) / "cursors"
+            cursors.mkdir()
+            (cursors / "wait").write_bytes(
+                xcursor_images(
+                    [
+                        (16, 16, 6, 5, marker(16, 16, 6, 0xFFFF0000)),
+                        (32, 32, 7, 5, marker(32, 32, 7, 0xFF00FF00)),
+                        (32, 16, 8, 5, marker(32, 16, 8, 0xFF0000FF)),
+                        (32, 24, 7, 5, marker(32, 24, 7, 0xFF00FF00)),
+                    ],
+                    nominal_sizes=[32, 64, 32, 64],
+                    delays=[50, 50, 150, 150],
+                )
+            )
+            groups = converter._frames_from_xcursor(cursors)["wait"]
+
+        self.assertEqual(list(groups), [32, 64])
+        for frames in groups.values():
+            self.assertEqual([frame.delay_ms for frame in frames], [50, 150])
+            self.assertEqual([frame.image.size for frame in frames], [(32, 32)] * 2)
+        record = converter.build_cursor(groups)
+        self.assertEqual(record["FrameCount"], 4)
+        self.assertEqual(record["FrameDuration"], 0.05)
+        self.assertEqual((record["HotSpotX"], record["HotSpotY"]), (7.0, 5.0))
+        low, high = representation_images(record)[:2]
+        self.assertEqual(
+            [low.getpixel((7, 5 + index * 32)) for index in range(4)],
+            [(255, 0, 0, 255)] + [(0, 0, 255, 255)] * 3,
+        )
+        self.assertEqual(low.getpixel((8, 5)), (255, 0, 0, 255))
+        self.assertEqual(low.getpixel((9, 5)), (0, 0, 0, 0))
+        self.assertEqual(high.getpixel((15, 11))[:3], (0, 255, 0))
+
+    def test_xcursor_selects_pixel_tiers_independently_of_nominal_sizes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            cursors = Path(temporary) / "cursors"
+            cursors.mkdir()
+            (cursors / "default").write_bytes(
+                xcursor_images(
+                    [
+                        (32, 32, 4, 4, 0xFFFF0000),
+                        (64, 64, 8, 8, 0xFF00FF00),
+                        (128, 128, 16, 16, 0xFF0000FF),
+                    ],
+                    nominal_sizes=[24, 48, 96],
+                )
+            )
+            groups = converter._frames_from_xcursor(cursors)["default"]
+
+        self.assertEqual(list(groups), [24, 48, 96])
+        images = representation_images(converter.build_cursor(groups))
+        self.assertEqual([image.width for image in images], [32, 64, 96, 128])
+        self.assertEqual(
+            [image.getpixel((image.width // 2, image.width // 2)) for image in images],
+            [(255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255), (0, 0, 255, 255)],
+        )
 
     def test_animated_preview_preserves_every_frame_and_timing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

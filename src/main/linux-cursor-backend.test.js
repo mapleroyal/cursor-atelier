@@ -67,6 +67,44 @@ async function fixture() {
 }
 
 describe("Linux cursor state transactions", () => {
+  it.each(["--apply-theme", "--reconcile-login-items"])(
+    "refuses %s in another desktop before changing its original settings",
+    async (command) => {
+      const { run, options, desktop, installTheme } = await fixture();
+      await run("--apply-theme", "Test");
+      const kde = {
+        ...desktop,
+        kind: "kde",
+        session: null,
+        matches: vi.fn(async () => false),
+        capture: vi.fn(async () => ({
+          kind: "kde",
+          theme: "breeze_cursors",
+          size: 24,
+        })),
+        apply: vi.fn(),
+        restore: vi.fn(),
+      };
+      const restarted = createLinuxCursorBackend({ ...options, desktop: kde });
+      await expect(
+        restarted.commandRunner({ command, arguments: ["Test"] }),
+      ).rejects.toMatchObject({ code: "LINUX_DESKTOP_CHANGED" });
+      expect(kde.capture).not.toHaveBeenCalled();
+      expect(kde.apply).not.toHaveBeenCalled();
+      expect(kde.restore).not.toHaveBeenCalled();
+      expect(installTheme).toHaveBeenCalledTimes(1);
+      const originalSession = createLinuxCursorBackend(options);
+      await originalSession.commandRunner({ command: "--teardown" });
+      expect(desktop.restore).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          kind: "hyprland",
+          theme: "User Original",
+          size: 24,
+        }),
+      );
+    },
+  );
+
   it("preserves the original cursor across multiple applies and saves size until reapplied", async () => {
     const { run, current, installTheme } = await fixture();
     await run("--apply-theme", "Test");

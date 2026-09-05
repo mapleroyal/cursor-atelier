@@ -608,16 +608,8 @@ static BOOL OreoSelectTheme(NSString *identifier,
             return NO;
         }
     }
-    if (![OreoCursorEngine saveSelectedThemeIdentifier:identifier
-                                                error:error]) {
-        if (desired) {
-            NSError *rollbackError = nil;
-            if (![priorEngine apply:&rollbackError] && error) {
-                *error = OreoErrorByAppendingCleanup(
-                    *error, @"The previous cursor theme could not be restored",
-                    rollbackError);
-            }
-        }
+    if (!desired &&
+        ![OreoCursorEngine saveSelectedThemeIdentifier:identifier error:error]) {
         return NO;
     }
     *engine = candidate;
@@ -663,15 +655,11 @@ static BOOL OreoApplyTheme(NSString *identifier,
     }
 
     BOOL cursorChanged = [candidate apply:&actionError];
-    BOOL selectionChanged = NO;
-    BOOL candidateSelectionPersisted = NO;
+    // apply commits the selected identity with its effective size while the
+    // native operation lock is still held.
+    BOOL selectionChanged = cursorChanged;
+    BOOL candidateSelectionPersisted = cursorChanged;
     BOOL helperCreated = NO;
-    if (cursorChanged) {
-        selectionChanged =
-            [OreoCursorEngine saveSelectedThemeIdentifier:identifier
-                                                    error:&actionError];
-        candidateSelectionPersisted = selectionChanged;
-    }
     if (cursorChanged && selectionChanged) {
         BOOL helperRegistered = OreoRegisterLoginItem(&actionError);
         helperCreated =

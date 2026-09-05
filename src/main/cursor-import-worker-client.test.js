@@ -15,6 +15,21 @@ class FakeWorker extends EventEmitter {
 }
 
 describe("cursor import worker client", () => {
+  it("reports a worker memory-limit failure without terminating the app", async () => {
+    const importing = importCursorSourceInWorker(
+      {},
+      { WorkerConstructor: FakeWorker },
+    );
+    FakeWorker.instance.emit(
+      "error",
+      Object.assign(new Error("worker limit"), {
+        code: "ERR_WORKER_OUT_OF_MEMORY",
+      }),
+    );
+    await expect(importing).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    expect(FakeWorker.instance.terminate).toHaveBeenCalledOnce();
+  });
+
   it("runs an import in the configured worker and returns its result", async () => {
     const options = {
       sourcePath: "/source",
@@ -28,7 +43,13 @@ describe("cursor import worker client", () => {
     expect(FakeWorker.instance.workerPath).toBe(
       "/build/cursor-import-worker.js",
     );
-    expect(FakeWorker.instance.options).toEqual({ workerData: options });
+    expect(FakeWorker.instance.options).toMatchObject({
+      workerData: options,
+      resourceLimits: {
+        maxOldGenerationSizeMb: 256,
+        maxYoungGenerationSizeMb: 32,
+      },
+    });
     FakeWorker.instance.emit("message", {
       ok: true,
       result: { artifactCount: 2 },
@@ -77,7 +98,7 @@ describe("cursor import worker client", () => {
       },
     );
 
-    expect(FakeWorker.instance.options).toEqual({
+    expect(FakeWorker.instance.options).toMatchObject({
       workerData: {
         sourcePath: "/source",
         stagingDirectory: "/staging",

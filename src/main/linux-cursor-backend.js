@@ -67,6 +67,7 @@ export function createLinuxCursorBackend({
   runCommand = runLinuxCursorCommand,
   desktop = createLinuxCursorDesktop({ env, runCommand }),
   installTheme = installLinuxCursorTheme,
+  encoderExecutable = null,
 } = {}) {
   if (
     typeof getThemes !== "function" ||
@@ -207,6 +208,13 @@ export function createLinuxCursorBackend({
   };
   const apply = async (identifier, sizeOverride = null) => {
     desktop.requireSupported();
+    if (state.desktopSnapshot && state.desktopSnapshot.kind !== desktop.kind) {
+      const error = new Error(
+        "Restore the cursor in the desktop session where it was applied before applying it in another desktop environment.",
+      );
+      error.code = "LINUX_DESKTOP_CHANGED";
+      throw error;
+    }
     const theme = themeFor(identifier);
     if (!theme) {
       throw new Error("That cursor theme is not available to apply.");
@@ -218,6 +226,7 @@ export function createLinuxCursorBackend({
       iconsDirectory,
       runCommand,
       sizePercentage,
+      encoderExecutable,
     });
     await transaction(async (snapshot) => {
       await desktop.apply(installed);

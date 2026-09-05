@@ -535,7 +535,7 @@ describe("cursor importer conversion semantics", () => {
     expect(normalization.missingDelayCount).toBe(2);
   });
 
-  it("uses a cross-tier normalized median hotspot instead of one outlier", async () => {
+  it("fits artwork around the cross-tier normalized median hotspot", async () => {
     const frames = [
       frame(32, [255, 0, 0, 255], null),
       frame(64, [255, 0, 0, 255], null),
@@ -556,8 +556,10 @@ describe("cursor importer conversion semantics", () => {
       ]),
     );
 
-    expect(record.HotSpotX).toBeCloseTo(4, 8);
-    expect(record.HotSpotY).toBeCloseTo(5, 8);
+    // The common (4, 5) anchor needs 26/25 points of left/top padding
+    // to retain the third tier, then the shared 58-point canvas fits into 32.
+    expect(record.HotSpotX).toBeCloseTo((30 * 32) / 58, 8);
+    expect(record.HotSpotY).toBeCloseTo((30 * 32) / 58, 8);
   });
 
   it("bounds Wait/Progress comparison work with a normalized thumbnail", async () => {

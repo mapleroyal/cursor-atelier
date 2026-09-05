@@ -1222,6 +1222,19 @@ export function createCursorBridge({
   if (linuxBackend && !commandRunner) {
     commandRunner = createLinuxCursorBackend({
       stateDirectory: linuxStateDirectory,
+      encoderExecutable: path.join(
+        isPackaged
+          ? resourcesPath
+          : path.join(
+              appPath,
+              "native",
+              "cursor-packs",
+              "build",
+              "curated-converter",
+            ),
+        "curated-cursor-converter",
+        "curated-cursor-converter",
+      ),
       getThemes: () => {
         resetManifestIndex();
         return ensureManifestIndex()

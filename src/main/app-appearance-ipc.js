@@ -1,5 +1,6 @@
 export const GET_APP_APPEARANCE_MODE_CHANNEL = "app:get-appearance-mode";
 export const SET_APP_APPEARANCE_MODE_CHANNEL = "app:set-appearance-mode";
+export const GET_SYSTEM_APPEARANCE_CHANNEL = "app:get-system-appearance";
 
 function reportBestEffortError(error, context, reporter) {
   try {
@@ -9,9 +10,9 @@ function reportBestEffortError(error, context, reporter) {
   }
 }
 
-function notifyAppearanceChanged(mode, callback, reporter) {
+function notifyAppearanceChanged(mode, sender, callback, reporter) {
   try {
-    const result = callback(mode);
+    const result = callback(mode, sender);
     if (result && typeof result.then === "function") {
       void Promise.resolve(result).catch((error) =>
         reportBestEffortError(
@@ -56,6 +57,7 @@ export function registerAppAppearanceIpc({
   preferencesStore,
   nativeTheme,
   isTrustedSender,
+  getSystemAppearance,
   onAppearanceChanged = () => {},
   onAppearanceChangeError = (error) =>
     console.error("Could not refresh the app appearance.", error),
@@ -80,11 +82,17 @@ export function registerAppAppearanceIpc({
   if (typeof isTrustedSender !== "function") {
     throw new TypeError("A trusted IPC sender predicate is required.");
   }
+  if (typeof getSystemAppearance !== "function") {
+    throw new TypeError("A desktop appearance reader is required.");
+  }
 
   const getAppearanceMode = (event) => {
     event.returnValue = isTrustedSender(event)
       ? preferencesStore.getAppAppearanceMode()
       : "system";
+  };
+  const getDesktopAppearance = (event) => {
+    event.returnValue = isTrustedSender(event) ? getSystemAppearance() : null;
   };
   const setAppearanceMode = (event, mode) => {
     if (!isTrustedSender(event)) {
@@ -124,6 +132,7 @@ export function registerAppAppearanceIpc({
 
     notifyAppearanceChanged(
       canonicalMode,
+      event.sender,
       onAppearanceChanged,
       onAppearanceChangeError,
     );
@@ -131,6 +140,7 @@ export function registerAppAppearanceIpc({
   };
 
   ipcMain.on(GET_APP_APPEARANCE_MODE_CHANNEL, getAppearanceMode);
+  ipcMain.on(GET_SYSTEM_APPEARANCE_CHANNEL, getDesktopAppearance);
   ipcMain.handle(SET_APP_APPEARANCE_MODE_CHANNEL, setAppearanceMode);
 
   return () => {
@@ -139,5 +149,9 @@ export function registerAppAppearanceIpc({
       getAppearanceMode,
     );
     ipcMain.removeHandler?.(SET_APP_APPEARANCE_MODE_CHANNEL);
+    ipcMain.removeListener?.(
+      GET_SYSTEM_APPEARANCE_CHANNEL,
+      getDesktopAppearance,
+    );
   };
 }

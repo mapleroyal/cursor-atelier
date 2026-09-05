@@ -27,6 +27,7 @@ from typing import Any, Callable, Iterable
 
 import build_all
 import oreo_recipe
+import xcursor_encoder
 from PIL import Image, __version__ as PILLOW_VERSION
 
 
@@ -124,6 +125,7 @@ def self_test_document() -> dict[str, Any]:
         "themeCount": catalog["themeCount"],
         "roleCount": len(build_all.MAC_CURSOR_IDENTIFIERS),
         "pillowVersion": PILLOW_VERSION,
+        "xcursorEncoderVersion": xcursor_encoder.self_test(),
     }
 
 
@@ -444,6 +446,9 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("catalog")
     subparsers.add_parser("self-test")
+    encode = subparsers.add_parser("encode-xcursor")
+    encode.add_argument("--manifest", type=Path, required=True)
+    encode.add_argument("--output-root", type=Path, required=True)
     command = subparsers.add_parser("convert")
     command.add_argument("--source-root", type=Path, required=True)
     command.add_argument("--output-root", type=Path, required=True)
@@ -466,6 +471,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "self-test":
             _emit("self-test", **self_test_document())
+            return 0
+        if args.command == "encode-xcursor":
+            xcursor_encoder.encode_theme(args.manifest, args.output_root)
             return 0
         convert(
             source_root=args.source_root,

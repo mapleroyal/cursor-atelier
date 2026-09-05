@@ -41,6 +41,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   setAppAppearanceMode: (mode) =>
     electron.ipcRenderer.invoke("app:set-appearance-mode", mode),
+  getSystemAppearance: () => {
+    const appearance = electron.ipcRenderer.sendSync(
+      "app:get-system-appearance",
+    );
+    return ["light", "dark"].includes(appearance) ? appearance : null;
+  },
+  onAppAppearanceChanged: (callback) =>
+    subscribe("app:appearance-changed", callback),
+  onSystemAppearanceChanged: (callback) =>
+    subscribe("app:system-appearance-changed", callback),
   getCursorStatus: () => electron.ipcRenderer.invoke("cursor:status"),
   listCursorThemes: () => electron.ipcRenderer.invoke("cursor:list-themes"),
   importCursorPack: (options) =>

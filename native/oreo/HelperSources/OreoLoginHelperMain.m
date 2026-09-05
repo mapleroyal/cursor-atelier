@@ -73,76 +73,31 @@ static NSString * const OreoStatusChangedNotification =
 }
 
 - (BOOL)bringStateCurrent:(NSError **)error {
-    NSUserDefaults *defaults = OreoCursorDefaults();
-    [defaults synchronize];
-    NSString *selected = [OreoCursorEngine
-        selectedThemeIdentifierForResourceBundle:self.hostBundle];
-    BOOL effective =
-        [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
-    NSInteger expectedSize = effective
-        ? [OreoCursorEngine effectiveSizePercentage]
-        : [OreoCursorEngine sizePercentageForThemeIdentifier:selected];
-    BOOL reloaded = NO;
-    if (!self.engine ||
-        !self.engine.supported ||
-        !self.engine.themeValid ||
-        ![self.engine.themeIdentifier isEqualToString:selected] ||
-        self.engine.themeSizePercentage != expectedSize) {
-        NSError *reloadError = nil;
-        if (![self reloadEngine:&reloadError]) {
-            if (error) {
-                *error = reloadError;
-            }
-            return NO;
-        }
-        reloaded = YES;
-    }
-
-    // A command-line apply or teardown can leave a journal while this helper
-    // is already running. Recovery therefore belongs to every refresh pass,
-    // not only engine construction or theme changes.
-    BOOL recovered = NO;
-    if (![self.engine recoverInterruptedTransaction:&recovered error:error]) {
+    if ((!self.engine || !self.engine.supported) &&
+        ![self reloadEngine:error]) {
         return NO;
     }
+    BOOL recovered = NO;
+    OreoCursorEngine *current =
+        [self.engine reconcileSelectedTheme:&recovered error:error];
+    if (!current) {
+        return NO;
+    }
+    self.engine = current;
     if (recovered) {
         [self setLastStatus:
             @"An interrupted cursor change was safely restored; the custom "
              "theme is off."
                     isError:NO];
-        return YES;
-    }
-
-    BOOL desired =
-        [defaults boolForKey:OreoCursorEnabledDefaultsKey];
-    effective = [defaults boolForKey:OreoCursorEffectiveDefaultsKey];
-    if (!self.engine.themeValid) {
-        // Restore also handles an ActiveBoot marker when effective state was
-        // only partially persisted, and is a no-op for genuinely inactive
-        // state. Do not let invalid artwork gate recovery-capable cleanup.
-        if (![self.engine restore:error]) {
-            return NO;
-        }
+    } else if (!current.themeValid) {
         [self setLastStatus:
             @"The selected cursor theme is unavailable; Apple cursors are active."
                     isError:YES];
-        return YES;
-    }
-    if (desired) {
-        BOOL success = reloaded || !effective
-            ? [self.engine apply:error]
-            : [self.engine refreshIfNeeded:error];
-        if (!success) {
-            return NO;
-        }
+    } else if ([OreoCursorDefaults()
+                   boolForKey:OreoCursorEnabledDefaultsKey]) {
         [self setLastStatus:[NSString stringWithFormat:
-            @"%@ is active.", self.engine.themeDisplayName]
+            @"%@ is active.", current.themeDisplayName]
                     isError:NO];
-    } else if (effective) {
-        if (![self.engine restore:error]) {
-            return NO;
-        }
-        [self setLastStatus:@"Apple cursors are active." isError:NO];
     } else {
         [self setLastStatus:@"Apple cursors are active." isError:NO];
     }

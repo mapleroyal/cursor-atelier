@@ -33,8 +33,9 @@ tools are required. The packaged converter and native importer addons must
 match Electron's architecture; cross-compilation is rejected.
 
 Linux retains the validated `.cursor` representation internally for lossless
-portable import/export with macOS. The final Xcursor encoding uses xcursorgen,
-retaining available frame sizes, hotspots, and animation timing. Omarchy/Hyprland
+portable import/export with macOS. The final Xcursor encoding uses Clickgen
+inside the bundled converter, retaining available frame sizes, hotspots, and
+animation timing without a host encoder dependency. Omarchy/Hyprland
 is the primary Linux environment; GNOME and KDE integrations use desktop-specific
 settings and still require broader live testing. A desktop whose cursor state
 cannot be verified does not receive an invented active result.

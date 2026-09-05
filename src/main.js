@@ -42,6 +42,7 @@ import {
   removeCursorImportStaging,
 } from "./main/cursor-import-install";
 import { createCursorLibraryPreferencesReconciler } from "./main/cursor-library-preferences-reconciler";
+import { reconcileCursorAtLogin } from "./main/cursor-login-reconciler";
 import { createCursorPreferencesStore } from "./main/cursor-preferences-store";
 import { restoreCursorState } from "./main/cursor-state-service";
 import { createCursorThemeSizeCleanupReconciler } from "./main/cursor-theme-size-cleanup-reconciler";
@@ -221,6 +222,18 @@ function syncWindowBackgrounds() {
   });
 }
 
+function notifyAppAppearanceChanged(mode, sender = null) {
+  syncWindowBackgrounds();
+  // The originating store confirms its own queued write from the IPC reply.
+  // Import and recovery have no sender and update every open renderer.
+  broadcastToRenderers("app:appearance-changed", mode, sender);
+}
+
+function notifySystemAppearanceChanged() {
+  broadcastToRenderers("app:system-appearance-changed", getSystemAppearance());
+  void runtime?.automation.appearanceChanged();
+}
+
 function hasVisibleWindows(excludedWindow = null) {
   return [...windows].some(
     (window) =>
@@ -228,12 +241,13 @@ function hasVisibleWindows(excludedWindow = null) {
   );
 }
 
-function broadcastToRenderers(channel, payload) {
+function broadcastToRenderers(channel, payload, excludedWebContents = null) {
   broadcastToRendererWindows({
     windows,
     channel,
     payload,
     canSend: (webContents) =>
+      webContents !== excludedWebContents &&
       trustedWebContents.has(webContents.id) &&
       !webContents.isDestroyed() &&
       isExpectedRendererUrl(webContents.getURL()),
@@ -874,9 +888,7 @@ async function startApplication() {
   if (process.platform === "linux") {
     linuxSystemAppearance = createLinuxSystemAppearance({
       nativeTheme,
-      onChange: () => {
-        void runtime?.automation.appearanceChanged();
-      },
+      onChange: notifySystemAppearanceChanged,
       onError: (error) =>
         console.error("Could not read the Linux system appearance.", error),
     });
@@ -1096,6 +1108,7 @@ async function startApplication() {
     {
       bridge,
       preferencesStore,
+      runLibraryExclusive: runImportedLibraryExclusive,
       onRetryError: (error, { attempt }) => {
         console.error(
           `Cursor library preference reconciliation retry ${attempt} failed.`,
@@ -1148,10 +1161,11 @@ async function startApplication() {
         console.error("Could not resume cursor automation.", error);
       });
     },
-    reconcileLibraryPreferences: () => libraryPreferencesReconciler.reconcile(),
+    reconcileLibraryPreferences: () =>
+      libraryPreferencesReconciler.reconcileInLibraryTransaction(),
     applyAppearanceMode: (mode) => {
       nativeTheme.themeSource = mode;
-      syncWindowBackgrounds();
+      notifyAppAppearanceChanged(mode);
     },
     syncMainLoginItem: (preferences) =>
       mainLoginItemReconciler?.sync(
@@ -1259,18 +1273,37 @@ async function startApplication() {
       return;
     }
   }
+  automation = createCursorAutomation({
+    bridge,
+    preferencesStore,
+    getSystemAppearance,
+    onCursorChanged: notifyCursorChanged,
+    onError: (error, { reason }) => {
+      console.error(`Cursor automation failed (${reason}).`, error);
+    },
+  });
   if (backgroundRegistrationAvailable) {
     // Start update reconciliation immediately so later cursor mutations queue
     // behind it, but do not keep an interactive launch from showing its shell
     // while ServiceManagement replaces or re-registers an older helper.
-    loginItemReconciliation = bridge.reconcileLoginItems().catch((error) => {
-      // The UI still needs to open so Restore and Login Items guidance remain
-      // available. Status will surface any unresolved helper registration.
-      console.error(
-        "Could not reconcile Cursor Atelier’s installed login helper.",
-        error,
-      );
-    });
+    loginItemReconciliation = automation
+      .runExclusive(() =>
+        process.platform === "linux" && backgroundLaunch
+          ? reconcileCursorAtLogin({
+              bridge,
+              preferencesStore,
+              getSystemAppearance,
+            })
+          : bridge.reconcileLoginItems(),
+      )
+      .catch((error) => {
+        // The UI still needs to open so Restore and Login Items guidance remain
+        // available. Status will surface any unresolved helper registration.
+        console.error(
+          "Could not reconcile Cursor Atelier’s installed login helper.",
+          error,
+        );
+      });
   }
 
   await protocol.handle(PREVIEW_SCHEME, async (request) => {
@@ -1333,7 +1366,8 @@ async function startApplication() {
     preferencesStore,
     nativeTheme,
     isTrustedSender,
-    onAppearanceChanged: syncWindowBackgrounds,
+    getSystemAppearance,
+    onAppearanceChanged: notifyAppAppearanceChanged,
   });
   const rendererBridge = {
     status: () => bridge.status(),
@@ -1445,7 +1479,7 @@ async function startApplication() {
     }
     let preferenceCleanupPending = false;
     try {
-      await libraryPreferencesReconciler.reconcile();
+      await libraryPreferencesReconciler.reconcileInLibraryTransaction();
     } catch (error) {
       preferenceCleanupPending = true;
       console.error(
@@ -1478,7 +1512,7 @@ async function startApplication() {
         const result = await bridge.assignImportedFamily(identifiers, family);
         let preferenceCleanupPending = false;
         try {
-          await libraryPreferencesReconciler.reconcile();
+          await libraryPreferencesReconciler.reconcileInLibraryTransaction();
         } catch (error) {
           preferenceCleanupPending = true;
           console.error(
@@ -1515,21 +1549,20 @@ async function startApplication() {
     });
   });
 
-  automation = createCursorAutomation({
-    bridge,
-    preferencesStore,
-    getSystemAppearance,
-    onCursorChanged: notifyCursorChanged,
-    onError: (error, { reason }) => {
-      console.error(`Cursor automation failed (${reason}).`, error);
-    },
-  });
   runtime = {
     automation,
     bridge,
     preferencesStore,
     curatedFamilyService,
     curatedCatalogSha256: CURATED_FAMILY_CATALOG.sha256,
+    reconcileDesktopCursor: () =>
+      automation.runExclusive(() =>
+        reconcileCursorAtLogin({
+          bridge,
+          preferencesStore,
+          getSystemAppearance,
+        }),
+      ),
   };
 
   ipcMain.handle(
@@ -1620,8 +1653,7 @@ async function startApplication() {
   installApplicationMenu();
 
   const handleNativeThemeUpdated = () => syncWindowBackgrounds();
-  const handleSystemAppearanceUpdated = () =>
-    void automation.appearanceChanged();
+  const handleSystemAppearanceUpdated = notifySystemAppearanceChanged;
   const handleWake = () => void automation.wake();
   nativeTheme.on("updated", handleNativeThemeUpdated);
   powerMonitor.on("resume", handleWake);
@@ -1762,8 +1794,8 @@ if (app.requestSingleInstanceLock()) {
   }
   app.on("second-instance", (_event, arguments_) => {
     if (process.platform === "linux" && arguments_.includes("--background")) {
-      void runtime?.bridge
-        .reconcileLoginItems()
+      void runtime
+        ?.reconcileDesktopCursor()
         .then((status) =>
           notifyCursorChanged({ reason: "desktop-theme", status }),
         )

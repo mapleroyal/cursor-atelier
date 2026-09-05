@@ -293,6 +293,7 @@ test.describe("Cursor Atelier packaged UI", () => {
 
   test("renders a fixed split-pane shell and switches appearance modes", async ({
     cursorPage: page,
+    cursorApp: app,
   }) => {
     await expect(page.getByText("Cursor packs", { exact: true })).toBeVisible();
     const randomize = page.getByRole("button", {
@@ -337,10 +338,44 @@ test.describe("Cursor Atelier packaged UI", () => {
       ).toBeVisible();
     }
 
+    const desktopAppearance = await page.evaluate(() => {
+      window.appearanceNotifications = [];
+      window.electronAPI.onAppAppearanceChanged((mode) =>
+        window.appearanceNotifications.push(mode),
+      );
+      return window.electronAPI.getSystemAppearance();
+    });
     const dark = page.getByRole("radio", { name: "Dark" });
     await dark.click();
     await expect(dark).toHaveAttribute("aria-checked", "true");
     await expect(page.locator("html")).toHaveClass(/dark/);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.electronAPI.getAppAppearanceMode()),
+      )
+      .toBe("dark");
+    expect(
+      await page.evaluate(() => window.electronAPI.getSystemAppearance()),
+    ).toBe(desktopAppearance);
+    // A local save is confirmed by its reply, not an event that could
+    // overtake another queued choice in the same renderer.
+    expect(await page.evaluate(() => window.appearanceNotifications)).toEqual(
+      [],
+    );
+
+    // Import and rollback publish this authoritative main-process event.
+    // Verify the open selector and document consume it without a reload.
+    await app.evaluate(({ BrowserWindow, nativeTheme }) => {
+      nativeTheme.themeSource = "light";
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send("app:appearance-changed", "light");
+      }
+    });
+    await expect(page.getByRole("radio", { name: "Light" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
 
     await page.getByRole("radio", { name: "System" }).click();
     await page.getByRole("button", { name: "Back", exact: true }).click();

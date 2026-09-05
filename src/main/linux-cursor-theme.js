@@ -195,11 +195,12 @@ export async function readLinuxCursorTheme(theme) {
   };
 }
 
-/** Repackage the approved conversion's PNGs with X.Org's own Xcursor encoder. */
+/** Repackage approved PNGs with the encoder in the bundled conversion runtime. */
 export async function installLinuxCursorTheme({
   theme,
   iconsDirectory,
   runCommand,
+  encoderExecutable,
   sizePercentage = 100,
 }) {
   if (
@@ -241,6 +242,9 @@ export async function installLinuxCursorTheme({
       throw error;
     }
   }
+  if (!path.isAbsolute(encoderExecutable ?? "")) {
+    throw new Error("The bundled Linux cursor encoder is unavailable.");
+  }
   await fs.mkdir(iconsDirectory, { recursive: true });
   const stage = await fs.mkdtemp(
     path.join(iconsDirectory, ".cursor-atelier-stage-"),
@@ -250,8 +254,9 @@ export async function installLinuxCursorTheme({
   try {
     await fs.mkdir(framesDirectory);
     await fs.mkdir(cursorsDirectory);
+    const cursorJobs = [];
     for (const [role, record] of decoded.roles) {
-      const lines = [];
+      const frames = [];
       const representations = [...record.representations];
       // Keep every original tier. Additional sizes make the percentage slider exact
       // on desktops whose Xcursor loader only chooses existing nominal sizes.
@@ -306,20 +311,33 @@ export async function installLinuxCursorTheme({
           );
           const nominalSize =
             rep.nominalSize ?? Math.round(decoded.nominalSize * rep.scale);
-          lines.push(
-            `${nominalSize} ${hotX} ${hotY} ${filename} ${Math.round(record.FrameDuration * 1000)}`,
-          );
+          frames.push({
+            nominalSize,
+            hotX,
+            hotY,
+            filename,
+            delay: Math.round(record.FrameDuration * 1000),
+          });
         }
       }
-      const configPath = path.join(framesDirectory, `${role}.conf`);
-      await fs.writeFile(configPath, `${lines.join("\n")}\n`);
-      await runCommand("xcursorgen", [
-        "-p",
-        framesDirectory,
-        configPath,
-        path.join(cursorsDirectory, role),
-      ]);
+      cursorJobs.push({ name: role, frames });
     }
+    const manifestPath = path.join(framesDirectory, "encode.json");
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({ schemaVersion: 1, cursors: cursorJobs }),
+    );
+    await runCommand(
+      encoderExecutable,
+      [
+        "encode-xcursor",
+        "--manifest",
+        manifestPath,
+        "--output-root",
+        cursorsDirectory,
+      ],
+      { timeout: 120_000 },
+    );
     for (const [alias, role] of Object.entries({
       ...ROLE_ALIASES,
       ...X11_ALIASES,

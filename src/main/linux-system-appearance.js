@@ -30,6 +30,7 @@ export function createLinuxSystemAppearance({
   let monitor = null;
   let retryTimer = null;
   let readPromise = null;
+  let portalGeneration = 0;
 
   function update(value) {
     if (stopped || value === appearance) {
@@ -40,6 +41,7 @@ export function createLinuxSystemAppearance({
   }
 
   function acceptPortalValue(value) {
+    portalGeneration += 1;
     portalAvailable = true;
     // The portal reserves 1 for dark; unknown values mean no preference.
     update(Number(value) === 1 ? "dark" : "light");
@@ -55,6 +57,7 @@ export function createLinuxSystemAppearance({
     if (readPromise || stopped) {
       return readPromise;
     }
+    const generation = portalGeneration;
     readPromise = execFileImpl(
       "gdbus",
       [
@@ -67,7 +70,7 @@ export function createLinuxSystemAppearance({
       { encoding: "utf8", timeout: 5_000, maxBuffer: 64 * 1024 },
     )
       .then(({ stdout }) => {
-        if (stopped) {
+        if (stopped || generation !== portalGeneration) {
           return;
         }
         const value = stdout.match(/['"]color-scheme['"]:\s*<uint32\s+(\d+)>/);
@@ -79,7 +82,7 @@ export function createLinuxSystemAppearance({
         acceptPortalValue(value[1]);
       })
       .catch((error) => {
-        if (!stopped) {
+        if (!stopped && generation === portalGeneration) {
           portalAvailable = false;
           nativeUpdated();
           onError(error);

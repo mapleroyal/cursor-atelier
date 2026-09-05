@@ -14,6 +14,7 @@ import UPNG from "@upng/upng-js/dist/UPNG.esm.js";
 import yauzl from "yauzl";
 
 import { sanitizeCursorManifestText } from "./cursor-manifest-text.js";
+import { assertBinaryCursorPlistBudget } from "./cursor-plist-budget.js";
 
 const openZip = promisify(yauzl.open);
 
@@ -1392,34 +1393,69 @@ function parseXcursorBuffer(
 function groupXcursorFrames(frames, limits) {
   const groups = new Map();
   for (const frame of frames) {
-    const canvasSize = Math.max(frame.width, frame.height);
-    const group = groups.get(canvasSize) ?? [];
+    const group = groups.get(frame.nominalSize) ?? [];
     group.push(frame);
-    groups.set(canvasSize, group);
+    groups.set(frame.nominalSize, group);
   }
-  for (const group of groups.values()) {
+  for (const [nominalSize, group] of groups) {
     if (group.length > limits.maxSourceFrames) {
       fail("LIMIT_EXCEEDED", "An Xcursor animation contains too many frames.");
     }
+    // A nominal-size sequence can contain differently cropped frames. Pad
+    // them to one canvas so resizing preserves their relative artwork scale.
+    const canvasSize = Math.max(
+      ...group.map((frame) => Math.max(frame.width, frame.height)),
+    );
+    groups.set(
+      nominalSize,
+      group.map((frame) => ({
+        ...frame,
+        representationSize: canvasSize,
+        ...(frame.width === canvasSize && frame.height === canvasSize
+          ? {}
+          : {
+              rgba: squareFrameRgba(frame, canvasSize),
+              width: canvasSize,
+              height: canvasSize,
+            }),
+      })),
+    );
   }
   return groups;
 }
 
+function pixelTiers(groups) {
+  return [...groups].map(([nominalSize, frames]) => ({
+    nominalSize,
+    frames,
+    size: frames[0].representationSize ?? nominalSize,
+  }));
+}
+
 function framesForSize(groups, targetSize) {
-  if (groups.has(targetSize)) {
-    return groups.get(targetSize);
-  }
-  const sizes = [...groups.keys()].sort((left, right) => left - right);
-  return groups.get(sizes.find((size) => size > targetSize) ?? sizes.at(-1));
+  const tiers = pixelTiers(groups);
+  const sizes = tiers.map((tier) => tier.size);
+  const larger = sizes.filter((size) => size >= targetSize);
+  const sourceSize = larger.length ? Math.min(...larger) : Math.max(...sizes);
+  return tiers
+    .filter((tier) => tier.size === sourceSize)
+    .sort(
+      (left, right) =>
+        Math.abs(left.nominalSize - targetSize) -
+          Math.abs(right.nominalSize - targetSize) ||
+        left.nominalSize - right.nominalSize,
+    )[0].frames;
 }
 
 function framesNearestSize(groups, targetSize) {
-  const sizes = [...groups.keys()].sort(
+  return pixelTiers(groups).sort(
     (left, right) =>
-      Math.abs(left - targetSize) - Math.abs(right - targetSize) ||
-      left - right,
-  );
-  return groups.get(sizes[0]);
+      Math.abs(left.size - targetSize) - Math.abs(right.size - targetSize) ||
+      left.size - right.size ||
+      Math.abs(left.nominalSize - targetSize) -
+        Math.abs(right.nominalSize - targetSize) ||
+      left.nominalSize - right.nominalSize,
+  )[0].frames;
 }
 
 function representationSizes(groups) {
@@ -1427,8 +1463,7 @@ function representationSizes(groups) {
     return [...VECTOR_REPRESENTATION_SIZES];
   }
   const sizes = new Set(BASE_REPRESENTATION_SIZES);
-  const sourceSizes = [...groups.keys()];
-  if (Math.max(...sourceSizes) >= 128) {
+  if (Math.max(...pixelTiers(groups).map((tier) => tier.size)) >= 128) {
     sizes.add(128);
   }
   return [...sizes].sort((left, right) => left - right);
@@ -1445,8 +1480,10 @@ function clearTransparentRgb(buffer) {
   return buffer;
 }
 
-function squareFrameRgba(frame) {
-  const canvasSize = Math.max(frame.width, frame.height);
+function squareFrameRgba(
+  frame,
+  canvasSize = Math.max(frame.width, frame.height),
+) {
   if (frame.width === canvasSize && frame.height === canvasSize) {
     return Buffer.from(frame.rgba);
   }
@@ -1589,25 +1626,114 @@ async function reconstructFrame(frame, size, reconstruction) {
     : baseline;
 }
 
-async function composeRepresentation(frames, indices, size, reconstruction) {
+function rgbaBounds(rgba, size) {
+  let left = size;
+  let top = size;
+  let right = 0;
+  let bottom = 0;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      if (rgba[(y * size + x) * 4 + 3] !== 0) {
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x + 1);
+        bottom = Math.max(bottom, y + 1);
+      }
+    }
+  }
+  return left === size ? null : { left, top, right, bottom };
+}
+
+async function renderRepresentation(frames, indices, size, reconstruction) {
+  const rendered = new Map();
+  for (const index of new Set(indices)) {
+    const frame = frames[index];
+    const rgba = reconstruction
+      ? await reconstructFrame(frame, size, reconstruction)
+      : await resizeFrame(frame, size);
+    const canvasSize = Math.max(frame.width, frame.height);
+    rendered.set(index, {
+      rgba,
+      bounds: rgbaBounds(rgba, size),
+      hotspot: {
+        x: (frame.hotspotX * 32) / canvasSize,
+        y: (frame.hotspotY * 32) / canvasSize,
+      },
+    });
+  }
+  return { size, frames: indices.map((index) => rendered.get(index)) };
+}
+
+function commonRepresentationGeometry(representations, hotspot) {
+  let left = 0;
+  let top = 0;
+  let right = 32;
+  let bottom = 32;
+  for (const { size, frames } of representations) {
+    for (const frame of new Set(frames)) {
+      if (!frame.bounds) {
+        continue;
+      }
+      const dx = hotspot.x - frame.hotspot.x;
+      const dy = hotspot.y - frame.hotspot.y;
+      left = Math.min(left, (frame.bounds.left * 32) / size + dx);
+      top = Math.min(top, (frame.bounds.top * 32) / size + dy);
+      right = Math.max(right, (frame.bounds.right * 32) / size + dx);
+      bottom = Math.max(bottom, (frame.bounds.bottom * 32) / size + dy);
+    }
+  }
+  // One shared square contains every translated frame. Whole-point padding
+  // gives the standard 1x/2x/3x/4x tiers the exact same final scale.
+  left = Math.floor(left);
+  top = Math.floor(top);
+  const canvasPoints = Math.ceil(Math.max(right - left, bottom - top));
+  return {
+    left,
+    top,
+    canvasPoints,
+    sourceHotspot: hotspot,
+    hotspot: {
+      x: ((hotspot.x - left) * 32) / canvasPoints,
+      y: ((hotspot.y - top) * 32) / canvasPoints,
+    },
+  };
+}
+
+async function composeRepresentation({ size, frames }, geometry) {
   const bytesPerFrame = size * size * 4;
-  const sheet = Buffer.alloc(bytesPerFrame * indices.length);
-  for (let outputIndex = 0; outputIndex < indices.length; outputIndex += 1) {
-    const resized = reconstruction
-      ? await reconstructFrame(
-          frames[indices[outputIndex]],
-          size,
-          reconstruction,
-        )
-      : await resizeFrame(frames[indices[outputIndex]], size);
-    resized.copy(sheet, outputIndex * bytesPerFrame);
+  const sheet = Buffer.alloc(bytesPerFrame * frames.length);
+  const canvasSize = (size * geometry.canvasPoints) / 32;
+  const alignedFrames = new Map();
+  for (let outputIndex = 0; outputIndex < frames.length; outputIndex += 1) {
+    const frame = frames[outputIndex];
+    if (!alignedFrames.has(frame)) {
+      const padded = Buffer.alloc(canvasSize * canvasSize * 4);
+      if (frame.bounds) {
+        const shiftX = Math.round(
+          ((geometry.sourceHotspot.x - frame.hotspot.x - geometry.left) *
+            size) /
+            32,
+        );
+        const shiftY = Math.round(
+          ((geometry.sourceHotspot.y - frame.hotspot.y - geometry.top) * size) /
+            32,
+        );
+        const { left, top, right, bottom } = frame.bounds;
+        for (let y = top; y < bottom; y += 1) {
+          frame.rgba.copy(
+            padded,
+            ((y + shiftY) * canvasSize + left + shiftX) * 4,
+            (y * size + left) * 4,
+            (y * size + right) * 4,
+          );
+        }
+      }
+      alignedFrames.set(frame, await resizeRawRgba(padded, canvasSize, size));
+    }
+    alignedFrames.get(frame).copy(sheet, outputIndex * bytesPerFrame);
   }
   return sharp(sheet, {
-    raw: {
-      width: size,
-      height: size * indices.length,
-      channels: 4,
-    },
+    raw: { width: size, height: size * frames.length, channels: 4 },
   })
     .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer();
@@ -1832,7 +1958,7 @@ function selectCalibrationPair(sourceFrames) {
     ([, groups]) => groups instanceof Map && groups.size > 1,
   );
   const masterSizes = roleEntries.map(([, groups]) =>
-    Math.max(...groups.keys()),
+    Math.max(...pixelTiers(groups).map((tier) => tier.size)),
   );
   const variantMaster = median(masterSizes);
   if (
@@ -1842,7 +1968,11 @@ function selectCalibrationPair(sourceFrames) {
     return null;
   }
   const tiers = [
-    ...new Set(roleEntries.flatMap(([, groups]) => [...groups.keys()])),
+    ...new Set(
+      roleEntries.flatMap(([, groups]) =>
+        pixelTiers(groups).map((tier) => tier.size),
+      ),
+    ),
   ]
     .filter((size) => size < XCURSOR_UPSCALE_TARGET)
     .sort((left, right) => left - right);
@@ -1866,8 +1996,8 @@ function selectCalibrationPair(sourceFrames) {
       }
       const roles = roleEntries.filter(([, groups]) =>
         compatibleCalibrationFrames(
-          groups.get(lowSize),
-          groups.get(highSize),
+          framesForSize(groups, lowSize),
+          framesForSize(groups, highSize),
           lowSize,
           highSize,
         ),
@@ -1895,8 +2025,8 @@ function selectCalibrationPair(sourceFrames) {
 async function calibrationSamples(pair) {
   const samples = [];
   for (const [role, groups] of pair.roles) {
-    const lowFrames = groups.get(pair.lowSize);
-    const highFrames = groups.get(pair.highSize);
+    const lowFrames = framesForSize(groups, pair.lowSize);
+    const highFrames = framesForSize(groups, pair.highSize);
     const indices = selectedFrameIndices(
       lowFrames.length,
       XCURSOR_FILTER_MAX_FRAMES_PER_ROLE,
@@ -1926,7 +2056,7 @@ async function calibrationSamples(pair) {
 function nohaloReconstruction(groups) {
   return {
     filter: null,
-    masterSize: Math.max(...groups.keys()),
+    masterSize: Math.max(...pixelTiers(groups).map((tier) => tier.size)),
     method: "nohalo",
   };
 }
@@ -2134,10 +2264,11 @@ async function buildCursorRecord(source, _limits = DEFAULT_IMPORT_LIMITS) {
   }
   const representations = [];
   const reconstruction = XCURSOR_RECONSTRUCTION.get(groups);
+  const hotspot = normalizedMedianHotspot(groups);
   for (const size of sizes) {
     const frames = framesForSize(groups, size);
     representations.push(
-      await composeRepresentation(
+      await renderRepresentation(
         frames,
         sampledFrameIndices(frames, outputCount),
         size,
@@ -2145,16 +2276,20 @@ async function buildCursorRecord(source, _limits = DEFAULT_IMPORT_LIMITS) {
       ),
     );
   }
-  const hotspot = normalizedMedianHotspot(groups);
+  const geometry = commonRepresentationGeometry(representations, hotspot);
+  const composed = [];
+  for (const representation of representations) {
+    composed.push(await composeRepresentation(representation, geometry));
+  }
   return {
     record: {
       FrameCount: outputCount,
       FrameDuration: frameDuration,
-      HotSpotX: hotspot.x,
-      HotSpotY: hotspot.y,
+      HotSpotX: geometry.hotspot.x,
+      HotSpotY: geometry.hotspot.y,
       PointsWide: 32,
       PointsHigh: 32,
-      Representations: representations,
+      Representations: composed,
     },
     sourceFrameCount: Math.max(...sourceCounts),
     sourceDurations: canonicalDurations,
@@ -2789,6 +2924,7 @@ function rejectAmbiguousCapeGeometry(cursors) {
 function parsePlistBuffer(buffer) {
   try {
     if (buffer.subarray(0, 8).toString("ascii") === "bplist00") {
+      assertBinaryCursorPlistBudget(buffer);
       return plist.parseBinary(buffer);
     }
     return plist.parse(buffer.toString("utf8"));

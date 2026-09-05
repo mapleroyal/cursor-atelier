@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import * as plist from "plist";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +14,10 @@ import {
 import { runLinuxCursorCommand } from "./linux-cursor-desktop.js";
 
 const directories = [];
+const encoderExecutable = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../native/cursor-packs/build/curated-converter/curated-cursor-converter/curated-cursor-converter",
+);
 afterEach(async () => {
   for (const directory of directories.splice(0)) {
     await fs.rm(directory, { recursive: true, force: true });
@@ -108,15 +112,20 @@ describe("Linux Xcursor export", () => {
     await expect(readLinuxCursorTheme(theme)).rejects.toThrow("roles");
   });
 
-  it.skipIf(spawnSync("xcursorgen", ["--version"]).status !== 0)(
-    "round-trips PNG pixels, alpha, frames, hotspots, native tiers and requested sizes through X.Org",
+  it.skipIf(process.platform !== "linux")(
+    "round-trips pixels, animation, hotspots and sizes with only the bundled encoder on PATH",
     async () => {
       const { theme, directory } = await fixture();
       const iconsDirectory = path.join(directory, "icons");
       const installed = await installLinuxCursorTheme({
         theme,
         iconsDirectory,
-        runCommand: runLinuxCursorCommand,
+        encoderExecutable,
+        runCommand: (command, args, options) =>
+          runLinuxCursorCommand(command, args, {
+            ...options,
+            env: { ...process.env, PATH: directory },
+          }),
         sizePercentage: 125,
       });
       const cursor = await fs.readFile(

@@ -142,11 +142,7 @@ import {
   groupCursorFamilies,
   isOnboardingJobVisible,
 } from "@/lib/onboarding";
-import {
-  getSystemTheme,
-  subscribeToSystemTheme,
-  useAppStore,
-} from "@/stores/app-store";
+import { useAppStore } from "@/stores/app-store";
 
 const DEFAULT_ROLES = ["default", "text", "pointer", "wait", "progress"];
 const CONTEXT_MENU_DISMISS_MS = 100;
@@ -2114,6 +2110,7 @@ export function HomeRoute() {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const themeMode = useAppStore((state) => state.themeMode);
+  const systemAppearance = useAppStore((state) => state.systemAppearance);
   const themeError = useAppStore((state) => state.themeError);
   const setThemeMode = useAppStore((state) => state.setThemeMode);
   const onboarding = useAppStore((state) => state.onboarding);
@@ -2138,9 +2135,6 @@ export function HomeRoute() {
   const [selectionWasChanged, setSelectionWasChanged] = useState(false);
   const [subscriptionsReady, setSubscriptionsReady] = useState(false);
   const [pendingPreferenceCount, setPendingPreferenceCount] = useState(0);
-  const [systemAppearance, setSystemAppearance] = useState(() =>
-    getSystemTheme(),
-  );
   const operationRef = useRef(null);
   const eventRevisionRef = useRef({ preferences: 0, status: 0, themes: 0 });
   const pendingPreferenceUpdatesRef = useRef([]);
@@ -2177,11 +2171,6 @@ export function HomeRoute() {
     setOperationTargetPackId(null);
     setOperation("idle");
   }, []);
-
-  useEffect(
-    () => subscribeToSystemTheme(setSystemAppearance),
-    [setSystemAppearance],
-  );
 
   useEffect(() => {
     const unsubscribe =

@@ -240,13 +240,20 @@ class AppControllerContractTests(unittest.TestCase):
         )
 
         self.assertNotIn("recoverInterruptedTransaction", reload_engine)
-        recovery = bring_current.index(
-            "[self.engine recoverInterruptedTransaction:&recovered error:error]"
+        self.assertIn("reconcileSelectedTheme:&recovered", bring_current)
+        self.assertNotIn("[self.engine apply:", bring_current)
+        self.assertNotIn("[self.engine restore:", bring_current)
+        engine = ENGINE.read_text(encoding="utf-8")
+        reconcile = self._function(
+            engine,
+            "- (OreoCursorEngine *)reconcileSelectedTheme:",
+            "- (BOOL)recoverInterruptedTransaction:",
         )
-        desired = bring_current.index("BOOL desired =", recovery)
+        recovery = reconcile.index("recoverInterruptedTransactionLocked:")
+        desired = reconcile.index("BOOL desired =", recovery)
         self.assertLess(recovery, desired)
-        recovered_branch = bring_current.index("if (recovered) {", recovery)
-        self.assertIn("return YES;", bring_current[recovered_branch:desired])
+        recovered_branch = reconcile.index("if (recovered) {", recovery)
+        self.assertIn("} else {", reconcile[recovered_branch:desired])
 
     def test_invalid_selected_theme_still_recovers_and_restores(self) -> None:
         helper = HELPER.read_text(encoding="utf-8")
@@ -263,9 +270,15 @@ class AppControllerContractTests(unittest.TestCase):
 
         self.assertIn("return candidate.supported;", reload_engine)
         self.assertNotIn("!candidate.themeValid", reload_engine)
-        recovery = bring_current.index("recoverInterruptedTransaction:")
-        invalid = bring_current.index("if (!self.engine.themeValid)")
-        restore = bring_current.index("[self.engine restore:error]", invalid)
+        self.assertIn("reconcileSelectedTheme:&recovered", bring_current)
+        reconcile = self._function(
+            ENGINE.read_text(encoding="utf-8"),
+            "- (OreoCursorEngine *)reconcileSelectedTheme:",
+            "- (BOOL)recoverInterruptedTransaction:",
+        )
+        recovery = reconcile.index("recoverInterruptedTransactionLocked:")
+        invalid = reconcile.index("if (!current.themeValid || !desired)")
+        restore = reconcile.index("[current restoreLocked:&localError]", invalid)
         self.assertLess(recovery, invalid)
         self.assertLess(invalid, restore)
 
@@ -551,10 +564,60 @@ class AppControllerContractTests(unittest.TestCase):
             "- (BOOL)bringStateCurrent:(NSError **)error",
             "- (void)applicationDidFinishLaunching:",
         )
-        self.assertIn("[OreoCursorEngine effectiveSizePercentage]", bring_current)
-        self.assertIn(
-            "self.engine.themeSizePercentage != expectedSize", bring_current
+        self.assertIn("reconcileSelectedTheme:&recovered", bring_current)
+        reconcile = self._function(
+            engine,
+            "- (OreoCursorEngine *)reconcileSelectedTheme:",
+            "- (BOOL)recoverInterruptedTransaction:",
         )
+        lock = reconcile.index("acquireOperationLock:")
+        selection = reconcile.index("selectedThemeIdentifierForResourceBundle:")
+        size = reconcile.index("[OreoCursorEngine effectiveSizePercentage]")
+        action = reconcile.index("[current refreshIfNeededLocked:")
+        unlock = reconcile.index("releaseOperationLock:")
+        self.assertLess(lock, selection)
+        self.assertLess(selection, size)
+        self.assertLess(size, action)
+        self.assertLess(action, unlock)
+        self.assertIn("current.themeSizePercentage != expectedSize", reconcile)
+
+        persist = self._function(
+            engine,
+            "- (BOOL)persistAppliedState:",
+            "- (BOOL)loadPrivateAPI:",
+        )
+        self.assertLess(
+            persist.index("setObject:self.themeIdentifier"),
+            persist.index("persistDesiredState:YES"),
+        )
+        self.assertIn("id previousSelection =", persist)
+
+    def test_prior_boot_recovery_precedes_snapshot_validation(self) -> None:
+        engine = ENGINE.read_text(encoding="utf-8")
+        discard = self._function(
+            engine,
+            "- (BOOL)discardPreviousBootState:",
+            "- (OreoCursorEngine *)reconcileSelectedTheme:",
+        )
+        self.assertIn("initWithUUIDString:activeBoot", discard)
+        self.assertIn("!recordedBoot || !currentBoot", discard)
+        self.assertIn("[recordedBoot isEqual:currentBoot]", discard)
+        self.assertNotIn("loadValidSnapshot:", discard)
+        self.assertNotIn("bestEffortSystemReset", discard)
+        self.assertLess(
+            discard.index("removeItemIfPresentAtURL:_snapshotURL"),
+            discard.index("persistDesiredState:"),
+        )
+        for start, end in [
+            ("- (BOOL)recoverInterruptedTransactionLocked:", "- (BOOL)apply:"),
+            ("- (BOOL)applyLocked:", "- (BOOL)restore:"),
+            ("- (BOOL)restoreLocked:", "- (BOOL)refreshIfNeeded:"),
+        ]:
+            operation = self._function(engine, start, end)
+            self.assertLess(
+                operation.index("discardPreviousBootState:error"),
+                operation.index("loadValidSnapshot:"),
+            )
 
     def test_native_window_reloads_same_theme_when_its_size_changes(self) -> None:
         delegate = APP_DELEGATE.read_text(encoding="utf-8")
