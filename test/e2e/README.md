@@ -9,6 +9,15 @@ packaged-native smoke. The normal command builds a fresh Forge artifact
 npm run test:e2e
 ```
 
+Packaged-app CDP connections must use
+`chromium.connectOverCDP(url, { noDefaults: true })`. Playwright otherwise
+overrides the attached renderer's media preferences, including a default light
+color scheme. That can turn a running app light despite its System preference
+and a dark desktop. The option preserves the app's native media and focus
+behavior; it is also required for ad hoc inspection of the installed app. Use
+explicit media emulation only in isolated tests that need it. The Linux smoke
+checks that System mode's rendered appearance matches the desktop signal.
+
 The UI suite runs on macOS and Linux. To run it against an existing renderer
 archive, set `CURSOR_ATELIER_ASAR` to its `Contents/Resources/app.asar` (macOS)
 or `resources/app.asar` (Linux) path:

@@ -167,7 +167,7 @@ async function launchPackage() {
         { timeout: 20_000 },
       )
       .toBe(true);
-    browser = await chromium.connectOverCDP(debugUrl);
+    browser = await chromium.connectOverCDP(debugUrl, { noDefaults: true });
     const context = browser.contexts()[0];
     await expect.poll(() => context.pages().length).toBeGreaterThan(0);
     const page = context.pages()[0];
@@ -194,6 +194,34 @@ async function launchPackage() {
 
 test.describe("Linux packaged integration", () => {
   test.skip(process.platform !== "linux", "Requires the Linux package.");
+
+  test("preserves the desktop appearance when attaching over CDP", async () => {
+    const launch = await launchPackage();
+    try {
+      const { page } = launch;
+      const systemAppearance = await page.evaluate(() =>
+        window.electronAPI.getSystemAppearance(),
+      );
+      expect(["light", "dark"]).toContain(systemAppearance);
+      await expect
+        .poll(() =>
+          page.evaluate(() => ({
+            mode: window.electronAPI.getAppAppearanceMode(),
+            media: matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light",
+            document: document.documentElement.style.colorScheme,
+          })),
+        )
+        .toEqual({
+          mode: "system",
+          media: systemAppearance,
+          document: systemAppearance,
+        });
+    } finally {
+      await launch.cleanup();
+    }
+  });
 
   test("ships a self-contained converter and no converted cursor corpus", () => {
     expect(

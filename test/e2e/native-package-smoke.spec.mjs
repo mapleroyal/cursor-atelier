@@ -170,7 +170,7 @@ async function launchPackagedApp({
         { timeout: 15_000 },
       )
       .toBe(true);
-    browser = await chromium.connectOverCDP(debugUrl);
+    browser = await chromium.connectOverCDP(debugUrl, { noDefaults: true });
     const context = browser.contexts()[0];
     await expect.poll(() => context.pages().length).toBeGreaterThan(0);
     const page = context.pages()[0];
