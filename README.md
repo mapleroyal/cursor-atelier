@@ -149,7 +149,10 @@ cursor-persistence requirement. Linux application data normally lives in
 directory overrides are respected. Cursor application state is stored in
 `linux-cursors/state.json`, and generated themes use owned `~/.icons/cursor-atelier-*`
 directories. On Omarchy an owned `theme-set.d/cursor-atelier` hook reapplies the
-selected cursor after desktop theme changes and is removed by Restore. Quit stops background appearance changes;
+selected cursor after desktop theme changes and is removed by Restore. The hook
+starts the app through the systemd user manager, so theme changes finish even
+when the app was closed. The background app receives the desktop session's
+environment and keeps its output in the user journal. Quit stops background appearance changes;
 the installed cursor theme remains selected until Restore or another desktop
 setting changes it. Some already-open applications cache cursors and may need
 to be reopened after a theme change.

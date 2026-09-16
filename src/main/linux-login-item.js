@@ -53,7 +53,11 @@ export function createLinuxLoginItem({
   );
   const hookMarker = "# Cursor Atelier managed theme hook";
   const shellExecutable = `'${executablePath.replaceAll("'", "'\\''")}'`;
-  const hook = `#!/bin/sh\n${hookMarker}\nexec ${shellExecutable} --background\n`;
+  // Omarchy waits for theme hooks. A cold --background launch stays running,
+  // so start it through the desktop's user manager instead. A transient service
+  // also keeps theme-operation pipes, process groups, and environment out of
+  // the resident app. Repeated launches still reach Electron's single instance.
+  const hook = `#!/bin/sh\n${hookMarker}\nexec systemd-run --user --collect --quiet --property=Type=exec --expand-environment=no -- ${shellExecutable} --background\n`;
   const content = [
     "[Desktop Entry]",
     "Type=Application",
