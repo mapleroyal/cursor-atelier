@@ -68,6 +68,7 @@ import {
 import { createCuratedVariantInstaller } from "./main/curated-variant-installer";
 import { createMainLoginItemReconciler } from "./main/main-login-item-reconciler";
 import { createLinuxLoginItem } from "./main/linux-login-item";
+import { createLinuxCursorReconciler } from "./main/linux-cursor-reconciler";
 import { createLinuxSystemAppearance } from "./main/linux-system-appearance";
 import { createOnboardingStore } from "./main/onboarding-store";
 import { broadcastToRendererWindows } from "./main/renderer-broadcast";
@@ -899,6 +900,7 @@ async function startApplication() {
   let automation = null;
   let mainLoginItemReconciler = null;
   let linuxLoginItem = null;
+  let linuxCursorReconciler = null;
   let cursorDesiredEnabled = false;
   const shouldRegisterLoginItem = (preferences) =>
     shouldRegisterMainAppLoginItem(preferences) ||
@@ -1283,6 +1285,25 @@ async function startApplication() {
       console.error(`Cursor automation failed (${reason}).`, error);
     },
   });
+  if (backgroundRegistrationAvailable && process.platform === "linux") {
+    linuxCursorReconciler = createLinuxCursorReconciler({
+      reconcile: ({ selectAppearance }) =>
+        automation.runExclusive(() =>
+          selectAppearance
+            ? reconcileCursorAtLogin({
+                bridge,
+                preferencesStore,
+                getSystemAppearance,
+              })
+            : bridge.reconcileLoginItems(),
+        ),
+      onReconciled: (status) =>
+        notifyCursorChanged({ reason: "desktop-theme", status }),
+      onError: (error) =>
+        console.error("Could not reconcile the desktop cursor.", error),
+    });
+    linuxCursorReconciler.start();
+  }
   if (backgroundRegistrationAvailable) {
     // Start update reconciliation immediately so later cursor mutations queue
     // behind it, but do not keep an interactive launch from showing its shell
@@ -1304,6 +1325,7 @@ async function startApplication() {
           "Could not reconcile Cursor Atelier’s installed login helper.",
           error,
         );
+        linuxCursorReconciler?.request({ selectAppearance: backgroundLaunch });
       });
   }
 
@@ -1568,13 +1590,7 @@ async function startApplication() {
     curatedFamilyService,
     curatedCatalogSha256: CURATED_FAMILY_CATALOG.sha256,
     reconcileDesktopCursor: () =>
-      automation.runExclusive(() =>
-        reconcileCursorAtLogin({
-          bridge,
-          preferencesStore,
-          getSystemAppearance,
-        }),
-      ),
+      linuxCursorReconciler?.request({ selectAppearance: true }),
   };
 
   ipcMain.handle(
@@ -1667,7 +1683,12 @@ async function startApplication() {
 
   const handleNativeThemeUpdated = () => syncWindowBackgrounds();
   const handleSystemAppearanceUpdated = notifySystemAppearanceChanged;
-  const handleWake = () => void automation.wake();
+  const handleWake = () => {
+    void automation.wake();
+    // Appearance automation can have no assigned cursor. Reconcile the saved
+    // direct selection too, after wake/monitor reconfiguration has settled.
+    linuxCursorReconciler?.request();
+  };
   nativeTheme.on("updated", handleNativeThemeUpdated);
   powerMonitor.on("resume", handleWake);
   powerMonitor.on("unlock-screen", handleWake);
@@ -1695,6 +1716,7 @@ async function startApplication() {
       stopping = true;
       windowLifecycle?.beginQuit();
       automation.stop();
+      linuxCursorReconciler?.stop();
       libraryPreferencesReconciler.stop();
       themeSizeCleanupReconciler.stop();
       mainLoginItemReconciler.stop();
@@ -1807,14 +1829,7 @@ if (app.requestSingleInstanceLock()) {
   }
   app.on("second-instance", (_event, arguments_) => {
     if (process.platform === "linux" && arguments_.includes("--background")) {
-      void runtime
-        ?.reconcileDesktopCursor()
-        .then((status) =>
-          notifyCursorChanged({ reason: "desktop-theme", status }),
-        )
-        .catch((error) =>
-          console.error("Could not reconcile the desktop cursor.", error),
-        );
+      runtime?.reconcileDesktopCursor();
       return;
     }
     requestMainWindow();

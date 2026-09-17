@@ -175,15 +175,25 @@ export function createLinuxCursorBackend({
   const transaction = async (operation) => {
     const previousState = structuredClone(state);
     const snapshot = await desktop.capture();
-    // If Hyprland was already applying our theme, its inherited environment
-    // still names the original cursor. Recovery must restore the live theme.
+    // A config reload can reset Hyprland's environment size while our cursor
+    // remains selected at its applied size. Environment is not a reliable
+    // visual snapshot in that case: rollback must not shrink our owned cursor.
     if (
       desktop.kind === "hyprland" &&
       previousState.effectiveTheme &&
-      (await desktop.matches(previousState.effectiveTheme))
+      previousState.effectiveTheme.session === desktop.session &&
+      snapshot.theme === previousState.effectiveTheme.name &&
+      snapshot.size === previousState.effectiveTheme.size &&
+      snapshot.compositorTheme === previousState.effectiveTheme.name
     ) {
       snapshot.compositorTheme = previousState.effectiveTheme.name;
       snapshot.compositorSize = previousState.effectiveTheme.size;
+      snapshot.cursorEnvironment = {
+        XCURSOR_THEME: snapshot.compositorTheme,
+        XCURSOR_SIZE: String(snapshot.compositorSize),
+        HYPRCURSOR_THEME: snapshot.compositorTheme,
+        HYPRCURSOR_SIZE: String(snapshot.compositorSize),
+      };
     }
     await save({ ...state, transaction: { snapshot, previousState } });
     try {
@@ -385,6 +395,7 @@ export function createLinuxCursorBackend({
         ) {
           return apply(state.selectedThemeIdentifier);
         }
+        lastError = null;
         return status();
       }
       case "--open-login-settings":
