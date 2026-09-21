@@ -1,3 +1,8 @@
+import { securePrivateDirectory } from "./main/platform-filesystem.js";
+import {
+  createWindowsLoginItem,
+  getWindowsCursorLoginStatus,
+} from "./main/windows-login-item.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +17,7 @@ import {
   powerMonitor,
   protocol,
   session,
+  screen,
   shell,
   systemPreferences,
   Tray,
@@ -68,6 +74,7 @@ import {
 import { createCuratedVariantInstaller } from "./main/curated-variant-installer";
 import { createMainLoginItemReconciler } from "./main/main-login-item-reconciler";
 import { createLinuxLoginItem } from "./main/linux-login-item";
+import { createDesktopCursorReconciler } from "./main/desktop-cursor-reconciler";
 import { createLinuxCursorReconciler } from "./main/linux-cursor-reconciler";
 import { createLinuxSystemAppearance } from "./main/linux-system-appearance";
 import { createOnboardingStore } from "./main/onboarding-store";
@@ -114,12 +121,15 @@ const applicationDataRoot =
   userDataOverride ?? path.join(app.getPath("appData"), "Cursor Atelier");
 fs.mkdirSync(applicationDataRoot, { recursive: true, mode: 0o700 });
 app.setPath("userData", applicationDataRoot);
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.cursoratelier.CursorAtelier");
+}
 const buildInfoPath = path.join(process.resourcesPath, "build-info.json");
-const linuxPackagedRuntime =
-  process.platform === "linux" &&
+const desktopPackagedRuntime =
+  ["linux", "win32"].includes(process.platform) &&
   app.isPackaged &&
   fs.existsSync(buildInfoPath);
-const buildInfo = linuxPackagedRuntime
+const buildInfo = desktopPackagedRuntime
   ? JSON.parse(fs.readFileSync(buildInfoPath, "utf8"))
   : null;
 const installationCheckPath = process.argv
@@ -137,7 +147,7 @@ if (
 }
 const runtimeIdentityPath = path.join(applicationDataRoot, "runtime.json");
 function writeRuntimeIdentity(rendererReady = false) {
-  if (!linuxPackagedRuntime) {
+  if (!desktopPackagedRuntime) {
     return;
   }
   const identity = {
@@ -190,6 +200,12 @@ function getWindowBackgroundColor() {
 }
 
 function getSystemAppearance() {
+  if (process.platform === "win32") {
+    lastSystemAppearance = nativeTheme.shouldUseDarkColorsForSystemIntegratedUI
+      ? "dark"
+      : "light";
+    return lastSystemAppearance;
+  }
   if (process.platform !== "darwin") {
     lastSystemAppearance =
       linuxSystemAppearance?.get() ??
@@ -370,8 +386,8 @@ function createWindow({ showWhenReady = true } = {}) {
   const mainWindow = new BrowserWindow({
     width: 1080,
     height: 760,
-    minWidth: process.platform === "linux" ? 320 : 760,
-    minHeight: process.platform === "linux" ? 480 : 560,
+    minWidth: process.platform !== "darwin" ? 320 : 760,
+    minHeight: process.platform !== "darwin" ? 480 : 560,
     show: false,
     title: "Cursor Atelier",
     ...(process.platform === "darwin"
@@ -385,7 +401,7 @@ function createWindow({ showWhenReady = true } = {}) {
                 "native",
                 "cursor-packs",
                 "build",
-                "linux",
+                process.platform === "win32" ? "windows" : "linux",
                 "AppIcon.png",
               ),
         }),
@@ -556,7 +572,7 @@ function installApplicationMenu() {
 
 function createMenuBarIcon() {
   const iconPath =
-    process.platform === "linux"
+    process.platform !== "darwin"
       ? app.isPackaged
         ? path.join(process.resourcesPath, "AppIcon.png")
         : path.join(
@@ -564,7 +580,7 @@ function createMenuBarIcon() {
             "native",
             "cursor-packs",
             "build",
-            "linux",
+            process.platform === "win32" ? "windows" : "linux",
             "AppIcon.png",
           )
       : app.isPackaged
@@ -708,12 +724,14 @@ function curatedConverterInvocation() {
       command: path.join(
         process.resourcesPath,
         "curated-cursor-converter",
-        "curated-cursor-converter",
+        process.platform === "win32"
+          ? "curated-cursor-converter.exe"
+          : "curated-cursor-converter",
       ),
       commandArguments: [],
     };
   }
-  if (process.platform === "linux") {
+  if (["linux", "win32"].includes(process.platform)) {
     return {
       command: path.join(
         app.getAppPath(),
@@ -722,7 +740,9 @@ function curatedConverterInvocation() {
         "build",
         "curated-converter",
         "curated-cursor-converter",
-        "curated-cursor-converter",
+        process.platform === "win32"
+          ? "curated-cursor-converter.exe"
+          : "curated-cursor-converter",
       ),
       commandArguments: [],
     };
@@ -867,6 +887,10 @@ async function chooseDataImportPath(event) {
 }
 
 async function startApplication() {
+  // Only the primary application secures storage. Secondary quit/open requests
+  // must reach the existing instance without running permission mutations.
+  // This also puts initialization errors through the startup rejection handler.
+  securePrivateDirectory(applicationDataRoot);
   const importedPacksRoot = path.join(app.getPath("userData"), "ImportedPacks");
   await fs.promises.mkdir(importedPacksRoot, {
     recursive: true,
@@ -900,11 +924,13 @@ async function startApplication() {
   let automation = null;
   let mainLoginItemReconciler = null;
   let linuxLoginItem = null;
-  let linuxCursorReconciler = null;
+  const windowsLoginItem =
+    process.platform === "win32" ? createWindowsLoginItem({ app }) : null;
+  let desktopCursorReconciler = null;
   let cursorDesiredEnabled = false;
   const shouldRegisterLoginItem = (preferences) =>
     shouldRegisterMainAppLoginItem(preferences) ||
-    (process.platform === "linux" && cursorDesiredEnabled);
+    (["linux", "win32"].includes(process.platform) && cursorDesiredEnabled);
   const persistPendingThemeSizeCleanup = (identifiers) => {
     const pending = preferencesStore.getPendingThemeSizeCleanupIds();
     const seen = new Set(pending.map((identifier) => identifier.toLowerCase()));
@@ -923,14 +949,28 @@ async function startApplication() {
     importedPacksRoot,
     linuxStateDirectory:
       process.platform === "linux" &&
-      (MAIN_WINDOW_VITE_DEV_SERVER_URL || linuxPackagedRuntime)
+      (MAIN_WINDOW_VITE_DEV_SERVER_URL || desktopPackagedRuntime)
         ? path.join(applicationDataRoot, "linux-cursors")
+        : null,
+    windowsStateDirectory:
+      process.platform === "win32" &&
+      (MAIN_WINDOW_VITE_DEV_SERVER_URL || desktopPackagedRuntime)
+        ? path.join(applicationDataRoot, "windows-cursors")
         : null,
     onStatus: (status) => {
       cursorDesiredEnabled = status.desiredEnabled === true;
       mainLoginItemReconciler?.sync(
         shouldRegisterLoginItem(preferencesStore.get()),
       );
+      if (windowsLoginItem) {
+        Object.assign(
+          status,
+          getWindowsCursorLoginStatus(
+            status,
+            windowsLoginItem.getLoginItemSettings(),
+          ),
+        );
+      }
       if (process.env.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION !== "1") {
         try {
           linuxLoginItem?.syncCursorHook(cursorDesiredEnabled);
@@ -1199,13 +1239,15 @@ async function startApplication() {
   const backgroundRegistrationAvailable = Boolean(
     app.isPackaged &&
     (process.platform === "darwin" ||
-      (linuxPackagedRuntime && linuxLoginItem?.available)) &&
+      (desktopPackagedRuntime &&
+        (windowsLoginItem || linuxLoginItem?.available))) &&
     bridge.nativePath &&
     process.env.CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION !== "1",
   );
   backgroundLaunch =
-    process.platform === "linux" && process.argv.includes("--background");
-  if (process.platform === "linux") {
+    ["linux", "win32"].includes(process.platform) &&
+    process.argv.includes("--background");
+  if (["linux", "win32"].includes(process.platform)) {
     await bridge.status();
   }
   let loginItemReconciliation = Promise.resolve();
@@ -1221,17 +1263,19 @@ async function startApplication() {
   mainLoginItemReconciler = createMainLoginItemReconciler({
     available: backgroundRegistrationAvailable,
     setLoginItemSettings: (settings) =>
-      linuxLoginItem
-        ? linuxLoginItem.setLoginItemSettings(settings)
+      windowsLoginItem || linuxLoginItem
+        ? (windowsLoginItem || linuxLoginItem).setLoginItemSettings(settings)
         : app.setLoginItemSettings(settings),
     getLoginItemSettings: (settings) =>
-      linuxLoginItem
-        ? linuxLoginItem.getLoginItemSettings(settings)
+      windowsLoginItem || linuxLoginItem
+        ? (windowsLoginItem || linuxLoginItem).getLoginItemSettings(settings)
         : app.getLoginItemSettings(settings),
     onUnsatisfied: ({ desired, status }) => {
       if (desired && status === "requires-approval") {
         console.warn(
-          "Cursor Atelier’s background launch requires approval in macOS Login Items.",
+          process.platform === "win32"
+            ? "Cursor Atelier's background launch is disabled in Windows Startup Apps."
+            : "Cursor Atelier's background launch requires approval in macOS Login Items.",
         );
       } else {
         console.error(
@@ -1285,8 +1329,15 @@ async function startApplication() {
       console.error(`Cursor automation failed (${reason}).`, error);
     },
   });
-  if (backgroundRegistrationAvailable && process.platform === "linux") {
-    linuxCursorReconciler = createLinuxCursorReconciler({
+  if (
+    backgroundRegistrationAvailable &&
+    ["linux", "win32"].includes(process.platform)
+  ) {
+    const createReconciler =
+      process.platform === "linux"
+        ? createLinuxCursorReconciler
+        : createDesktopCursorReconciler;
+    desktopCursorReconciler = createReconciler({
       reconcile: ({ selectAppearance }) =>
         automation.runExclusive(() =>
           selectAppearance
@@ -1302,7 +1353,7 @@ async function startApplication() {
       onError: (error) =>
         console.error("Could not reconcile the desktop cursor.", error),
     });
-    linuxCursorReconciler.start();
+    desktopCursorReconciler.start?.();
   }
   if (backgroundRegistrationAvailable) {
     // Start update reconciliation immediately so later cursor mutations queue
@@ -1310,7 +1361,7 @@ async function startApplication() {
     // while ServiceManagement replaces or re-registers an older helper.
     loginItemReconciliation = automation
       .runExclusive(() =>
-        process.platform === "linux" && backgroundLaunch
+        ["linux", "win32"].includes(process.platform) && backgroundLaunch
           ? reconcileCursorAtLogin({
               bridge,
               preferencesStore,
@@ -1325,7 +1376,9 @@ async function startApplication() {
           "Could not reconcile Cursor Atelier’s installed login helper.",
           error,
         );
-        linuxCursorReconciler?.request({ selectAppearance: backgroundLaunch });
+        desktopCursorReconciler?.request({
+          selectAppearance: backgroundLaunch,
+        });
       });
   }
 
@@ -1590,7 +1643,7 @@ async function startApplication() {
     curatedFamilyService,
     curatedCatalogSha256: CURATED_FAMILY_CATALOG.sha256,
     reconcileDesktopCursor: () =>
-      linuxCursorReconciler?.request({ selectAppearance: true }),
+      desktopCursorReconciler?.request({ selectAppearance: true }),
   };
 
   ipcMain.handle(
@@ -1681,14 +1734,30 @@ async function startApplication() {
   syncTray(initialPreferences);
   installApplicationMenu();
 
-  const handleNativeThemeUpdated = () => syncWindowBackgrounds();
+  const handleNativeThemeUpdated = () => {
+    syncWindowBackgrounds();
+    if (process.platform === "win32") {
+      notifySystemAppearanceChanged();
+      // Windows can reload pointer handles with a theme or accessibility change.
+      // Restore the saved selection after appearance automation has queued.
+      desktopCursorReconciler?.request();
+    }
+  };
   const handleSystemAppearanceUpdated = notifySystemAppearanceChanged;
   const handleWake = () => {
     void automation.wake();
     // Appearance automation can have no assigned cursor. Reconcile the saved
     // direct selection too, after wake/monitor reconfiguration has settled.
-    linuxCursorReconciler?.request();
+    desktopCursorReconciler?.request();
   };
+  const handleDisplayChanged = () => desktopCursorReconciler?.request();
+  const windowsDisplayEvents =
+    process.platform === "win32"
+      ? ["display-added", "display-removed", "display-metrics-changed"]
+      : [];
+  for (const event of windowsDisplayEvents) {
+    screen.on(event, handleDisplayChanged);
+  }
   nativeTheme.on("updated", handleNativeThemeUpdated);
   powerMonitor.on("resume", handleWake);
   powerMonitor.on("unlock-screen", handleWake);
@@ -1716,7 +1785,7 @@ async function startApplication() {
       stopping = true;
       windowLifecycle?.beginQuit();
       automation.stop();
-      linuxCursorReconciler?.stop();
+      desktopCursorReconciler?.stop();
       libraryPreferencesReconciler.stop();
       themeSizeCleanupReconciler.stop();
       mainLoginItemReconciler.stop();
@@ -1725,6 +1794,9 @@ async function startApplication() {
       disposeAppAppearanceIpc();
       unsubscribePreferences();
       nativeTheme.off("updated", handleNativeThemeUpdated);
+      for (const event of windowsDisplayEvents) {
+        screen.off(event, handleDisplayChanged);
+      }
       linuxSystemAppearance?.stop();
       powerMonitor.off("resume", handleWake);
       powerMonitor.off("unlock-screen", handleWake);
@@ -1738,7 +1810,7 @@ async function startApplication() {
       tray?.destroy();
       tray = null;
       runtime = null;
-      if (linuxPackagedRuntime) {
+      if (desktopPackagedRuntime) {
         try {
           if (
             JSON.parse(fs.readFileSync(runtimeIdentityPath, "utf8")).pid ===
@@ -1765,7 +1837,7 @@ async function startApplication() {
   applicationStarted = true;
   if (
     backgroundLaunch &&
-    process.platform === "linux" &&
+    ["linux", "win32"].includes(process.platform) &&
     !shouldRegisterMainAppLoginItem(initialPreferences)
   ) {
     await loginItemReconciliation;
@@ -1823,12 +1895,28 @@ async function startApplication() {
 }
 
 if (app.requestSingleInstanceLock()) {
+  if (
+    process.platform === "win32" &&
+    process.argv.includes("--quit-for-update")
+  ) {
+    app.exit(0);
+  }
   if (process.platform === "linux") {
     process.on("SIGTERM", () => app.quit());
     process.on("SIGINT", () => app.quit());
   }
   app.on("second-instance", (_event, arguments_) => {
-    if (process.platform === "linux" && arguments_.includes("--background")) {
+    if (
+      process.platform === "win32" &&
+      arguments_.includes("--quit-for-update")
+    ) {
+      app.quit();
+      return;
+    }
+    if (
+      ["linux", "win32"].includes(process.platform) &&
+      arguments_.includes("--background")
+    ) {
       runtime?.reconcileDesktopCursor();
       return;
     }

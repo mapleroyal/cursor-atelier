@@ -72,7 +72,9 @@ describe("app data archive", () => {
         temporaryRoot: root,
       }),
     ).resolves.toBe(canonicalDestination);
-    expect(fs.statSync(destination).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(fs.statSync(destination).mode & 0o777).toBe(0o600);
+    }
 
     const extracted = await extractAppDataArchive({
       archivePath: destination,

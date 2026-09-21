@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterable
 import build_all
 import oreo_recipe
 import xcursor_encoder
+import windows_cursor_encoder
 from PIL import Image, __version__ as PILLOW_VERSION
 
 
@@ -53,7 +54,7 @@ def _emit(event: str, **values: Any) -> None:
 
 
 def catalog_document() -> dict[str, Any]:
-    document = json.loads(CATALOG_PATH.read_text())
+    document = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     families = document.get("families")
     if (
         document.get("schemaVersion") != 1
@@ -126,6 +127,7 @@ def self_test_document() -> dict[str, Any]:
         "roleCount": len(build_all.MAC_CURSOR_IDENTIFIERS),
         "pillowVersion": PILLOW_VERSION,
         "xcursorEncoderVersion": xcursor_encoder.self_test(),
+        "windowsEncoder": windows_cursor_encoder.self_test(),
     }
 
 
@@ -449,6 +451,9 @@ def _parser() -> argparse.ArgumentParser:
     encode = subparsers.add_parser("encode-xcursor")
     encode.add_argument("--manifest", type=Path, required=True)
     encode.add_argument("--output-root", type=Path, required=True)
+    encode_windows = subparsers.add_parser("encode-windows")
+    encode_windows.add_argument("--manifest", type=Path, required=True)
+    encode_windows.add_argument("--output-root", type=Path, required=True)
     command = subparsers.add_parser("convert")
     command.add_argument("--source-root", type=Path, required=True)
     command.add_argument("--output-root", type=Path, required=True)
@@ -474,6 +479,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "encode-xcursor":
             xcursor_encoder.encode_theme(args.manifest, args.output_root)
+            return 0
+        if args.command == "encode-windows":
+            windows_cursor_encoder.encode_theme(args.manifest, args.output_root)
             return 0
         convert(
             source_root=args.source_root,

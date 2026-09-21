@@ -53,7 +53,9 @@ describe("Linux installed background integration", () => {
     item.setLoginItemSettings({ openAtLogin: true });
     item.syncCursorHook(true);
     expect(item.getLoginItemSettings().status).toBe("enabled");
-    expect(fs.statSync(hook).mode & 0o111).toBeGreaterThan(0);
+    if (process.platform !== "win32") {
+      expect(fs.statSync(hook).mode & 0o111).toBeGreaterThan(0);
+    }
     fs.appendFileSync(desktop, "Hidden=true\n");
     const updated = createLinuxLoginItem({ ...options, buildVersion: "2" });
     updated.setLoginItemSettings({ openAtLogin: true });

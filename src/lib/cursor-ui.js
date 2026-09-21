@@ -301,7 +301,9 @@ export function getCursorErrorMessage(error) {
 export async function restoreCursorState() {
   const restore = window.electronAPI?.restoreCursorState;
   if (typeof restore !== "function") {
-    throw new Error("Restoring the macOS cursor is unavailable in this build.");
+    throw new Error(
+      "Restoring the system cursor is unavailable in this build.",
+    );
   }
   return restore();
 }

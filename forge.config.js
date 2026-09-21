@@ -17,12 +17,14 @@ if (Number(process.versions.node.split(".")[0]) !== 22) {
 }
 const rootDirectory = __dirname;
 const isMac = process.platform === "darwin";
-const linuxAssetsDirectory = path.join(
+const isWindows = process.platform === "win32";
+const windowsPackage = require("./scripts/windows-package.cjs");
+const platformAssetsDirectory = path.join(
   rootDirectory,
   "native",
   "cursor-packs",
   "build",
-  "linux",
+  isWindows ? "windows" : "linux",
 );
 const {
   applicationId,
@@ -59,7 +61,7 @@ const curatedConverterDirectory = path.join(
 );
 const curatedConverterPath = path.join(
   curatedConverterDirectory,
-  "curated-cursor-converter",
+  isWindows ? "curated-cursor-converter.exe" : "curated-cursor-converter",
 );
 const electronEntitlementsPath = path.join(
   rootDirectory,
@@ -141,6 +143,8 @@ function verifyCuratedConverter(executable, arch) {
   fs.accessSync(executable, fs.constants.X_OK);
   if (process.platform === "linux") {
     verifyElf(executable, arch);
+  } else if (process.platform === "win32") {
+    windowsPackage.verifyPe(executable, arch);
   } else {
     const expectedArchitecture = arch === "x64" ? "x86_64" : arch;
     const architectures = execFileSync(
@@ -285,6 +289,17 @@ function electronSignOptions(filePath) {
 }
 
 function verifyPackagedApp(_forgeConfig, { arch, platform, outputPaths }) {
+  if (platform === "win32") {
+    for (const outputPath of outputPaths) {
+      windowsPackage.verifyWindowsPackage(outputPath, { checkManifest: false });
+      fs.writeFileSync(
+        path.join(outputPath, "resources", "install-manifest.json"),
+        JSON.stringify(windowsPackage.packageInventory(outputPath)),
+      );
+      windowsPackage.verifyWindowsPackage(outputPath, { selfTest: false });
+    }
+    return;
+  }
   if (platform === "linux") {
     for (const outputPath of outputPaths) {
       verifyLinuxPackage(outputPath, { checkManifest: false });
@@ -577,13 +592,13 @@ function runPackagePreflight(forgeConfig, platform, arch) {
       "Build on the target OS and architecture so the frozen converter and native dependencies match Electron.",
     );
   }
-  if (platform === "linux") {
+  if (platform === "linux" || platform === "win32") {
     execFileSync(
       process.execPath,
       [path.join(rootDirectory, "scripts", "native-build.mjs")],
       { cwd: rootDirectory, stdio: "inherit" },
     );
-    const identityPath = path.join(linuxAssetsDirectory, "build-info.json");
+    const identityPath = path.join(platformAssetsDirectory, "build-info.json");
     const previous = fs.existsSync(identityPath)
       ? BigInt(JSON.parse(fs.readFileSync(identityPath, "utf8")).buildVersion)
       : 0n;
@@ -603,7 +618,14 @@ function runPackagePreflight(forgeConfig, platform, arch) {
       identityPath,
       `${JSON.stringify({ applicationId, version: productVersion, buildVersion, platform, arch }, null, 2)}\n`,
     );
-    forgeConfig.packagerConfig.buildVersion = buildVersion;
+    // PE FileVersion uses four 16-bit components; the resource manifest keeps
+    // the full monotonic build identity shared with the running application.
+    forgeConfig.packagerConfig.buildVersion =
+      platform === "win32"
+        ? [48n, 32n, 16n, 0n]
+            .map((shift) => String((BigInt(buildVersion) >> shift) & 65535n))
+            .join(".")
+        : buildVersion;
     verifyCuratedConverter(curatedConverterPath, arch);
     return;
   }
@@ -661,7 +683,10 @@ module.exports = {
           path.join(rootDirectory, "assets", "AppIcon.icon"),
           path.join(rootDirectory, "assets", "AppIcon.icns"),
         ]
-      : path.join(linuxAssetsDirectory, "AppIcon.png"),
+      : path.join(
+          platformAssetsDirectory,
+          isWindows ? "AppIcon.ico" : "AppIcon.png",
+        ),
     extendInfo: {
       LSMinimumSystemVersion: "13.0",
       NSAppTransportSecurity: {
@@ -689,8 +714,11 @@ module.exports = {
       curatedConverterDirectory,
       ...(!isMac
         ? [
-            path.join(linuxAssetsDirectory, "AppIcon.png"),
-            path.join(linuxAssetsDirectory, "build-info.json"),
+            path.join(platformAssetsDirectory, "AppIcon.png"),
+            ...(isWindows
+              ? [path.join(platformAssetsDirectory, "AppIcon.ico")]
+              : []),
+            path.join(platformAssetsDirectory, "build-info.json"),
           ]
         : []),
     ],
@@ -699,10 +727,17 @@ module.exports = {
   rebuildConfig: {},
   hooks: {
     preStart: () => {
+      if (process.platform === "win32") {
+        execFileSync(
+          process.execPath,
+          [path.join(rootDirectory, "scripts", "native-build.mjs")],
+          { cwd: rootDirectory, stdio: "inherit", windowsHide: true },
+        );
+      }
       if (process.platform === "linux") {
         const script =
           fs.existsSync(curatedConverterPath) &&
-          fs.existsSync(path.join(linuxAssetsDirectory, "AppIcon.png"))
+          fs.existsSync(path.join(platformAssetsDirectory, "AppIcon.png"))
             ? "linux-preflight.mjs"
             : "native-build.mjs";
         execFileSync(
@@ -718,7 +753,7 @@ module.exports = {
   makers: [
     {
       name: "@electron-forge/maker-zip",
-      platforms: ["darwin", "linux"],
+      platforms: ["darwin", "linux", "win32"],
     },
   ],
   plugins: [

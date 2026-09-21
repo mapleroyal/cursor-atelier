@@ -8,6 +8,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as tar from "tar";
 
+const isWindows = process.platform === "win32";
+const desktopName = isWindows ? "Windows" : "Linux";
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
@@ -17,14 +19,17 @@ const packagedRoot = process.env.CURSOR_ATELIER_EXECUTABLE
   : path.join(
       projectRoot,
       "out.noindex",
-      `Cursor Atelier-linux-${process.arch}`,
+      `Cursor Atelier-${process.platform}-${process.arch}`,
     );
 const resources = path.join(packagedRoot, "resources");
 const executable = process.env.CURSOR_ATELIER_EXECUTABLE
   ? path.resolve(process.env.CURSOR_ATELIER_EXECUTABLE)
-  : path.join(packagedRoot, "cursor-atelier");
+  : path.join(
+      packagedRoot,
+      isWindows ? "cursor-atelier.exe" : "cursor-atelier",
+    );
 const liveCursorSmoke = process.env.CURSOR_ATELIER_LIVE_PACKAGE_SMOKE === "1";
-const profilePrefix = "cursor-atelier-linux-smoke-";
+const profilePrefix = `cursor-atelier-${process.platform}-smoke-`;
 const sourceCatalog = JSON.parse(
   fs.readFileSync(
     path.join(
@@ -83,7 +88,7 @@ async function removeProfile(directory) {
 async function launchPackage() {
   if (!fs.existsSync(executable)) {
     throw new Error(
-      "Run `npm run package` before the Linux package smoke test.",
+      `Run npm run package before the ${desktopName} package smoke test.`,
     );
   }
   const profile = await fs.promises.mkdtemp(
@@ -133,7 +138,7 @@ async function launchPackage() {
     CURSOR_ATELIER_DISABLE_LOGIN_ITEM_REGISTRATION: "1",
     CURSOR_ATELIER_CURATED_ARCHIVE_ROOT: archiveRoot,
   });
-  if (!liveCursorSmoke) {
+  if (!liveCursorSmoke && !isWindows) {
     Object.assign(environment, {
       XDG_CONFIG_HOME: path.join(profile, "config"),
       XDG_DATA_HOME: path.join(profile, "data"),
@@ -178,10 +183,20 @@ async function launchPackage() {
       output,
       profile,
       environment,
-      async cleanup() {
+      async cleanup({ preserveProfile = false } = {}) {
         await browser.close().catch(() => undefined);
         await stopChild(child);
-        await removeProfile(profile);
+        if (preserveProfile) {
+          await fs.promises.writeFile(
+            path.join(profile, "smoke-output.log"),
+            output.join(""),
+          );
+          console.warn(
+            `Restore was not verified; recovery profile retained at ${profile}`,
+          );
+        } else {
+          await removeProfile(profile);
+        }
       },
     };
   } catch (error) {
@@ -192,8 +207,11 @@ async function launchPackage() {
   }
 }
 
-test.describe("Linux packaged integration", () => {
-  test.skip(process.platform !== "linux", "Requires the Linux package.");
+test.describe(`${desktopName} packaged integration`, () => {
+  test.skip(
+    !["linux", "win32"].includes(process.platform),
+    "Requires a Linux or Windows package.",
+  );
 
   test("preserves the desktop appearance when attaching over CDP", async () => {
     const launch = await launchPackage();
@@ -203,6 +221,9 @@ test.describe("Linux packaged integration", () => {
         window.electronAPI.getSystemAppearance(),
       );
       expect(["light", "dark"]).toContain(systemAppearance);
+      const appAppearance = await page.evaluate(() =>
+        matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+      );
       await expect
         .poll(() =>
           page.evaluate(() => ({
@@ -215,8 +236,8 @@ test.describe("Linux packaged integration", () => {
         )
         .toEqual({
           mode: "system",
-          media: systemAppearance,
-          document: systemAppearance,
+          media: isWindows ? appAppearance : systemAppearance,
+          document: isWindows ? appAppearance : systemAppearance,
         });
     } finally {
       await launch.cleanup();
@@ -232,7 +253,7 @@ test.describe("Linux packaged integration", () => {
     const converter = path.join(
       resources,
       "curated-cursor-converter",
-      "curated-cursor-converter",
+      isWindows ? "curated-cursor-converter.exe" : "curated-cursor-converter",
     );
     const result = spawnSync(converter, ["self-test"], {
       encoding: "utf8",
@@ -248,9 +269,10 @@ test.describe("Linux packaged integration", () => {
     });
   });
 
-  test("opens the Linux backend and converts all pinned Oreo variants locally", async () => {
+  test(`opens the ${desktopName} backend and converts all pinned Oreo variants locally`, async () => {
     test.setTimeout(600_000);
     const launch = await launchPackage();
+    let preserveProfile = false;
     try {
       const { page, profile, output } = launch;
       await expect(
@@ -329,9 +351,22 @@ test.describe("Linux packaged integration", () => {
       expect(
         await page.evaluate(() => window.electronAPI.getCursorStatus()),
       ).toMatchObject({ effectiveApplied: false });
+      for (const mode of ["dark", "light", "system"]) {
+        await page.evaluate(
+          (value) => window.electronAPI.setAppAppearanceMode(value),
+          mode,
+        );
+        await expect
+          .poll(() =>
+            page.evaluate(() => window.electronAPI.getAppAppearanceMode()),
+          )
+          .toBe(mode);
+      }
       if (liveCursorSmoke) {
         // Explicit opt-in only: this changes the current desktop cursor and
-        // restores the baseline even if an assertion fails.
+        // restores the baseline even if an assertion fails. Retain its recovery
+        // journal and cursor files until the app confirms restoration.
+        preserveProfile = true;
         try {
           await page.evaluate(
             (identifier) => window.electronAPI.applyCursorTheme(identifier),
@@ -339,7 +374,10 @@ test.describe("Linux packaged integration", () => {
           );
           expect(
             await page.evaluate(() => window.electronAPI.getCursorStatus()),
-          ).toMatchObject({ effectiveApplied: true });
+          ).toMatchObject({
+            effectiveApplied: true,
+            currentSentinelsMatchTheme: true,
+          });
           await page.evaluate(
             (identifier) =>
               window.electronAPI.setCursorThemeSize(identifier, 125),
@@ -347,9 +385,30 @@ test.describe("Linux packaged integration", () => {
           );
           expect(
             await page.evaluate(() => window.electronAPI.getCursorStatus()),
-          ).toMatchObject({ effectiveApplied: true });
+          ).toMatchObject({
+            effectiveApplied: true,
+            currentSentinelsMatchTheme: true,
+          });
+          await page.evaluate(
+            (identifier) =>
+              window.electronAPI.setAppearanceCursor("light", identifier),
+            themes[1].nativeThemeId,
+          );
+          await page.evaluate(
+            (identifier) =>
+              window.electronAPI.setAppearanceCursor("dark", identifier),
+            themes[2].nativeThemeId,
+          );
+          await page.evaluate(() => window.electronAPI.randomizeCursor());
+          expect(
+            await page.evaluate(() => window.electronAPI.getCursorStatus()),
+          ).toMatchObject({
+            effectiveApplied: true,
+            currentSentinelsMatchTheme: true,
+          });
         } finally {
           await page.evaluate(() => window.electronAPI.restoreCursorState());
+          preserveProfile = false;
         }
         expect(
           await page.evaluate(() => window.electronAPI.getCursorStatus()),
@@ -369,7 +428,7 @@ test.describe("Linux packaged integration", () => {
         ),
       ).toBe(false);
     } finally {
-      await launch.cleanup();
+      await launch.cleanup({ preserveProfile });
     }
   });
 });

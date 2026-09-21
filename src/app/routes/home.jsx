@@ -84,7 +84,7 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SettingsScreen } from "@/components/settings-screen";
 import { OnboardingScreen } from "@/components/onboarding-screen";
-import { isLinux } from "@/lib/platform";
+import { isMacOS } from "@/lib/platform";
 import * as catalog from "@/lib/cursor-catalog";
 import { CURSOR_DTO_SCHEMA_VERSION } from "@/lib/cursor-dto";
 import {
@@ -824,13 +824,13 @@ function PackRail({
           {
             appearance: "both",
             pack: assignedCurrentPacks[0].pack,
-            label: `Light & Dark · ${assignedCurrentPacks[0].pack.family}`,
+            label: `Light & Dark Â· ${assignedCurrentPacks[0].pack.family}`,
           },
         ]
       : assignedCurrentPacks.map(({ appearance, pack }) => ({
           appearance,
           pack,
-          label: `${appearance === "light" ? "Light" : "Dark"} · ${pack.family}`,
+          label: `${appearance === "light" ? "Light" : "Dark"} Â· ${pack.family}`,
         }));
   const favoritePacks = allPacks.filter((pack) =>
     favoriteCursorIds.has(getCursorPreferenceId(pack)),
@@ -1529,7 +1529,7 @@ function CursorRolePreview({ role }) {
   );
   const animation =
     role.frameCount > 1
-      ? `${role.frameCount} frames${cycleDuration ? ` · ${cycleDuration}` : ""}`
+      ? `${role.frameCount} frames${cycleDuration ? ` Â· ${cycleDuration}` : ""}`
       : null;
 
   return (
@@ -1885,7 +1885,11 @@ function PackDetails({
                 className="size-4 shrink-0"
                 aria-hidden="true"
               />
-              <span>Allow Cursor Atelier in Login Items.</span>
+              <span>
+                {isMacOS
+                  ? "Allow Cursor Atelier in Login Items."
+                  : "Enable Cursor Atelier in Startup Apps."}
+              </span>
               <Button
                 type="button"
                 variant="ghost"
@@ -1952,8 +1956,8 @@ function PackDetails({
                       </TooltipTrigger>
                       <TooltipContent className="max-w-72">
                         For the applied size to match this preview, set the
-                        system slider in System Settings → Accessibility →
-                        Display → Pointer → Pointer Size all the way to its
+                        system slider in System Settings â†’ Accessibility â†’
+                        Display â†’ Pointer â†’ Pointer Size all the way to its
                         leftmost position.
                       </TooltipContent>
                     </Tooltip>
@@ -2128,7 +2132,7 @@ function ImportButton({ disabled, importing, onImport }) {
       variant="ghost"
       size="sm"
       disabled={disabled}
-      onClick={isLinux ? undefined : () => onImport()}
+      onClick={!isMacOS ? undefined : () => onImport()}
     >
       <HugeiconsIcon icon={Add01Icon} strokeWidth={2} aria-hidden="true" />
       <span className="max-sm:sr-only">
@@ -2136,7 +2140,7 @@ function ImportButton({ disabled, importing, onImport }) {
       </span>
     </Button>
   );
-  if (!isLinux) {
+  if (isMacOS) {
     return button;
   }
   return (
@@ -3481,7 +3485,7 @@ export function HomeRoute() {
       <header
         className={cn(
           "titlebar-drag flex h-12 shrink-0 items-center gap-2 border-b border-border/60 pr-3 sm:pr-4",
-          isLinux ? "pl-3" : "pl-[78px]",
+          !isMacOS ? "pl-3" : "pl-[78px]",
         )}
       >
         {isMobile ? (

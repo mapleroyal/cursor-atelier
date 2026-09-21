@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -10,6 +11,8 @@ import {
   registerCursorIpc,
   validateImportedPacksRoot,
 } from "./cursor-bridge";
+
+import { securePrivateDirectory } from "./platform-filesystem.js";
 
 const temporaryDirectories = [];
 const ONE_PIXEL_PNG = Buffer.from(
@@ -1196,7 +1199,7 @@ describe("cursor bridge imported manifests", () => {
     ]);
   });
 
-  it("rejects imported packs with public modes or hardlinked files", async () => {
+  it("enforces platform privacy and rejects imported hardlinked files", async () => {
     const importedPacksRoot = temporaryDirectory();
     writeImportedPack(importedPacksRoot, {
       packName: "good-pack",
@@ -1207,24 +1210,52 @@ describe("cursor bridge imported manifests", () => {
     const publicPack = writeImportedPack(importedPacksRoot, {
       packName: "public-pack",
       nativeThemeId: "PublicPack",
+      catalogId: "public-pack",
     });
     fs.chmodSync(publicPack.packRoot, 0o755);
 
     const publicPreview = writeImportedPack(importedPacksRoot, {
       packName: "public-preview",
       nativeThemeId: "PublicPreview",
+      catalogId: "public-preview",
     });
     fs.chmodSync(publicPreview.previewPath, 0o644);
 
     const hardlinked = writeImportedPack(importedPacksRoot, {
       packName: "hardlinked",
       nativeThemeId: "Hardlinked",
+      catalogId: "hardlinked",
     });
     fs.linkSync(
       hardlinked.resourcePath,
       path.join(temporaryDirectory(), "linked.cursor"),
     );
 
+    if (process.platform === "win32") {
+      // chmod cannot make Windows files public. Production secures the app-data
+      // root with an inheritable DACL; verify both descendants really are private.
+      securePrivateDirectory(importedPacksRoot);
+      const script = `$ProgressPreference='SilentlyContinue'; $paths=[Console]::In.ReadToEnd() | ConvertFrom-Json; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $allowed=@($sid,'S-1-5-18','S-1-5-32-544'); @($paths | ForEach-Object { (Get-Acl -LiteralPath $_).Access } | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowed }).Count`;
+      expect(
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            Buffer.from(script, "utf16le").toString("base64"),
+          ],
+          {
+            input: JSON.stringify([
+              publicPack.packRoot,
+              publicPreview.previewPath,
+            ]),
+            encoding: "utf8",
+            windowsHide: true,
+          },
+        ).trim(),
+      ).toBe("0");
+    }
     const bridge = createCursorBridge({
       nativePath: "/missing/cursor-bridge",
       discover: false,
@@ -1234,7 +1265,11 @@ describe("cursor bridge imported manifests", () => {
       (await bridge.listThemes())
         .filter((theme) => theme.imported)
         .map((theme) => theme.nativeThemeId),
-    ).toEqual(["GoodPack"]);
+    ).toEqual(
+      process.platform === "win32"
+        ? ["GoodPack", "PublicPack", "PublicPreview"]
+        : ["GoodPack"],
+    );
   });
 
   it("rejects malformed, oversized, overfull, duplicate, or hash-mismatched packs", async () => {

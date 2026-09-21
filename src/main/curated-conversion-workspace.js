@@ -1,3 +1,7 @@
+import {
+  hasPrivateMode,
+  securePrivateDirectory,
+} from "./platform-filesystem.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -16,9 +20,7 @@ function ownedByCurrentUser(stat) {
 }
 
 function privateDirectory(stat) {
-  return (
-    stat.isDirectory() && !stat.isSymbolicLink() && (stat.mode & 0o077) === 0
-  );
+  return stat.isDirectory() && !stat.isSymbolicLink() && hasPrivateMode(stat);
 }
 
 async function ensurePrivateRoot(root) {
@@ -32,6 +34,7 @@ async function ensurePrivateRoot(root) {
       throw error;
     }
   }
+  securePrivateDirectory(root);
   const stat = await fs.promises.lstat(root);
   if (!privateDirectory(stat) || !ownedByCurrentUser(stat)) {
     fail("The curated conversion root is not private.");

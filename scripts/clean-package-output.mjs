@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+if (process.platform === "win32") {
+  await import("./clean-windows-package-output.mjs");
+  process.exit(0);
+}
+
 if (process.platform === "linux") {
   await import("./clean-linux-package-output.mjs");
   process.exit(0);

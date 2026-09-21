@@ -23,6 +23,12 @@ if (process.platform === "darwin") {
     [path.join(root, "scripts", "build-linux-assets.mjs")],
     { stdio: "inherit", cwd: root },
   );
+} else if (process.platform === "win32") {
+  execFileSync(
+    process.execPath,
+    [path.join(root, "scripts", "build-windows.mjs")],
+    { stdio: "inherit", cwd: root, windowsHide: true },
+  );
 } else {
-  throw new Error("Cursor Atelier supports macOS and Linux.");
+  throw new Error("Cursor Atelier supports macOS, Linux, and Windows.");
 }

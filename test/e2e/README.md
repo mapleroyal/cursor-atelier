@@ -15,8 +15,8 @@ overrides the attached renderer's media preferences, including a default light
 color scheme. That can turn a running app light despite its System preference
 and a dark desktop. The option preserves the app's native media and focus
 behavior; it is also required for ad hoc inspection of the installed app. Use
-explicit media emulation only in isolated tests that need it. The Linux smoke
-checks that System mode's rendered appearance matches the desktop signal.
+explicit media emulation only in isolated tests that need it. The Linux and Windows smoke checks
+verify that System mode's rendered appearance matches the desktop signal.
 
 The UI suite runs on macOS and Linux. To run it against an existing renderer
 archive, set `CURSOR_ATELIER_ASAR` to its `Contents/Resources/app.asar` (macOS)
@@ -35,7 +35,7 @@ the empty library, settings persistence, and truthful preview-mode safety.
 Cursor-assignment and Restore controls remain disabled, so it cannot change the
 host cursor.
 
-On Linux, `linux-package-smoke.spec.mjs` launches the actual packaged
+On Linux, `desktop-package-smoke.spec.mjs` launches the actual packaged
 `cursor-atelier` executable and attaches over loopback CDP. It checks the real
 Linux backend, the empty library, the converter's imaging self-test, and local
 conversion and installation of all 19 Oreo variants. The smoke uses the pinned
@@ -52,6 +52,24 @@ For an explicitly requested live desktop check, set
 variant, changes its size, and restores the captured desktop cursor in a
 `finally` block. Application data remains temporary; the real XDG desktop
 configuration is used so restoration checks the actual desktop state.
+
+On Windows, the same `desktop-package-smoke.spec.mjs` suite launches the
+staged `cursor-atelier.exe` in the signed-in desktop. It checks the native
+Windows backend, frozen converter, appearance integration, and all 19 Oreo
+variants. Run it from that desktop with:
+
+```powershell
+npx.cmd playwright test test/e2e/desktop-package-smoke.spec.mjs
+```
+
+Set `$env:CURSOR_ATELIER_LIVE_PACKAGE_SMOKE = "1"` to also verify actual
+application, resizing, light/dark assignment, randomization, and restoration.
+Use a disposable development desktop for this opt-in check. Startup
+registration is disabled and the app uses a temporary profile. Both platforms
+retain that profile, recovery state, cursor files, and diagnostics if the app
+cannot verify restoration; do not remove them before recovering the desktop.
+See [Windows development notes](../../docs/windows-development.md) for the
+separate native CUR/ANI tests and installed-update verification.
 
 The macOS packaged-native smoke spawns the exact
 `Contents/MacOS/Cursor Atelier` Forge executable as a normal child process;

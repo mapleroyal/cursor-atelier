@@ -1,3 +1,4 @@
+import { isSafeWindowsPath } from "./platform-filesystem.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -74,6 +75,7 @@ function normalizeArchivePath(value) {
   if (
     !normalized ||
     components.length > MAX_PATH_DEPTH ||
+    (process.platform === "win32" && !isSafeWindowsPath(normalized)) ||
     components.some(
       (component) =>
         component === "." ||
@@ -193,7 +195,10 @@ async function inspectDataArchive(archivePath) {
 }
 
 async function syncFile(filePath) {
-  const handle = await fsPromises.open(filePath, "r");
+  const handle = await fsPromises.open(
+    filePath,
+    process.platform === "win32" ? "r+" : "r",
+  );
   try {
     await handle.sync();
   } finally {

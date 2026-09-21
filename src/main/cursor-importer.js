@@ -1,3 +1,5 @@
+import { pipeline } from "node:stream/promises";
+import { isSafeWindowsPath } from "./platform-filesystem.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { promises as fsPromises } from "node:fs";
@@ -381,6 +383,8 @@ function validateArchivePath(fileName, limits) {
   const normalized = path.posix.normalize(withoutTrailingSlash);
   const components = normalized === "." ? [] : normalized.split("/");
   if (
+    (process.platform === "win32" &&
+      components.some((component) => !isSafeWindowsPath(component))) ||
     components.length > limits.maxPathDepth ||
     rawComponents.includes("..") ||
     components.some((component) => component === "" || component === "..")
@@ -615,6 +619,7 @@ async function preflightZip(zipPath, limits = DEFAULT_IMPORT_LIMITS) {
     const inspectedTargets = new Set();
     for (const alias of symlinks) {
       const target = resolveAlias(alias.normalized);
+      alias.resolvedTarget = target.normalized;
       if (!inspectedTargets.has(target.normalized)) {
         const targetPrefix = await inspectZipEntry(
           zip,
@@ -631,6 +636,7 @@ async function preflightZip(zipPath, limits = DEFAULT_IMPORT_LIMITS) {
         inspectedTargets.add(target.normalized);
       }
     }
+    return records;
   } catch (error) {
     if (error instanceof CursorImportError) {
       throw error;
@@ -1013,6 +1019,7 @@ async function preflightTar(
 
     for (const alias of symlinks) {
       const target = resolveAlias(alias.normalized);
+      alias.resolvedTarget = target.normalized;
       if (!isXcursorPrefix(target.prefix.subarray(0, target.prefixBytes))) {
         fail(
           "UNSAFE_ARCHIVE",
@@ -1040,6 +1047,58 @@ async function preflightTar(
       fail("UNSAFE_ARCHIVE", "The archive contains an unsafe path.", error);
     }
     fail("INVALID_ARCHIVE", "The selected tar archive is invalid.", error);
+  }
+}
+
+async function extractWindowsZip(archivePath, root, records) {
+  const zip = await openZip(archivePath, { lazyEntries: true });
+  try {
+    await new Promise((resolve, reject) => {
+      zip.on("error", reject);
+      zip.on("end", resolve);
+      zip.on("entry", (entry) => {
+        void (async () => {
+          const name = path.posix.normalize(entry.fileName.replace(/\/$/, ""));
+          const record = records.get(name);
+          if (!record) {
+            throw new Error("An archive entry changed after validation.");
+          }
+          if (record.fileType === 0o120000) {
+            return;
+          }
+          const destination = path.join(root, ...name.split("/"));
+          await fsPromises.mkdir(
+            record.directory ? destination : path.dirname(destination),
+            { recursive: true, mode: 0o700 },
+          );
+          if (record.directory) {
+            return;
+          }
+          const input = await new Promise((done, fail) =>
+            zip.openReadStream(entry, (error, stream) =>
+              error ? fail(error) : done(stream),
+            ),
+          );
+          await pipeline(
+            input,
+            fs.createWriteStream(destination, { flags: "wx", mode: 0o600 }),
+          );
+        })().then(() => zip.readEntry(), reject);
+      });
+      zip.readEntry();
+    });
+    for (const record of records.values()) {
+      if (record.fileType !== 0o120000) {
+        continue;
+      }
+      await fsPromises.copyFile(
+        path.join(root, ...record.resolvedTarget.split("/")),
+        path.join(root, ...record.normalized.split("/")),
+        fs.constants.COPYFILE_EXCL,
+      );
+    }
+  } finally {
+    zip.close();
   }
 }
 
@@ -1139,7 +1198,15 @@ async function extractTar(
           `A cursor alias has an unsafe extraction directory: ${record.normalized}.`,
         );
       }
-      await fsPromises.symlink(record.linkTarget, aliasPath);
+      if (process.platform === "win32") {
+        await fsPromises.copyFile(
+          path.join(extractionRealPath, ...record.resolvedTarget.split("/")),
+          aliasPath,
+          fs.constants.COPYFILE_EXCL,
+        );
+      } else {
+        await fsPromises.symlink(record.linkTarget, aliasPath);
+      }
     }
   } catch (error) {
     if (error instanceof CursorImportError) {
@@ -3661,14 +3728,18 @@ export async function importCursorSource({
       const extractionRoot = path.join(temporaryRoot, "expanded");
       await fsPromises.mkdir(extractionRoot, { mode: 0o700 });
       if (archiveKind === "zip") {
-        await preflightZip(pinnedArchive, limits);
-        const { default: extractZip } = await import("extract-zip");
+        const records = await preflightZip(pinnedArchive, limits);
         try {
-          await extractZip(pinnedArchive, {
-            dir: extractionRoot,
-            defaultDirMode: 0o700,
-            defaultFileMode: 0o600,
-          });
+          if (process.platform === "win32") {
+            await extractWindowsZip(pinnedArchive, extractionRoot, records);
+          } else {
+            const { default: extractZip } = await import("extract-zip");
+            await extractZip(pinnedArchive, {
+              dir: extractionRoot,
+              defaultDirMode: 0o700,
+              defaultFileMode: 0o600,
+            });
+          }
         } catch (error) {
           fail(
             "INVALID_ARCHIVE",

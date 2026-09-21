@@ -1,3 +1,6 @@
+import { isSafeWindowsPath } from "./platform-filesystem.js";
+import { hasPrivateMode } from "./platform-filesystem.js";
+import { createWindowsCursorBackend } from "./windows-cursor-backend.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -105,6 +108,7 @@ function isSafeResourceName(value) {
   return (
     typeof value === "string" &&
     SAFE_RESOURCE_PATTERN.test(value) &&
+    (process.platform !== "win32" || isSafeWindowsPath(value)) &&
     path.extname(value).toLowerCase() === ".cursor"
   );
 }
@@ -571,6 +575,7 @@ function safeBundledPreviewFile(manifest, relativePath, canonicalRoot) {
     components.some(
       (component) =>
         !SAFE_PATH_COMPONENT_PATTERN.test(component) ||
+        (process.platform === "win32" && !isSafeWindowsPath(component)) ||
         component === "." ||
         component === "..",
     )
@@ -585,7 +590,7 @@ function safeBundledPreviewFile(manifest, relativePath, canonicalRoot) {
 function isPrivateImportedEntry(stat, { file = false } = {}) {
   return (
     (typeof process.getuid !== "function" || stat.uid === process.getuid()) &&
-    (stat.mode & 0o077) === 0 &&
+    hasPrivateMode(stat) &&
     (!file || stat.nlink === 1)
   );
 }
@@ -613,6 +618,7 @@ function safeImportedFile(
     components.some(
       (component) =>
         !SAFE_PATH_COMPONENT_PATTERN.test(component) ||
+        (process.platform === "win32" && !isSafeWindowsPath(component)) ||
         component === "." ||
         component === "..",
     ) ||
@@ -1207,6 +1213,7 @@ export function createCursorBridge({
   trashImportedArtifact = null,
   persistPendingThemeSizeCleanup = null,
   linuxStateDirectory = null,
+  windowsStateDirectory = null,
   onStatus = () => {},
 } = {}) {
   if (
@@ -1219,9 +1226,12 @@ export function createCursorBridge({
   }
   const resolution = { isPackaged, resourcesPath, appPath, verifySignature };
   const linuxBackend = process.platform === "linux" && linuxStateDirectory;
-  if (linuxBackend && !commandRunner) {
-    commandRunner = createLinuxCursorBackend({
-      stateDirectory: linuxStateDirectory,
+  const windowsBackend = process.platform === "win32" && windowsStateDirectory;
+  if ((linuxBackend || windowsBackend) && !commandRunner) {
+    commandRunner = (
+      windowsBackend ? createWindowsCursorBackend : createLinuxCursorBackend
+    )({
+      stateDirectory: windowsStateDirectory || linuxStateDirectory,
       encoderExecutable: path.join(
         isPackaged
           ? resourcesPath
@@ -1233,7 +1243,9 @@ export function createCursorBridge({
               "curated-converter",
             ),
         "curated-cursor-converter",
-        "curated-cursor-converter",
+        process.platform === "win32"
+          ? "curated-cursor-converter.exe"
+          : "curated-cursor-converter",
       ),
       getThemes: () => {
         resetManifestIndex();
@@ -1264,9 +1276,9 @@ export function createCursorBridge({
   }
 
   let fallbackState = createUnavailableState(
-    ["darwin", "linux"].includes(process.platform)
+    ["darwin", "linux", "win32"].includes(process.platform)
       ? "The native cursor component is unavailable."
-      : "Cursor changes require macOS or a supported Linux desktop.",
+      : "Cursor changes require macOS, Windows, or a supported Linux desktop.",
   );
   let mutationQueue = Promise.resolve();
   let loadedManifest;
@@ -1290,7 +1302,7 @@ export function createCursorBridge({
     // listing them, and every mutation independently revalidates its target.
     // Avoid synchronously rereading every imported cursor on Electron's main
     // thread merely to duplicate that work.
-    if (bridgePath && !linuxBackend) {
+    if (bridgePath && !linuxBackend && !windowsBackend) {
       return true;
     }
     try {

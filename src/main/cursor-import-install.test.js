@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -225,10 +226,36 @@ describe("imported cursor installation", () => {
     expect(fs.existsSync(path.join(first.destination, "manifest.json"))).toBe(
       true,
     );
-    expect(fs.statSync(first.destination).mode & 0o077).toBe(0);
-    expect(
-      fs.statSync(path.join(first.destination, "Example.cursor")).mode & 0o077,
-    ).toBe(0);
+    if (process.platform === "win32") {
+      const script = `$ProgressPreference='SilentlyContinue'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $allowed=@($sid,'S-1-5-18','S-1-5-32-544'); @((Get-Acl -LiteralPath $env:CURSOR_ACL_TEST_PATH).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowed }).Count`;
+      const unexpectedGrants = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-EncodedCommand",
+          Buffer.from(script, "utf16le").toString("base64"),
+        ],
+        {
+          encoding: "utf8",
+          windowsHide: true,
+          env: {
+            ...process.env,
+            CURSOR_ACL_TEST_PATH: path.join(
+              first.destination,
+              "Example.cursor",
+            ),
+          },
+        },
+      );
+      expect(unexpectedGrants.trim()).toBe("0");
+    } else {
+      expect(fs.statSync(first.destination).mode & 0o077).toBe(0);
+      expect(
+        fs.statSync(path.join(first.destination, "Example.cursor")).mode &
+          0o077,
+      ).toBe(0);
+    }
 
     const secondStaging = fs.mkdtempSync(path.join(first.store, ".import-"));
     const duplicate = path.join(
@@ -533,19 +560,21 @@ describe("imported cursor installation", () => {
     const deletionDirectory = path.dirname(quarantine.destination);
 
     expect(quarantine.nativeRecoveryDurable).toBe(true);
-    expect(
-      events
-        .slice(0, quarantineIndex)
-        .some(
-          (event) => event.type === "sync" && event.path === canonicalStore,
-        ),
-    ).toBe(true);
-    expect(
-      directorySyncsAfter(events, quarantineIndex, [
-        deletionDirectory,
-        canonicalStore,
-      ]).slice(0, 2),
-    ).toEqual([deletionDirectory, canonicalStore]);
+    if (process.platform !== "win32") {
+      expect(
+        events
+          .slice(0, quarantineIndex)
+          .some(
+            (event) => event.type === "sync" && event.path === canonicalStore,
+          ),
+      ).toBe(true);
+      expect(
+        directorySyncsAfter(events, quarantineIndex, [
+          deletionDirectory,
+          canonicalStore,
+        ]).slice(0, 2),
+      ).toEqual([deletionDirectory, canonicalStore]);
+    }
 
     await removal.rollback();
 
@@ -568,45 +597,48 @@ describe("imported cursor installation", () => {
     ).toBe(false);
   });
 
-  it("does not compensate native state when the initial transaction-directory fsync fails", async () => {
-    const data = fixture();
-    await installImportedArtifacts({
-      artifacts: [data.artifact],
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-    });
-    await removeCursorImportStaging({
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-    });
-    const canonicalStore = fs.realpathSync(data.store);
-    let injectedFailure = false;
-    observeFilesystemDurability({
-      onSync(event) {
-        if (event.path === canonicalStore && !injectedFailure) {
-          injectedFailure = true;
-          throw new Error("initial transaction fsync failed");
-        }
-      },
-    });
-    const recoverNativeState = vi.fn();
-
-    await expect(
-      prepareImportedCursorArtifactRemoval({
-        identifiers: ["Example"],
+  it.skipIf(process.platform === "win32")(
+    "does not compensate native state when the initial transaction-directory fsync fails",
+    async () => {
+      const data = fixture();
+      await installImportedArtifacts({
+        artifacts: [data.artifact],
+        stagingDirectory: data.staging,
         importedPacksRoot: data.store,
-        nativeRecovery: deletionNativeRecovery(),
-        recoverNativeState,
-      }),
-    ).rejects.toThrow("initial transaction fsync failed");
+      });
+      await removeCursorImportStaging({
+        stagingDirectory: data.staging,
+        importedPacksRoot: data.store,
+      });
+      const canonicalStore = fs.realpathSync(data.store);
+      let injectedFailure = false;
+      observeFilesystemDurability({
+        onSync(event) {
+          if (event.path === canonicalStore && !injectedFailure) {
+            injectedFailure = true;
+            throw new Error("initial transaction fsync failed");
+          }
+        },
+      });
+      const recoverNativeState = vi.fn();
 
-    expect(injectedFailure).toBe(true);
-    expect(recoverNativeState).not.toHaveBeenCalled();
-    expect(fs.existsSync(data.destination)).toBe(true);
-    expect(
-      fs.readdirSync(data.store).some((name) => name.startsWith(".delete-")),
-    ).toBe(false);
-  });
+      await expect(
+        prepareImportedCursorArtifactRemoval({
+          identifiers: ["Example"],
+          importedPacksRoot: data.store,
+          nativeRecovery: deletionNativeRecovery(),
+          recoverNativeState,
+        }),
+      ).rejects.toThrow("initial transaction fsync failed");
+
+      expect(injectedFailure).toBe(true);
+      expect(recoverNativeState).not.toHaveBeenCalled();
+      expect(fs.existsSync(data.destination)).toBe(true);
+      expect(
+        fs.readdirSync(data.store).some((name) => name.startsWith(".delete-")),
+      ).toBe(false);
+    },
+  );
 
   it.each([
     ["prepared", DELETE_TRANSACTION_MANIFEST],
@@ -656,141 +688,147 @@ describe("imported cursor installation", () => {
     },
   );
 
-  it("compensates helper drift before clearing a failed quarantine journal", async () => {
-    const data = fixture();
-    await installImportedArtifacts({
-      artifacts: [data.artifact],
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-    });
-    await removeCursorImportStaging({
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-    });
-    const canonicalStore = fs.realpathSync(data.store);
-    const canonicalDestination = path.join(
-      canonicalStore,
-      path.basename(data.destination),
-    );
-    let deletionDirectory = null;
-    let helperState = "original";
-    let injectedFailure = false;
-    let recoveryMarkerWasDurable = false;
-    observeFilesystemDurability({
-      onRenamed(event) {
-        if (event.source === canonicalDestination) {
-          deletionDirectory = path.dirname(event.destination);
-          helperState = "drifted";
-        }
-      },
-      onSync(event) {
-        if (
-          helperState === "drifted" &&
-          event.path === deletionDirectory &&
-          !injectedFailure
-        ) {
-          injectedFailure = true;
-          throw new Error("quarantine fsync failed");
-        }
-      },
-    });
-    const recoverNativeState = vi.fn(async () => {
-      recoveryMarkerWasDurable = fs.existsSync(
-        path.join(deletionDirectory, DELETE_TRANSACTION_NATIVE_STARTED),
+  it.skipIf(process.platform === "win32")(
+    "compensates helper drift before clearing a failed quarantine journal",
+    async () => {
+      const data = fixture();
+      await installImportedArtifacts({
+        artifacts: [data.artifact],
+        stagingDirectory: data.staging,
+        importedPacksRoot: data.store,
+      });
+      await removeCursorImportStaging({
+        stagingDirectory: data.staging,
+        importedPacksRoot: data.store,
+      });
+      const canonicalStore = fs.realpathSync(data.store);
+      const canonicalDestination = path.join(
+        canonicalStore,
+        path.basename(data.destination),
       );
-      helperState = "original";
-    });
+      let deletionDirectory = null;
+      let helperState = "original";
+      let injectedFailure = false;
+      let recoveryMarkerWasDurable = false;
+      observeFilesystemDurability({
+        onRenamed(event) {
+          if (event.source === canonicalDestination) {
+            deletionDirectory = path.dirname(event.destination);
+            helperState = "drifted";
+          }
+        },
+        onSync(event) {
+          if (
+            helperState === "drifted" &&
+            event.path === deletionDirectory &&
+            !injectedFailure
+          ) {
+            injectedFailure = true;
+            throw new Error("quarantine fsync failed");
+          }
+        },
+      });
+      const recoverNativeState = vi.fn(async () => {
+        recoveryMarkerWasDurable = fs.existsSync(
+          path.join(deletionDirectory, DELETE_TRANSACTION_NATIVE_STARTED),
+        );
+        helperState = "original";
+      });
 
-    await expect(
-      prepareImportedCursorArtifactRemoval({
-        identifiers: ["Example"],
+      await expect(
+        prepareImportedCursorArtifactRemoval({
+          identifiers: ["Example"],
+          importedPacksRoot: data.store,
+          nativeRecovery: deletionNativeRecovery(),
+          recoverNativeState,
+        }),
+      ).rejects.toThrow("quarantine fsync failed");
+
+      expect(injectedFailure).toBe(true);
+      expect(recoveryMarkerWasDurable).toBe(true);
+      expect(recoverNativeState).toHaveBeenCalledWith(deletionNativeRecovery());
+      expect(helperState).toBe("original");
+      expect(fs.existsSync(data.destination)).toBe(true);
+      expect(
+        fs.readdirSync(data.store).some((name) => name.startsWith(".delete-")),
+      ).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "retains the durable journal when quarantine compensation fails",
+    async () => {
+      const data = fixture();
+      await installImportedArtifacts({
+        artifacts: [data.artifact],
+        stagingDirectory: data.staging,
         importedPacksRoot: data.store,
-        nativeRecovery: deletionNativeRecovery(),
-        recoverNativeState,
-      }),
-    ).rejects.toThrow("quarantine fsync failed");
-
-    expect(injectedFailure).toBe(true);
-    expect(recoveryMarkerWasDurable).toBe(true);
-    expect(recoverNativeState).toHaveBeenCalledWith(deletionNativeRecovery());
-    expect(helperState).toBe("original");
-    expect(fs.existsSync(data.destination)).toBe(true);
-    expect(
-      fs.readdirSync(data.store).some((name) => name.startsWith(".delete-")),
-    ).toBe(false);
-  });
-
-  it("retains the durable journal when quarantine compensation fails", async () => {
-    const data = fixture();
-    await installImportedArtifacts({
-      artifacts: [data.artifact],
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-    });
-    await removeCursorImportStaging({
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-    });
-    const canonicalStore = fs.realpathSync(data.store);
-    const canonicalDestination = path.join(
-      canonicalStore,
-      path.basename(data.destination),
-    );
-    let deletionDirectory = null;
-    let helperState = "original";
-    let injectedFailure = false;
-    observeFilesystemDurability({
-      onRenamed(event) {
-        if (event.source === canonicalDestination) {
-          deletionDirectory = path.dirname(event.destination);
-          helperState = "drifted";
-        }
-      },
-      onSync(event) {
-        if (
-          helperState === "drifted" &&
-          event.path === deletionDirectory &&
-          !injectedFailure
-        ) {
-          injectedFailure = true;
-          throw new Error("quarantine fsync failed");
-        }
-      },
-    });
-    const recoverNativeState = vi
-      .fn()
-      .mockRejectedValue(new Error("native compensation failed"));
-
-    await expect(
-      prepareImportedCursorArtifactRemoval({
-        identifiers: ["Example"],
+      });
+      await removeCursorImportStaging({
+        stagingDirectory: data.staging,
         importedPacksRoot: data.store,
-        nativeRecovery: deletionNativeRecovery(),
-        recoverNativeState,
-      }),
-    ).rejects.toMatchObject({ code: "DELETE_ROLLBACK_FAILED" });
+      });
+      const canonicalStore = fs.realpathSync(data.store);
+      const canonicalDestination = path.join(
+        canonicalStore,
+        path.basename(data.destination),
+      );
+      let deletionDirectory = null;
+      let helperState = "original";
+      let injectedFailure = false;
+      observeFilesystemDurability({
+        onRenamed(event) {
+          if (event.source === canonicalDestination) {
+            deletionDirectory = path.dirname(event.destination);
+            helperState = "drifted";
+          }
+        },
+        onSync(event) {
+          if (
+            helperState === "drifted" &&
+            event.path === deletionDirectory &&
+            !injectedFailure
+          ) {
+            injectedFailure = true;
+            throw new Error("quarantine fsync failed");
+          }
+        },
+      });
+      const recoverNativeState = vi
+        .fn()
+        .mockRejectedValue(new Error("native compensation failed"));
 
-    expect(fs.existsSync(data.destination)).toBe(true);
-    expect(fs.existsSync(deletionDirectory)).toBe(true);
-    expect(
-      fs.existsSync(
-        path.join(deletionDirectory, DELETE_TRANSACTION_NATIVE_STARTED),
-      ),
-    ).toBe(true);
+      await expect(
+        prepareImportedCursorArtifactRemoval({
+          identifiers: ["Example"],
+          importedPacksRoot: data.store,
+          nativeRecovery: deletionNativeRecovery(),
+          recoverNativeState,
+        }),
+      ).rejects.toMatchObject({ code: "DELETE_ROLLBACK_FAILED" });
 
-    const startupRecovery = vi.fn(async () => {
-      helperState = "original";
-    });
-    await expect(
-      reconcileCursorImportTransactions({
-        importedPacksRoot: data.store,
-        recoverDeletionNativeState: startupRecovery,
-      }),
-    ).resolves.toMatchObject({ cleanupPending: false });
-    expect(startupRecovery).toHaveBeenCalledWith(deletionNativeRecovery());
-    expect(helperState).toBe("original");
-    expect(fs.existsSync(deletionDirectory)).toBe(false);
-  });
+      expect(fs.existsSync(data.destination)).toBe(true);
+      expect(fs.existsSync(deletionDirectory)).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(deletionDirectory, DELETE_TRANSACTION_NATIVE_STARTED),
+        ),
+      ).toBe(true);
+
+      const startupRecovery = vi.fn(async () => {
+        helperState = "original";
+      });
+      await expect(
+        reconcileCursorImportTransactions({
+          importedPacksRoot: data.store,
+          recoverDeletionNativeState: startupRecovery,
+        }),
+      ).resolves.toMatchObject({ cleanupPending: false });
+      expect(startupRecovery).toHaveBeenCalledWith(deletionNativeRecovery());
+      expect(helperState).toBe("original");
+      expect(fs.existsSync(deletionDirectory)).toBe(false);
+    },
+  );
 
   it.each(["rollback", "commit"])(
     "rejects journal-digest changes during live %s",
@@ -1228,45 +1266,48 @@ describe("imported cursor installation", () => {
     expect(fs.existsSync(data.artifact.directory)).toBe(true);
   });
 
-  it("fsyncs the staging destination before the store after live promotion rollback", async () => {
-    const data = fixture();
-    const canonicalStore = fs.realpathSync(data.store);
-    const canonicalStaging = fs.realpathSync(data.staging);
-    const canonicalDestination = path.join(
-      canonicalStore,
-      path.basename(data.destination),
-    );
-    const canonicalArtifact = path.join(
-      canonicalStaging,
-      path.basename(data.artifact.directory),
-    );
-    const events = observeFilesystemDurability();
-
-    await expect(
-      installImportedArtifacts({
-        artifacts: [data.artifact],
-        stagingDirectory: data.staging,
-        importedPacksRoot: data.store,
-        validateInstalled() {
-          throw new Error("native validation failed");
-        },
-      }),
-    ).rejects.toThrow("native validation failed");
-
-    const rollbackIndex = events.findIndex(
-      (event) =>
-        event.type === "rename" &&
-        event.source === canonicalDestination &&
-        event.destination === canonicalArtifact,
-    );
-    expect(rollbackIndex).toBeGreaterThan(-1);
-    expect(
-      directorySyncsAfter(events, rollbackIndex, [
-        canonicalStaging,
+  it.skipIf(process.platform === "win32")(
+    "fsyncs the staging destination before the store after live promotion rollback",
+    async () => {
+      const data = fixture();
+      const canonicalStore = fs.realpathSync(data.store);
+      const canonicalStaging = fs.realpathSync(data.staging);
+      const canonicalDestination = path.join(
         canonicalStore,
-      ]).slice(0, 2),
-    ).toEqual([canonicalStaging, canonicalStore]);
-  });
+        path.basename(data.destination),
+      );
+      const canonicalArtifact = path.join(
+        canonicalStaging,
+        path.basename(data.artifact.directory),
+      );
+      const events = observeFilesystemDurability();
+
+      await expect(
+        installImportedArtifacts({
+          artifacts: [data.artifact],
+          stagingDirectory: data.staging,
+          importedPacksRoot: data.store,
+          validateInstalled() {
+            throw new Error("native validation failed");
+          },
+        }),
+      ).rejects.toThrow("native validation failed");
+
+      const rollbackIndex = events.findIndex(
+        (event) =>
+          event.type === "rename" &&
+          event.source === canonicalDestination &&
+          event.destination === canonicalArtifact,
+      );
+      expect(rollbackIndex).toBeGreaterThan(-1);
+      expect(
+        directorySyncsAfter(events, rollbackIndex, [
+          canonicalStaging,
+          canonicalStore,
+        ]).slice(0, 2),
+      ).toEqual([canonicalStaging, canonicalStore]);
+    },
+  );
 
   it("rolls back a partially promoted multi-pack import after a crash", async () => {
     const data = fixture();
@@ -1318,50 +1359,56 @@ describe("imported cursor installation", () => {
     expect(fs.existsSync(snapshotStaging)).toBe(false);
   });
 
-  it("fsyncs the staging destination before the store during startup promotion rollback", async () => {
-    const data = fixture();
-    const snapshotStore = path.join(path.dirname(data.store), "SnapshotPacks");
-    await installImportedArtifacts({
-      artifacts: [data.artifact],
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-      validateInstalled() {
-        fs.cpSync(data.store, snapshotStore, { recursive: true });
-      },
-    });
-    makeTreePrivate(snapshotStore);
-    const canonicalSnapshotStore = fs.realpathSync(snapshotStore);
-    const snapshotStaging = fs
-      .readdirSync(canonicalSnapshotStore)
-      .map((name) => path.join(canonicalSnapshotStore, name))
-      .find((entry) => path.basename(entry).startsWith(".import-"));
-    const snapshotDestination = path.join(
-      canonicalSnapshotStore,
-      path.basename(data.destination),
-    );
-    const events = observeFilesystemDurability();
-
-    await expect(
-      reconcileCursorImportTransactions({
-        importedPacksRoot: canonicalSnapshotStore,
-      }),
-    ).resolves.toMatchObject({ cleanupPending: false });
-
-    const rollbackIndex = events.findIndex(
-      (event) =>
-        event.type === "rename" &&
-        event.source === snapshotDestination &&
-        event.destination ===
-          path.join(snapshotStaging, path.basename(data.destination)),
-    );
-    expect(rollbackIndex).toBeGreaterThan(-1);
-    expect(
-      directorySyncsAfter(events, rollbackIndex, [
-        snapshotStaging,
+  it.skipIf(process.platform === "win32")(
+    "fsyncs the staging destination before the store during startup promotion rollback",
+    async () => {
+      const data = fixture();
+      const snapshotStore = path.join(
+        path.dirname(data.store),
+        "SnapshotPacks",
+      );
+      await installImportedArtifacts({
+        artifacts: [data.artifact],
+        stagingDirectory: data.staging,
+        importedPacksRoot: data.store,
+        validateInstalled() {
+          fs.cpSync(data.store, snapshotStore, { recursive: true });
+        },
+      });
+      makeTreePrivate(snapshotStore);
+      const canonicalSnapshotStore = fs.realpathSync(snapshotStore);
+      const snapshotStaging = fs
+        .readdirSync(canonicalSnapshotStore)
+        .map((name) => path.join(canonicalSnapshotStore, name))
+        .find((entry) => path.basename(entry).startsWith(".import-"));
+      const snapshotDestination = path.join(
         canonicalSnapshotStore,
-      ]).slice(0, 2),
-    ).toEqual([snapshotStaging, canonicalSnapshotStore]);
-  });
+        path.basename(data.destination),
+      );
+      const events = observeFilesystemDurability();
+
+      await expect(
+        reconcileCursorImportTransactions({
+          importedPacksRoot: canonicalSnapshotStore,
+        }),
+      ).resolves.toMatchObject({ cleanupPending: false });
+
+      const rollbackIndex = events.findIndex(
+        (event) =>
+          event.type === "rename" &&
+          event.source === snapshotDestination &&
+          event.destination ===
+            path.join(snapshotStaging, path.basename(data.destination)),
+      );
+      expect(rollbackIndex).toBeGreaterThan(-1);
+      expect(
+        directorySyncsAfter(events, rollbackIndex, [
+          snapshotStaging,
+          canonicalSnapshotStore,
+        ]).slice(0, 2),
+      ).toEqual([snapshotStaging, canonicalSnapshotStore]);
+    },
+  );
 
   it("keeps promoted artifacts when durable native validation committed before a crash", async () => {
     const data = fixture();
@@ -1687,45 +1734,51 @@ describe("imported cursor installation", () => {
     ).resolves.toMatchObject({ importedCount: 1 });
   });
 
-  it("round-trips maximum-size promotion and deletion metadata", async () => {
-    const data = fixture();
-    const artifacts = [];
-    const identifiers = [];
-    for (let index = 0; index < 256; index += 1) {
-      const sequence = String(index).padStart(3, "0");
-      const packName = `Pack${sequence}${"p".repeat(121)}`;
-      const identifier = `I${sequence}${"i".repeat(124)}`;
-      identifiers.push(identifier);
-      artifacts.push(
-        copyArtifactWithIdentifier(
-          data.artifact.directory,
-          path.join(data.staging, packName),
-          identifier,
-        ),
-      );
-    }
+  it(
+    "round-trips maximum-size promotion and deletion metadata",
+    async () => {
+      const data = fixture();
+      const artifacts = [];
+      const identifiers = [];
+      for (let index = 0; index < 256; index += 1) {
+        const sequence = String(index).padStart(3, "0");
+        const packName = `Pack${sequence}${"p".repeat(121)}`;
+        const identifier = `I${sequence}${"i".repeat(124)}`;
+        identifiers.push(identifier);
+        artifacts.push(
+          copyArtifactWithIdentifier(
+            data.artifact.directory,
+            path.join(data.staging, packName),
+            identifier,
+          ),
+        );
+      }
 
-    await expect(
-      installImportedArtifacts({
-        artifacts,
+      await expect(
+        installImportedArtifacts({
+          artifacts,
+          stagingDirectory: data.staging,
+          importedPacksRoot: data.store,
+          validateInstalled: vi.fn(),
+        }),
+      ).resolves.toMatchObject({ importedCount: 256 });
+      await removeCursorImportStaging({
         stagingDirectory: data.staging,
         importedPacksRoot: data.store,
-        validateInstalled: vi.fn(),
-      }),
-    ).resolves.toMatchObject({ importedCount: 256 });
-    await removeCursorImportStaging({
-      stagingDirectory: data.staging,
-      importedPacksRoot: data.store,
-    });
-    const removal = await prepareImportedCursorArtifactRemoval({
-      identifiers,
-      importedPacksRoot: data.store,
-    });
-    expect(removal.removedCount).toBe(256);
+      });
+      const removal = await prepareImportedCursorArtifactRemoval({
+        identifiers,
+        importedPacksRoot: data.store,
+      });
+      expect(removal.removedCount).toBe(256);
 
-    await removal.rollback();
-    expect(
-      fs.readdirSync(data.store).filter((name) => name.startsWith(".delete-")),
-    ).toEqual([]);
-  }, 30_000);
+      await removal.rollback();
+      expect(
+        fs
+          .readdirSync(data.store)
+          .filter((name) => name.startsWith(".delete-")),
+      ).toEqual([]);
+    },
+    process.platform === "win32" ? 90_000 : 30_000,
+  );
 });

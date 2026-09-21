@@ -1,5 +1,6 @@
 import { createConnection } from "node:net";
 import path from "node:path";
+import { createDesktopCursorReconciler } from "./desktop-cursor-reconciler.js";
 
 const DESKTOP_EVENTS = new Set([
   "configreloaded",
@@ -21,11 +22,13 @@ export function createLinuxCursorReconciler({
   retryDelaysMs = RETRY_DELAYS_MS,
 } = {}) {
   let stopped = false;
-  let timer = null;
-  let running = false;
-  let pending = false;
-  let selectAppearance = false;
-  let retryIndex = 0;
+  const scheduler = createDesktopCursorReconciler({
+    reconcile,
+    onReconciled,
+    onError,
+    settleDelayMs,
+    retryDelaysMs,
+  });
   let socket = null;
   let reconnectTimer = null;
   let reconnectIndex = 0;
@@ -39,59 +42,11 @@ export function createLinuxCursorReconciler({
         )
       : null;
 
-  function schedule(delay) {
-    clearTimeout(timer);
-    timer = setTimeout(perform, delay);
-    timer.unref?.();
-  }
-
-  async function perform() {
-    timer = null;
-    if (stopped || running) {
-      return;
-    }
-    running = true;
-    pending = false;
-    const appearance = selectAppearance;
-    selectAppearance = false;
-    let nextDelay = settleDelayMs;
-    try {
-      const status = await reconcile({ selectAppearance: appearance });
-      if (!stopped) {
-        onReconciled(status);
-      }
-      retryIndex = 0;
-    } catch (error) {
-      if (!stopped) {
-        // A newer event already queued another attempt. Otherwise retry this
-        // incident a bounded number of times while the desktop settles.
-        selectAppearance ||= appearance;
-        if (!pending && retryIndex < retryDelaysMs.length) {
-          nextDelay = retryDelaysMs[retryIndex++];
-          pending = true;
-        } else if (!pending) {
-          selectAppearance = false;
-          onError(error);
-        }
-      }
-    } finally {
-      running = false;
-      if (!stopped && pending) {
-        schedule(nextDelay);
-      }
-    }
-  }
-
-  function request({ selectAppearance: appearance = false } = {}) {
+  function request(options) {
     if (stopped) {
       return;
     }
-    pending = true;
-    selectAppearance ||= appearance;
-    retryIndex = 0;
-    if (!running) {
-      schedule(settleDelayMs);
-    }
+    scheduler.request(options);
     if (!socket && !reconnectTimer) {
       reconnectIndex = 0;
       start();
@@ -154,7 +109,7 @@ export function createLinuxCursorReconciler({
     request,
     stop() {
       stopped = true;
-      clearTimeout(timer);
+      scheduler.stop();
       clearTimeout(reconnectTimer);
       socket?.destroy();
       socket = null;

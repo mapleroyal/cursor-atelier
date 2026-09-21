@@ -1,9 +1,10 @@
 # Cursor Atelier
 
-Cursor Atelier is a quiet, local cursor manager for macOS and Linux. Its
+Cursor Atelier is a quiet, local cursor manager for macOS, Linux, and Windows. Its
 Electron interface provides search, real cursor previews, light/dark cursor
 assignments, and Restore. macOS uses the signed Objective-C cursor engine;
 Linux installs Xcursor themes and applies them through the desktop's settings.
+Windows installs native CUR/ANI files and applies the per-user cursor scheme.
 
 Build the app locally from this repository. Prebuilt releases are not provided
 yet. Distribution signing, notarization, update delivery, and the Remus, Drop,
@@ -39,7 +40,7 @@ and Moga licensing review described in
 - A persisted Light/System/Dark appearance selector.
 - An explicit, opt-in **Run in Background at Startup** setting; Command-Q
   still exits the main app without dismantling its separately managed cursor
-  helper on macOS. On Linux the app supplies background appearance changes.
+  helper on macOS. On Linux and Windows the app supplies background appearance changes.
 - Portable export/import of installed cursors and settings, plus a recoverable
   full reset to the first-run experience. Import restores the saved desktop
   cursor rather than applying the archived selection.
@@ -50,7 +51,7 @@ and Moga licensing review described in
 
 Architecture decisions and current verification are recorded in
 [ARCHITECTURE.md](ARCHITECTURE.md) and
-[PROGRESS_TRACKER.md](PROGRESS_TRACKER.md). Source and license provenance is in
+[Windows development notes](docs/windows-development.md). Source and license provenance is in
 [CURSOR_PACK_NOTICES.md](CURSOR_PACK_NOTICES.md). Renderer conventions are in
 [the typography system](docs/typography-design-system.md) and
 [the shape system](docs/shape-design-system.md).
@@ -64,6 +65,74 @@ Architecture decisions and current verification are recorded in
 - ESLint, Vitest, Python `unittest`, and Playwright
 
 The app has one renderer route and does not use React Router.
+
+## Windows: build, install, use
+
+Use Windows 11, Node.js 22 LTS (22.12 or newer in that major), Git, and Python
+3.10 or newer. Build in a Windows checkout on the same architecture as the
+intended installation. The initial verified target is Windows 11 x64; ARM64
+build support still needs a native device verification.
+
+Open PowerShell in the repository:
+
+```powershell
+npm ci
+npm run package
+npm run app:install
+```
+
+If PowerShell blocks npm.ps1, use `npm.cmd` for these commands. Packaging
+creates a private Python environment, freezes the pinned converter, creates
+Windows icons, bundles native Windows image/archive libraries, and verifies
+PE architectures, the converter self-test, and every installed file hash.
+The installed app needs neither Python nor administrator privileges.
+`CURSOR_ATELIER_PYTHON` can select a different build interpreter.
+
+The per-user install lives in `%LOCALAPPDATA%\Programs\Cursor Atelier` and
+has a Start menu shortcut. Updates retain the previous build until the new
+installed executable and renderer are verified in the signed-in desktop.
+The installer preserves `%APPDATA%\Cursor Atelier`, stops owned running
+processes, and restores the previous installation if activation fails.
+Running the installer over SSH requires that this user is also signed into
+the Windows desktop; a temporary interactive-token scheduled task launches
+the app there and is removed afterward.
+
+After a successful installation, inspect and recycle the staging output and
+superseded installations:
+
+```powershell
+npm run package:clean -- --dry-run
+npm run package:clean
+```
+
+`npm run make` produces a ZIP. These are local development builds: executable
+signing, an installer download, and automatic updates are not provided yet.
+`npm start` runs the development app; `npm run native:build` rebuilds its
+converter and icons.
+
+Windows uses its native title bar, taskbar/notification-area integration,
+file pickers, and Startup Apps registration. Restore reinstates the original
+registry values, including their types. In the same session and display
+geometry, it also verifies the original Arrow, IBeam, and Hand images and
+hotspots. The app maps the shared 47-role library onto Windows' 14 conventional
+cursor slots; pen, location, and person cursors remain unchanged. Animated
+cursors retain frames, hotspots, and timing in ANI files. Application-owned
+custom cursors are outside the system scheme.
+
+Applying a cursor also registers a background launch to restore its size and
+current light/dark assignment at sign-in. Restore removes that requirement;
+**Run in Background at Startup** remains an independent preference. Windows
+Startup Apps can disable this registration, and the app respects that choice.
+While running, the app reconciles the selected cursor after wake, unlock,
+monitor changes, and Windows appearance changes. Quitting stops ongoing
+appearance automation; the stored cursor scheme remains selected.
+
+Shared curated downloads, Xcursor/Mousecape/compiled `.cursor` imports,
+previews, search, size, appearance assignments, randomization, portable data
+backup/restore, and reset use the same application flows on Windows. Import
+of native Windows `.inf`, `.cur`, or `.ani` packs is not implemented yet.
+See [Windows development notes](docs/windows-development.md) for the native
+backend and verification boundaries.
 
 ## Linux: build, install, use
 
@@ -246,8 +315,10 @@ migrate the proof of concept's preferences, snapshots, or login item.
 ## Native availability
 
 On macOS, the production bridge lives in the nested signed app outside
-`app.asar`. On Linux, the desktop adapter is part of the Electron main process
-and encodes the final theme with the bundled Clickgen runtime. If the platform
+`app.asar`. On Linux and Windows, the desktop adapter is part of the Electron
+main process and encodes the final Xcursor or CUR/ANI theme with the bundled
+Clickgen runtime. Windows applies its per-user scheme through registry and
+Win32 APIs in the signed-in desktop. If the platform
 component or its required desktop interface is unavailable, cursor assignment
 and Restore are unavailable and the UI does not claim a system cursor is active.
 
@@ -261,8 +332,8 @@ See [native/README.md](native/README.md) for the build and manifest contract.
 
 ## Importing local cursor packs
 
-Choose **Import** and select one of these local sources. Linux offers
-**Import File** and **Import Folder** separately to match native file dialogs:
+Choose **Import** and select one of these local sources. Linux and Windows
+offer **Import File** and **Import Folder** separately to match native file dialogs:
 
 - an extracted compiled Xcursor theme directory;
 - a ZIP, `.tar`, `.tar.gz`/`.tgz`, or `.tar.xz`/`.txz` archive containing one
@@ -284,7 +355,8 @@ that regress retain the baseline. It then normalizes each variant to the same
 47-role native contract, generates static PNG or looping APNG role previews,
 verifies the resource and manifest, and atomically installs the result under
 the per-user `ImportedPacks` store (`~/Library/Application Support/Cursor Atelier`
-on macOS; `~/.config/Cursor Atelier` on Linux). Imported packs
+on macOS; `~/.config/Cursor Atelier` on Linux; `%APPDATA%\Cursor Atelier`
+on Windows). Imported packs
 are revalidated by both the Electron bridge and native cursor engine before
 they are exposed or applied.
 
@@ -301,10 +373,16 @@ Use the repository's Node 22 LTS runtime for these checks:
 ```sh
 npm run lint
 npm run test:run
-npm run curated:build
-npm run curated:verify
 npm run native:preflight
 npm run test:e2e
+```
+
+To rebuild and verify only the converter, use `npm run curated:build` and
+`npm run curated:verify` on macOS or Linux. On Windows, use PowerShell:
+
+```powershell
+npm.cmd run curated:build:windows
+& ".\native\cursor-packs\build\curated-converter\curated-cursor-converter\curated-cursor-converter.exe" self-test
 ```
 
 `npm run test:e2e` rebuilds the Forge package and runs the UI and local conversion

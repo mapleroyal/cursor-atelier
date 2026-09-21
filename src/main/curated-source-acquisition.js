@@ -1,3 +1,14 @@
+import {
+  createPortableAliases,
+  readPortableAliases,
+  verifyPortableAlias,
+  PORTABLE_ALIASES_FILE,
+} from "./portable-source-aliases.js";
+import { isSafeWindowsPath } from "./platform-filesystem.js";
+import {
+  hasPrivateMode,
+  securePrivateDirectory,
+} from "./platform-filesystem.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { promises as fsPromises } from "node:fs";
@@ -289,6 +300,7 @@ function validateArchivePath(value, limits) {
   if (
     !trimmed ||
     parts.some((part) => !part || part === "." || part === "..") ||
+    (process.platform === "win32" && !isSafeWindowsPath(trimmed)) ||
     parts.length > limits.maxPathDepth ||
     path.posix.normalize(trimmed) !== trimmed
   ) {
@@ -512,7 +524,34 @@ async function inspectTar(archivePath, limits, signal) {
   return records;
 }
 
-async function createSymlinks(destination, records, selected, signal) {
+async function createSymlinks(
+  destination,
+  records,
+  selected,
+  signal,
+  limits = DEFAULT_LIMITS,
+) {
+  if (process.platform === "win32") {
+    throwIfAborted(signal);
+    await createPortableAliases(
+      destination,
+      records.filter(
+        (row) => row.type === "symlink" && selected.has(row.relative),
+      ),
+      limits.maxExpandedBytes -
+        records.reduce(
+          (total, row) =>
+            total +
+            (row.type === "file" && selected.has(row.relative) ? row.size : 0),
+          0,
+        ),
+      limits.maxEntries -
+        records.filter(
+          (row) => row.type !== "symlink" && selected.has(row.relative),
+        ).length,
+    );
+    return;
+  }
   const canonicalRoot = await fsPromises.realpath(destination);
   for (const record of records
     .filter((row) => row.type === "symlink" && selected.has(row.relative))
@@ -614,7 +653,7 @@ async function extractRepositoryTar(
       input.pipe(unpacker);
     });
     throwIfAborted(signal);
-    await createSymlinks(destination, records, selected, signal);
+    await createSymlinks(destination, records, selected, signal, limits);
   } catch (error) {
     if (error instanceof CuratedSourceError) {
       throw error;
@@ -868,7 +907,7 @@ async function extractGnomeZip(archivePath, destination, limits, signal) {
         await extractZipFile(zip, record.entry, target, signal);
       }
     }
-    await createSymlinks(destination, records, selected, signal);
+    await createSymlinks(destination, records, selected, signal, limits);
   } finally {
     zip.close();
   }
@@ -886,6 +925,7 @@ async function collectTreeEntries(root, inputRoots, signal) {
   throwIfAborted(signal);
   const canonicalRoot = await fsPromises.realpath(root);
   const entries = new Map();
+  const aliases = await readPortableAliases(canonicalRoot);
   const pending = [...inputRoots];
   const visited = new Set();
   while (pending.length) {
@@ -915,7 +955,16 @@ async function collectTreeEntries(root, inputRoots, signal) {
       }
       throw error;
     }
-    if (stat.isSymbolicLink()) {
+    if (aliases.has(relative)) {
+      const linkTarget = aliases.get(relative);
+      const resolved = await verifyPortableAlias(
+        canonicalRoot,
+        relative,
+        linkTarget,
+      );
+      entries.set(relative, { type: "l", payload: Buffer.from(linkTarget) });
+      pending.push(resolved);
+    } else if (stat.isSymbolicLink()) {
       const linkTarget = await fsPromises.readlink(target);
       const normalizedTarget = path.posix.normalize(
         path.posix.join(path.posix.dirname(relative), linkTarget),
@@ -941,13 +990,22 @@ async function collectTreeEntries(root, inputRoots, signal) {
     } else if (stat.isDirectory()) {
       for (const child of (await fsPromises.readdir(target)).sort()) {
         const childRelative = relative === "." ? child : `${relative}/${child}`;
-        if (childRelative !== MARKER) {
+        if (
+          childRelative !== MARKER &&
+          childRelative !== PORTABLE_ALIASES_FILE
+        ) {
           pending.push(childRelative);
         }
       }
     } else {
       fail("UNSAFE_CACHE", `A cached source has a special file: ${relative}.`);
     }
+  }
+  if ([...aliases.keys()].some((relative) => !entries.has(relative))) {
+    fail(
+      "INTEGRITY_FAILED",
+      "Source alias metadata contains an unrelated path.",
+    );
   }
   return { canonicalRoot, entries };
 }
@@ -998,13 +1056,18 @@ async function verifyNoUnexpectedEntries(root, inputRoots, signal) {
     signal,
   );
   const allowed = new Set(entries.keys());
+  const aliases = await readPortableAliases(canonicalRoot);
   const visit = async (directory, relativeDirectory = "") => {
     for (const name of await fsPromises.readdir(directory)) {
       throwIfAborted(signal);
       const relative = relativeDirectory
         ? `${relativeDirectory}/${name}`
         : name;
-      if (relative === MARKER) {
+      if (
+        relative === MARKER ||
+        relative === PORTABLE_ALIASES_FILE ||
+        aliases.has(relative)
+      ) {
         continue;
       }
       const target = path.join(directory, name);
@@ -1645,6 +1708,7 @@ async function canonicalCacheRoot(cacheRoot) {
     fail("UNSAFE_CACHE", "The curated source cache root must be absolute.");
   }
   await fsPromises.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+  securePrivateDirectory(cacheRoot);
   const stat = await fsPromises.lstat(cacheRoot);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     fail("UNSAFE_CACHE", "The curated source cache root is unsafe.");
@@ -1661,7 +1725,7 @@ function isPrivateDirectory(stat) {
     stat.isDirectory() &&
     !stat.isSymbolicLink() &&
     ownedByCurrentUser(stat) &&
-    (stat.mode & 0o077) === 0
+    hasPrivateMode(stat)
   );
 }
 

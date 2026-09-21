@@ -2,7 +2,7 @@
   "name": "cursor-atelier",
   "productName": "Cursor Atelier",
   "version": "0.1.0",
-  "description": "A quiet cursor pack manager for macOS and Linux built with Electron.",
+  "description": "A quiet cursor pack manager for macOS, Linux, and Windows built with Electron.",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
@@ -22,7 +22,8 @@
     "test:run": "vitest run",
     "test:e2e": "npm run package && playwright test",
     "shadcn:list": "node -e 'const { execFileSync } = require(\"node:child_process\"); const get = (o, l) => JSON.parse(execFileSync(\"npx\", [\"shadcn@latest\", \"list\", \"@shadcn\", \"-l\", String(l), \"-o\", String(o)], { encoding: \"utf8\" })); const total = get(0, 1).pagination?.total ?? 0; const seen = new Set(); for (let o = 0; o < total; o += 100) for (const item of get(o, 100).items ?? []) if (item.type === \"registry:ui\" && !seen.has(item.name)) { seen.add(item.name); console.log(item.name); }'",
-    "app:install": "node scripts/install-linux.mjs"
+    "app:install": "node scripts/install-app.mjs",
+    "curated:build:windows": "python scripts/build-windows-converter.py"
   },
   "keywords": [],
   "author": "Cursor Atelier contributors",

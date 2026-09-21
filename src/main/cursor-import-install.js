@@ -1,3 +1,9 @@
+import { isSafeWindowsPath } from "./platform-filesystem.js";
+import { syncDirectory } from "./platform-filesystem.js";
+import {
+  hasPrivateMode,
+  securePrivateDirectory,
+} from "./platform-filesystem.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,6 +13,12 @@ import { isBoundedCursorManifestText } from "./cursor-manifest-text.js";
 export { isBoundedCursorManifestText } from "./cursor-manifest-text.js";
 
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+function isSafeArtifactName(value) {
+  return (
+    SAFE_NAME.test(value) &&
+    (process.platform !== "win32" || isSafeWindowsPath(value))
+  );
+}
 const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -55,15 +67,6 @@ export class CursorImportInstallError extends Error {
 
 function fail(code, message) {
   throw new CursorImportInstallError(code, message);
-}
-
-async function syncDirectory(directory) {
-  const handle = await fs.promises.open(directory, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 async function writeDurableJson(filePath, value) {
@@ -134,8 +137,8 @@ function normalizeDeletionTransactionPacks(value) {
     const identifier = pack?.identifier;
     const digest = pack?.digest;
     if (
-      !SAFE_NAME.test(packName ?? "") ||
-      !SAFE_NAME.test(identifier ?? "") ||
+      !isSafeArtifactName(packName ?? "") ||
+      !isSafeArtifactName(identifier ?? "") ||
       typeof digest !== "string" ||
       !SHA256.test(digest)
     ) {
@@ -176,7 +179,7 @@ function normalizeDeletionNativeRecovery(value) {
     if (identifier === null || identifier === undefined) {
       return null;
     }
-    if (typeof identifier !== "string" || !SAFE_NAME.test(identifier)) {
+    if (typeof identifier !== "string" || !isSafeArtifactName(identifier)) {
       fail("UNSAFE_STORE", "Deletion native recovery metadata is invalid.");
     }
     return identifier;
@@ -288,10 +291,6 @@ function isOwnedByCurrentUser(stat) {
   return typeof process.getuid !== "function" || stat.uid === process.getuid();
 }
 
-function hasPrivateMode(stat) {
-  return (stat.mode & 0o077) === 0;
-}
-
 async function regularDirectory(filePath, { requirePrivate = true } = {}) {
   const stat = await fs.promises.lstat(filePath);
   if (
@@ -394,7 +393,7 @@ async function inspectTree(root, { requirePrivate = true } = {}) {
 async function digestTree(tree, manifest = null) {
   const hash = crypto.createHash("sha256");
   for (const file of tree.files) {
-    hash.update(file.relative);
+    hash.update(file.relative.split(path.sep).join("/"));
     hash.update("\0");
     if (manifest && file.relative === "manifest.json") {
       const identityManifest = structuredClone(manifest);
@@ -439,7 +438,7 @@ function normalizeImportedIdentifiers(identifiers) {
   const normalized = [];
   const seen = new Set();
   for (const identifier of identifiers) {
-    if (typeof identifier !== "string" || !SAFE_NAME.test(identifier)) {
+    if (typeof identifier !== "string" || !isSafeArtifactName(identifier)) {
       fail("INVALID_OPTIONS", "An imported cursor identifier is invalid.");
     }
     const key = identifier.toLowerCase();
@@ -471,7 +470,9 @@ async function validatePreviewAsset(
     components[1] !== identifier ||
     components.some(
       (component) =>
-        !SAFE_NAME.test(component) || component === "." || component === "..",
+        !isSafeArtifactName(component) ||
+        component === "." ||
+        component === "..",
     ) ||
     path.extname(components.at(-1)).toLowerCase() !== ".png"
   ) {
@@ -512,7 +513,7 @@ async function validateArtifact(directory, expectedStagingRoot = null) {
   }
 
   const packName = path.basename(canonicalDirectory);
-  if (!SAFE_NAME.test(packName)) {
+  if (!isSafeArtifactName(packName)) {
     fail("UNSAFE_ARTIFACT", "The cursor import produced an unsafe pack name.");
   }
   const tree = await inspectTree(canonicalDirectory, { requirePrivate });
@@ -550,8 +551,8 @@ async function validateArtifact(directory, expectedStagingRoot = null) {
   const resource = entry?.Resource;
   const expectedHash = String(entry?.SHA256 ?? "").toLowerCase();
   if (
-    !SAFE_NAME.test(String(identifier ?? "")) ||
-    !SAFE_NAME.test(String(resource ?? "")) ||
+    !isSafeArtifactName(String(identifier ?? "")) ||
+    !isSafeArtifactName(String(resource ?? "")) ||
     path.extname(resource).toLowerCase() !== ".cursor" ||
     !SHA256.test(expectedHash) ||
     !isBoundedCursorManifestText(entry?.DisplayName, 256) ||
@@ -623,7 +624,10 @@ async function applyPrivatePermissions(tree) {
 
 async function syncArtifactTree(tree) {
   for (const file of tree.files) {
-    const handle = await fs.promises.open(file.path, "r");
+    const handle = await fs.promises.open(
+      file.path,
+      process.platform === "win32" ? "r+" : "r",
+    );
     try {
       await handle.sync();
     } finally {
@@ -648,6 +652,7 @@ async function privateStoreRoot(importedPacksRoot) {
   ) {
     fail("UNSAFE_STORE", "The imported cursor store is not a safe directory.");
   }
+  securePrivateDirectory(importedPacksRoot);
   await fs.promises.chmod(importedPacksRoot, 0o700);
   return fs.promises.realpath(importedPacksRoot);
 }
@@ -747,7 +752,7 @@ async function resolveInstalledArtifacts(root, identifiers) {
   }
 
   for (const entry of entries) {
-    if (!SAFE_NAME.test(entry.name)) {
+    if (!isSafeArtifactName(entry.name)) {
       continue;
     }
     const packPath = path.join(root, entry.name);
@@ -826,7 +831,7 @@ async function readInstalledArtifactIdentifier(directory) {
     return null;
   }
   const identifier = manifest?.themes?.[0]?.Identifier;
-  return typeof identifier === "string" && SAFE_NAME.test(identifier)
+  return typeof identifier === "string" && isSafeArtifactName(identifier)
     ? identifier
     : null;
 }

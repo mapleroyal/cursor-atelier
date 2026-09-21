@@ -37,7 +37,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { isLinux } from "@/lib/platform";
+import { isMacOS } from "@/lib/platform";
 
 const SCHEDULE_OPTIONS = [
   ["launch", "At app launch"],
@@ -687,14 +687,14 @@ export function SettingsScreen({
                 />
               </Field>
 
-              {!isLinux && (
+              {isMacOS && (
                 <Field orientation="responsive">
                   <FieldContent>
                     <p className="text-title-md text-foreground">App Icon</p>
                   </FieldContent>
                   <p className="max-w-md text-body-sm text-muted-foreground sm:text-right">
-                    Follows System Settings → Appearance → Icon &amp; widget
-                    style → Dark → Auto
+                    Follows System Settings â†’ Appearance â†’ Icon &amp; widget
+                    style â†’ Dark â†’ Auto
                   </p>
                 </Field>
               )}
@@ -718,7 +718,7 @@ export function SettingsScreen({
               <Field orientation="horizontal">
                 <FieldContent>
                   <FieldLabel htmlFor="menu-bar-visible">
-                    {isLinux ? "Show in System Tray" : "Show in Menu Bar"}
+                    {!isMacOS ? "Show in System Tray" : "Show in Menu Bar"}
                   </FieldLabel>
                 </FieldContent>
                 <Switch
