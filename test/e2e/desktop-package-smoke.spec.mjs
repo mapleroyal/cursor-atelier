@@ -207,6 +207,194 @@ async function launchPackage() {
   }
 }
 
+function windowsAppearance(request) {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+$request=[Console]::In.ReadToEnd() | ConvertFrom-Json
+$key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Themes\Personalize',$request.operation -ne 'capture')
+$names=@('SystemUsesLightTheme','AppsUseLightTheme')
+try {
+  if($request.operation -eq 'capture') {
+    $existing=@($key.GetValueNames())
+    $result=@{values=@($names | ForEach-Object {
+      $exists=$existing -contains $_
+      @{name=$_;exists=$exists;value=$(if($exists){$key.GetValue($_)}else{$null});kind=$(if($exists){$key.GetValueKind($_).ToString()}else{$null})}
+    })}
+  } else {
+    $changedAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if($request.operation -eq 'set') {
+      foreach($name in $names) { $key.SetValue($name,[int]($request.mode -eq 'light'),[Microsoft.Win32.RegistryValueKind]::DWord) }
+    } else {
+      foreach($entry in $request.snapshot.values) {
+        if($entry.exists) { $key.SetValue($entry.name,$entry.value,[Microsoft.Win32.RegistryValueKind]::$($entry.kind)) }
+        else { $key.DeleteValue($entry.name,$false) }
+      }
+    }
+    $key.Flush()
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class AppearanceNotification {
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(IntPtr window,uint message,IntPtr wParam,string lParam,uint flags,uint timeout,out IntPtr result);
+}
+'@
+    $ignored=[IntPtr]::Zero
+    [void][AppearanceNotification]::SendMessageTimeoutW([IntPtr]0xffff,0x1a,[IntPtr]::Zero,'ImmersiveColorSet',2,1000,[ref]$ignored)
+    $result=@{changedAt=$changedAt}
+  }
+  $result | ConvertTo-Json -Depth 8 -Compress
+} finally { $key.Dispose() }
+`;
+  const result = spawnSync(
+    path.join(
+      process.env.SystemRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    {
+      input: JSON.stringify(request),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30_000,
+    },
+  );
+  if (result.error || result.status !== 0) {
+    throw (
+      result.error ??
+      new Error(result.stderr || "Could not change the Windows appearance.")
+    );
+  }
+  return JSON.parse(result.stdout);
+}
+
+async function verifyWindowsAppearanceSwitching(page) {
+  const snapshot = windowsAppearance({ operation: "capture" });
+  const timings = [];
+  try {
+    windowsAppearance({ operation: "set", mode: "light" });
+    await expect
+      .poll(() => page.evaluate(() => window.electronAPI.getSystemAppearance()))
+      .toBe("light");
+    await page.evaluate(() =>
+      window.electronAPI.updateCursorPreferences({
+        appearance: { automaticSwitching: true },
+      }),
+    );
+    const preferences = await page.evaluate(() =>
+      window.electronAPI.getCursorPreferences(),
+    );
+    await expect
+      .poll(() => page.evaluate(() => window.electronAPI.getCursorStatus()), {
+        timeout: 20_000,
+      })
+      .toMatchObject({
+        effectiveNativeThemeId: preferences.appearance.lightCursorId,
+        currentSentinelsMatchTheme: true,
+      });
+    await page.evaluate(() => {
+      window.appearanceSmokeEvents = [];
+      window.stopAppearanceSmoke = [
+        window.electronAPI.onSystemAppearanceChanged((appearance) =>
+          window.appearanceSmokeEvents.push({
+            appearance,
+            observedAt: Date.now(),
+          }),
+        ),
+        window.electronAPI.onCursorChanged((change) =>
+          window.appearanceSmokeEvents.push({
+            ...change,
+            observedAt: Date.now(),
+          }),
+        ),
+      ];
+    });
+    for (const [mode, appMode] of [
+      ["dark", "system"],
+      ["light", "dark"],
+      ["dark", "light"],
+    ]) {
+      await page.evaluate(
+        (value) => window.electronAPI.setAppAppearanceMode(value),
+        appMode,
+      );
+      const { changedAt } = windowsAppearance({ operation: "set", mode });
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              ({ mode, changedAt }) =>
+                window.appearanceSmokeEvents.find(
+                  (event) =>
+                    event.appearance === mode && event.observedAt >= changedAt,
+                ),
+              { mode, changedAt },
+            ),
+          { timeout: 5_000 },
+        )
+        .toBeTruthy();
+      const target = preferences.appearance[mode + "CursorId"];
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              ({ target, changedAt }) =>
+                window.appearanceSmokeEvents.find(
+                  (event) =>
+                    event.reason === "appearance" &&
+                    event.status?.effectiveNativeThemeId === target &&
+                    event.status?.currentSentinelsMatchTheme === true &&
+                    event.observedAt >= changedAt,
+                ),
+              { target, changedAt },
+            ),
+          { timeout: 10_000 },
+        )
+        .toBeTruthy();
+      const event = await page.evaluate(
+        ({ target, changedAt }) =>
+          window.appearanceSmokeEvents.find(
+            (event) =>
+              event.reason === "appearance" &&
+              event.status?.effectiveNativeThemeId === target &&
+              event.observedAt >= changedAt,
+          ),
+        { target, changedAt },
+      );
+      timings.push({ mode, appMode, elapsedMs: event.observedAt - changedAt });
+      expect(event.observedAt - changedAt).toBeLessThan(10_000);
+    }
+    console.warn("Windows appearance switch timings:", JSON.stringify(timings));
+    await test.info().attach("windows-appearance-timings", {
+      body: JSON.stringify(timings, null, 2),
+      contentType: "application/json",
+    });
+  } finally {
+    try {
+      await page.evaluate(() =>
+        window.electronAPI.updateCursorPreferences({
+          appearance: { automaticSwitching: false },
+        }),
+      );
+    } finally {
+      windowsAppearance({ operation: "restore", snapshot });
+      await page.evaluate(() => {
+        window.stopAppearanceSmoke?.forEach((stop) => stop());
+        delete window.appearanceSmokeEvents;
+        delete window.stopAppearanceSmoke;
+      });
+    }
+  }
+}
+
 test.describe(`${desktopName} packaged integration`, () => {
   test.skip(
     !["linux", "win32"].includes(process.platform),
@@ -399,6 +587,9 @@ test.describe(`${desktopName} packaged integration`, () => {
               window.electronAPI.setAppearanceCursor("dark", identifier),
             themes[2].nativeThemeId,
           );
+          if (isWindows) {
+            await verifyWindowsAppearanceSwitching(page);
+          }
           await page.evaluate(() => window.electronAPI.randomizeCursor());
           expect(
             await page.evaluate(() => window.electronAPI.getCursorStatus()),

@@ -170,6 +170,9 @@ try {
     foreach($slot in $ids.Keys) { $result[$slot]=[int]([AtelierCursor]::Current($ids[$slot]).Split(':')[0]) }
     return $result
   }
+  function Read-Status {
+    return @{kind='windows';supported=[AtelierCursor]::Interactive;session=[AtelierCursor]::Session;cursorSize=[AtelierCursor]::Size;values=(Read-Values)}
+  }
   function Assert-Interactive { if(-not [AtelierCursor]::Interactive) { throw 'Cursor changes require an interactive Windows desktop session.' } }
   function Assert-Files {
     if(@($request.theme.files.PSObject.Properties).Count -ne $ids.Count -or $request.theme.size -lt 1 -or $request.theme.size -gt 256) { throw 'Invalid Windows cursor theme.' }
@@ -190,7 +193,13 @@ try {
     return $true
   }
   switch($request.operation) {
-    'read' { $result=@{kind='windows';supported=[AtelierCursor]::Interactive;session=[AtelierCursor]::Session;cursorSize=[AtelierCursor]::Size;values=(Read-Values)} }
+    'read' {
+      $result=Read-Status
+      if($null -ne $request.theme) {
+        try { Assert-Files; $result.matches=Matches-Theme }
+        catch { $result.matches=$false; $result.matchError=$_.Exception.Message }
+      }
+    }
     'capture' { Assert-Interactive; $result=@{kind='windows';session=[AtelierCursor]::Session;cursorSize=[AtelierCursor]::Size;values=(Read-Values);fingerprints=(Fingerprints);sizes=(Cursor-Sizes)} }
     'matches' { Assert-Files; $result=@{matches=(Matches-Theme)} }
     'apply' {
@@ -204,7 +213,9 @@ try {
       # Windows Accessibility preferences. The saved scheme survives logoff.
       foreach($slot in $ids.Keys) { [AtelierCursor]::Apply($request.theme.files.$slot,$ids[$slot],0) }
       if(-not (Matches-Theme)) { throw 'The applied Windows cursor images could not be verified.' }
-      $result=@{applied=$true}
+      $result=Read-Status
+      $result.applied=$true
+      $result.matches=$true
     }
     'restore' {
       Assert-Interactive
@@ -347,19 +358,24 @@ export function createWindowsCursorDesktop({
     get session() {
       return session;
     },
-    async read() {
-      const result = await invoke({ operation: "read" });
+    async read(theme = null) {
+      if (theme !== null) {
+        checkTheme(theme);
+      }
+      const result = await invoke({ operation: "read", theme });
       session = result.session;
       return result;
     },
     async requireSupported() {
-      if (!(await this.read()).supported) {
+      const result = await this.read();
+      if (!result.supported) {
         const error = new Error(
           "Cursor changes require an interactive Windows desktop session.",
         );
         error.code = "WINDOWS_DESKTOP_UNAVAILABLE";
         throw error;
       }
+      return result;
     },
     async capture() {
       const result = await invoke({ operation: "capture" });

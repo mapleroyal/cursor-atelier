@@ -178,3 +178,46 @@ describe("Linux cursor state transactions", () => {
     );
   });
 });
+
+describe("linux live status request coalescing", () => {
+  it("shares a concurrent desktop observation and refreshes after completion", async () => {
+    const { run, desktop } = await fixture();
+    await run("--apply-theme", "Test");
+    desktop.matches.mockClear();
+    const first = run("--status");
+    const duplicate = run("--status");
+    expect(duplicate).toBe(first);
+    await first;
+    expect(desktop.matches).toHaveBeenCalledOnce();
+    await run("--status");
+    expect(desktop.matches).toHaveBeenCalledTimes(2);
+  });
+  it("does not reuse pre-mutation status for a request after a queued mutation", async () => {
+    const { run } = await fixture();
+    await run("--apply-theme", "Test");
+    const before = run("--status");
+    const change = run("--set-theme-size", "Test", "125");
+    const after = run("--status");
+    expect(after).not.toBe(before);
+    expect(await before).toMatchObject({ themeSizePercentage: 100 });
+    await change;
+    expect(await after).toMatchObject({ themeSizePercentage: 125 });
+  });
+  it("clears a failed shared request so the next observation can recover", async () => {
+    const { options } = await fixture();
+    const failure = new Error("Library temporarily unavailable");
+    const getThemes = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw failure;
+      })
+      .mockImplementation(options.getThemes);
+    const backend = createLinuxCursorBackend({ ...options, getThemes });
+    const first = backend.commandRunner({ command: "--status" });
+    expect(backend.commandRunner({ command: "--status" })).toBe(first);
+    await expect(first).rejects.toBe(failure);
+    await expect(
+      backend.commandRunner({ command: "--status" }),
+    ).resolves.toMatchObject({ supported: true });
+  });
+});

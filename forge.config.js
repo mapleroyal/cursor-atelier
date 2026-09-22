@@ -749,6 +749,7 @@ module.exports = {
     },
     prePackage: runPackagePreflight,
     postPackage: verifyPackagedApp,
+    postMake: require("./scripts/make-windows-installer.cjs"),
   },
   makers: [
     {

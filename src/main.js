@@ -826,7 +826,6 @@ async function chooseAndImportCursorPack(
       // are never indexed; a cleanup failure must not turn a successful import
       // into a false failure in the UI. The finalizer below retries cleanup.
     }
-    await bridge.invalidateManifests();
     const warnings = [
       ...(Array.isArray(converted.warnings) ? converted.warnings : []),
       ...converted.artifacts.flatMap((artifact) =>
@@ -847,6 +846,10 @@ async function chooseAndImportCursorPack(
       });
     } catch (error) {
       console.error("Could not remove cursor import staging data.", error);
+    } finally {
+      // Validation may have indexed promoted files before a failed import
+      // rolled them back. Drop that inventory after the transaction settles.
+      await bridge.invalidateManifests();
     }
   }
 }

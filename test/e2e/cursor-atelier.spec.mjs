@@ -170,9 +170,11 @@ async function launchCursorAtelier({
 
 async function firstWindow(app) {
   const page = await app.firstWindow();
-  // A tiling Linux compositor may resize the native window at launch. Keep
-  // desktop-shell assertions independent of that user's workspace layout.
-  await page.setViewportSize({ width: 1080, height: 760 });
+  if (process.platform === "linux") {
+    // A tiling Linux compositor may resize the native window at launch. Keep
+    // desktop-shell assertions independent of that user's workspace layout.
+    await page.setViewportSize({ width: 1080, height: 760 });
+  }
   await page.waitForLoadState("domcontentloaded");
   await expect(page).toHaveTitle("Cursor Atelier");
   return page;
@@ -696,4 +698,365 @@ test.describe("Cursor Atelier packaged UI", () => {
       await launch.cleanup();
     }
   });
+});
+
+// This interaction test supplies a catalog through the real preload boundary.
+// It never invokes the native cursor engine or writes the user's preferences.
+test("keeps the rail selection, preview, and toolbar consistent while browsing", async ({
+  cursorPage: page,
+  cursorApp: app,
+}) => {
+  const resizeWindow = async (size) => {
+    if (process.platform !== "win32") {
+      await page.setViewportSize(size);
+      return;
+    }
+    await app.evaluate(({ BrowserWindow }, dimensions) => {
+      BrowserWindow.getAllWindows()[0].setContentSize(
+        dimensions.width,
+        dimensions.height,
+      );
+    }, size);
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          width: window.innerWidth,
+          height: window.innerHeight,
+        })),
+      )
+      .toEqual(size);
+  };
+  test.setTimeout(90_000);
+  await app.evaluate(({ ipcMain }) => {
+    const packs = [
+      { id: "alpha-first", family: "Alpha", variant: "Alpha First" },
+      { id: "alpha-second", family: "Alpha", variant: "Alpha Second" },
+      { id: "beta-first", family: "Beta", variant: "Beta First" },
+    ].map((pack) => ({
+      ...pack,
+      nativeThemeId: pack.id,
+      resourceAvailable: true,
+      canApply: true,
+      imported: true,
+    }));
+    const snapshots = {
+      "cursor:list-themes": packs,
+      "cursor:status": {
+        bridgeAvailable: true,
+        supported: true,
+        statusAvailable: true,
+        previewMode: false,
+        desiredEnabled: false,
+        effectiveApplied: false,
+      },
+      "preferences:get": {
+        favorites: { cursorIds: ["alpha-second"], families: [] },
+        appearance: {
+          lightCursorId: "alpha-first",
+          darkCursorId: "beta-first",
+          automaticSwitching: false,
+        },
+        randomization: {
+          pools: {
+            light: ["alpha-first", "alpha-second"],
+            dark: ["beta-first"],
+          },
+        },
+      },
+    };
+    globalThis.railNavigationFixtures = snapshots;
+    for (const [channel, snapshot] of Object.entries(snapshots)) {
+      ipcMain.removeHandler(channel);
+      ipcMain.handle(channel, () => snapshot);
+    }
+  });
+  await resizeWindow({ width: 1080, height: 760 });
+  await page.reload();
+  const rail = page.getByTestId("pack-rail-scroll");
+  const families = rail.getByRole("navigation", {
+    name: "Cursor packs",
+    exact: true,
+  });
+  const shortcuts = rail.getByRole("navigation", { name: "Cursor shortcuts" });
+  const alpha = families.getByRole("button", { name: "Alpha 2", exact: true });
+  const beta = families.getByRole("button", { name: "Beta 1", exact: true });
+  const favorite = shortcuts.getByRole("button", {
+    name: "Alpha Second Alpha",
+    exact: true,
+  });
+  const heading = page.getByRole("heading", { level: 1 });
+  const apply = page.getByRole("button", { name: "Apply", exact: true });
+  const expectSelection = async (variant) => {
+    await expect(heading).toHaveText(variant);
+    await expect(rail.locator('button[aria-current="true"]')).toHaveCount(1);
+    await expect(rail.locator('button[aria-expanded="true"]')).toHaveCount(1);
+  };
+
+  await expectSelection("Alpha First");
+  await families
+    .getByRole("button", { name: "Alpha Alpha Second", exact: true })
+    .click();
+  await expectSelection("Alpha Second");
+  await alpha.click();
+  await expect(heading).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Cursor preview" }),
+  ).toBeEmpty();
+  await expect(apply).toBeDisabled();
+  await alpha.click();
+  await expectSelection("Alpha First");
+  await beta.click();
+  await expectSelection("Beta First");
+  await expect(alpha).toHaveAttribute("aria-expanded", "false");
+
+  // A shortcut remains the preview's owner when an unrelated family closes.
+  await favorite.click();
+  await expectSelection("Alpha Second");
+  await beta.click();
+  await expect(heading).toHaveText("Alpha Second");
+  await expect(favorite).toHaveAttribute("aria-current", "true");
+  await expect(rail.locator('button[aria-expanded="true"]')).toHaveCount(0);
+  await expect(
+    shortcuts.getByText("Light \u00b7 Alpha", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    shortcuts.getByText("Dark \u00b7 Beta", { exact: true }),
+  ).toBeVisible();
+
+  const lightPool = shortcuts.getByRole("button", {
+    name: "Light mode 2",
+    exact: true,
+  });
+  await lightPool.click();
+  await expectSelection("Alpha First");
+  await lightPool.click();
+  await expect(heading).toHaveCount(0);
+
+  const search = page.getByRole("textbox", { name: "Search cursor packs" });
+  await search.fill("First");
+  await expectSelection("Alpha First");
+  await expect(families.locator('button[aria-expanded="true"]')).toHaveCount(1);
+  await search.fill("");
+  await families
+    .getByRole("button", { name: "Alpha Alpha First", exact: true })
+    .press("End");
+  await expectSelection("Alpha Second");
+  await alpha.click();
+
+  // Repeated section and shortcut changes must keep one owner and clear the
+  // details on every collapse, rather than accumulating mounted previews.
+  for (let index = 0; index < 25; index += 1) {
+    await alpha.click();
+    await expectSelection("Alpha First");
+    await favorite.click();
+    await expectSelection("Alpha Second");
+    await beta.click();
+    await expectSelection("Beta First");
+    await beta.click();
+    await expect(heading).toHaveCount(0);
+  }
+  await alpha.click();
+  const toolbar = page.locator("main > header");
+  const orderedButtons = [
+    "Settings",
+    "Import",
+    "Restore",
+    "Randomize",
+    "Apply",
+  ];
+  const bounds = await Promise.all(
+    orderedButtons.map((name) =>
+      toolbar.getByRole("button", { name, exact: true }).boundingBox(),
+    ),
+  );
+  for (let index = 1; index < bounds.length; index += 1) {
+    expect(bounds[index].x).toBeGreaterThan(bounds[index - 1].x);
+  }
+  expect(bounds.at(-1).x).toBeGreaterThan(900);
+  await page.screenshot({ path: test.info().outputPath("rail-desktop.png") });
+
+  if (process.platform !== "darwin") {
+    await resizeWindow({ width: 320, height: 560 });
+    await expect
+      .poll(() =>
+        apply.evaluate((element) => element.getBoundingClientRect().right),
+      )
+      .toBeLessThanOrEqual(320);
+    const narrowBounds = await Promise.all(
+      ["Cursor packs", ...orderedButtons].map((name) =>
+        toolbar
+          .getByRole("button", { name, exact: true })
+          .evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            return {
+              left: bounds.left,
+              right: bounds.right,
+            };
+          }),
+      ),
+    );
+    for (let index = 0; index < narrowBounds.length; index += 1) {
+      const bounds = narrowBounds[index];
+      expect(bounds.left).toBeGreaterThanOrEqual(0);
+      expect(
+        bounds.right,
+        `${orderedButtons[index - 1] ?? "Cursor packs"} stays inside the toolbar (${bounds.left}, ${bounds.right})`,
+      ).toBeLessThanOrEqual(320);
+      if (index > 0) {
+        const previous = narrowBounds[index - 1];
+        expect(bounds.left).toBeGreaterThanOrEqual(previous.right);
+      }
+    }
+    await page.screenshot({ path: test.info().outputPath("rail-mobile.png") });
+  }
+  await resizeWindow({ width: 760, height: 560 });
+  await page.getByRole("button", { name: "Cursor packs", exact: true }).click();
+  const drawer = page.getByRole("dialog", { name: "Choose a cursor pack" });
+  await expect(
+    drawer.getByRole("button", { name: "Alpha 2", exact: true }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await drawer
+    .getByRole("button", { name: "Alpha Alpha Second", exact: true })
+    .click();
+  await expect(drawer).toBeHidden();
+  await expect(heading).toHaveText("Alpha Second");
+  await expect(apply).toBeInViewport();
+
+  await resizeWindow({ width: 1080, height: 760 });
+  await favorite.click();
+  await app.evaluate(({ BrowserWindow }) => {
+    const preferences = globalThis.railNavigationFixtures["preferences:get"];
+    preferences.favorites.cursorIds = [];
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("preferences:changed", preferences);
+    }
+  });
+  await expect(heading).toHaveCount(0);
+  await expect(rail.locator('button[aria-current="true"]')).toHaveCount(0);
+  await shortcuts
+    .getByRole("button", {
+      name: "Alpha First Light \u00b7 Alpha",
+      exact: true,
+    })
+    .click();
+  await app.evaluate(({ BrowserWindow }) => {
+    const preferences = globalThis.railNavigationFixtures["preferences:get"];
+    preferences.appearance.lightCursorId = null;
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("preferences:changed", preferences);
+    }
+  });
+  await expect(heading).toHaveCount(0);
+  await expect(rail.locator('button[aria-current="true"]')).toHaveCount(0);
+
+  // Reorganizing the selected cursor moves its visible owner to the new family.
+  await alpha.click();
+  await alpha.click();
+  await expectSelection("Alpha First");
+  await app.evaluate(({ BrowserWindow }) => {
+    const packs = globalThis.railNavigationFixtures["cursor:list-themes"];
+    packs.find((pack) => pack.id === "alpha-first").family = "Gamma";
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("cursor:library-changed", {
+        reason: "test-family-move",
+      });
+    }
+  });
+  await expect(
+    families.getByRole("button", { name: "Gamma 1", exact: true }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    families.getByRole("button", { name: "Gamma Alpha First", exact: true }),
+  ).toHaveAttribute("aria-current", "true");
+  await expectSelection("Alpha First");
+
+  // Applying keeps one visible busy state even if the user browses elsewhere.
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler("cursor:apply-theme");
+    globalThis.pendingApplyTheme = {};
+    ipcMain.handle("cursor:apply-theme", (_event, identifier) => {
+      globalThis.pendingApplyTheme.identifier = identifier;
+      return new Promise((resolve) => {
+        globalThis.pendingApplyTheme.resolve = resolve;
+      });
+    });
+  });
+  const readyApplyButton = page.getByRole("button", {
+    name: "Apply",
+    exact: true,
+  });
+  const readyApplyBounds = await readyApplyButton.boundingBox();
+  await readyApplyButton.click();
+  await expect
+    .poll(() =>
+      app.evaluate(() => globalThis.pendingApplyTheme?.identifier ?? null),
+    )
+    .toBe("alpha-first");
+  const applyingButton = page.getByRole("button", {
+    name: "Applying\u2026",
+    exact: true,
+  });
+  await expect(applyingButton).toBeDisabled();
+  await expect(applyingButton).toHaveAttribute("aria-busy", "true");
+  await expect(
+    applyingButton.locator('[aria-hidden="true"].animate-spin'),
+  ).toHaveCount(1);
+  expect((await applyingButton.boundingBox()).width).toBe(
+    readyApplyBounds.width,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("apply-progress.png"),
+  });
+  await beta.click();
+  await expectSelection("Beta First");
+  await expect(applyingButton).toBeVisible();
+
+  await app.evaluate(() => {
+    globalThis.pendingApplyTheme.resolve({
+      bridgeAvailable: true,
+      supported: true,
+      statusAvailable: true,
+      previewMode: false,
+      desiredEnabled: true,
+      effectiveApplied: true,
+      effectiveVariantId: "alpha-first",
+      selectedVariantId: "alpha-first",
+      currentSentinelsMatchTheme: true,
+    });
+  });
+  const idleApplyButton = page.getByRole("button", {
+    name: "Apply",
+    exact: true,
+  });
+  await expect(idleApplyButton).toBeEnabled();
+  await expect(idleApplyButton).not.toHaveAttribute("aria-busy", "true");
+  await expect(
+    idleApplyButton.locator('[aria-hidden="true"].animate-spin'),
+  ).toHaveCount(0);
+  expect((await idleApplyButton.boundingBox()).width).toBe(
+    readyApplyBounds.width,
+  );
+  await shortcuts
+    .getByRole("button", {
+      name: "Alpha First Gamma",
+      exact: true,
+    })
+    .click();
+  await expectSelection("Alpha First");
+  const reapplyButton = page.getByRole("button", {
+    name: "Reapply",
+    exact: true,
+  });
+  expect((await reapplyButton.boundingBox()).width).toBe(
+    readyApplyBounds.width,
+  );
+  await resizeWindow({ width: 320, height: 560 });
+  await expect(reapplyButton).toBeInViewport();
+  await expect
+    .poll(() =>
+      reapplyButton.evaluate(
+        (element) => element.getBoundingClientRect().right,
+      ),
+    )
+    .toBeLessThanOrEqual(320);
 });

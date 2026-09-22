@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import path from "node:path";
 import { WINDOWS_CURSOR_ROLES } from "./windows-cursor-theme.js";
 import { createWindowsCursorDesktop } from "./windows-cursor-desktop.js";
 
@@ -13,6 +14,18 @@ describe("Windows native desktop read", () => {
       );
       expect(result.values).toHaveLength(16);
       expect(result.cursorSize).toBeGreaterThan(0);
+      const verified = await createWindowsCursorDesktop().read({
+        size: 32,
+        files: Object.fromEntries(
+          Object.keys(WINDOWS_CURSOR_ROLES).map((slot) => [
+            slot,
+            path.join(process.env.SystemRoot, "Cursors", "aero_arrow.cur"),
+          ]),
+        ),
+      });
+      expect(verified.supported).toBe(result.supported);
+      expect(verified.values).toEqual(result.values);
+      expect(verified.matches).toBe(false);
     },
     30_000,
   );

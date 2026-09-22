@@ -207,16 +207,21 @@ export function createWindowsCursorBackend({
     await desktop.restore(snapshot);
     await save({ ...previousState, transaction: null });
   };
-  const status = async () => {
+  const status = async (observation = null) => {
     const selected = themeFor(state.selectedThemeIdentifier);
     let matches = false;
     let desktopStatus = null;
     let errorMessage = lastError;
     try {
-      desktopStatus = await desktop.read();
+      // Read the registry and live cursor sentinels in one native command.
+      // Each command starts PowerShell and loads the Win32 interop assembly.
+      desktopStatus = observation ?? (await desktop.read(state.effectiveTheme));
       if (state.effectiveTheme) {
         await verifyInstalledTheme(state.effectiveTheme.directory);
-        matches = await desktop.matches(state.effectiveTheme);
+        if (desktopStatus.matchError) {
+          throw new Error(desktopStatus.matchError);
+        }
+        matches = desktopStatus.matches === true;
       }
     } catch (error) {
       errorMessage = error.message;
@@ -270,7 +275,7 @@ export function createWindowsCursorBackend({
     }
   };
   const apply = async (identifier, sizeOverride = null) => {
-    await desktop.requireSupported();
+    const desktopStatus = await desktop.requireSupported();
     if (state.desktopSnapshot && state.desktopSnapshot.kind !== desktop.kind) {
       const error = new Error(
         "Restore the cursor in the desktop session where it was applied before applying it in another desktop environment.",
@@ -292,10 +297,11 @@ export function createWindowsCursorBackend({
       runCommand,
       sizePercentage,
       encoderExecutable,
-      systemSize: (await desktop.read()).cursorSize,
+      systemSize: desktopStatus.cursorSize,
     });
+    let appliedDesktopStatus;
     await transaction(async (snapshot) => {
-      await desktop.apply(installed);
+      appliedDesktopStatus = await desktop.apply(installed);
       return {
         ...state,
         selectedThemeIdentifier: identifier,
@@ -308,7 +314,9 @@ export function createWindowsCursorBackend({
         desktopSnapshot: state.desktopSnapshot ?? snapshot,
       };
     });
-    return status();
+    // Apply already attests the live images after updating the desktop. Keep
+    // that observation instead of immediately launching another native check.
+    return status(appliedDesktopStatus);
   };
   const restore = async () => {
     if (state.desktopSnapshot) {
@@ -444,15 +452,12 @@ export function createWindowsCursorBackend({
       case "--reconcile-login-items": {
         // Windows persists scheme paths; exact per-theme dimensions are
         // verified and reapplied by the background login entry when needed.
-        if (
-          state.desiredEnabled &&
-          (!state.effectiveTheme ||
-            !(await desktop.matches(state.effectiveTheme)))
-        ) {
+        lastError = null;
+        const current = await status();
+        if (state.desiredEnabled && !current.currentSentinelsMatchTheme) {
           return apply(state.selectedThemeIdentifier);
         }
-        lastError = null;
-        return status();
+        return current;
       }
       case "--open-login-settings":
         return desktop.openSettings();
@@ -460,16 +465,34 @@ export function createWindowsCursorBackend({
         throw new Error(`Unknown Windows cursor operation: ${command}`);
     }
   };
+  let pendingStatus = null;
   const commandRunner = (request) => {
-    const result = queue.then(() => execute(request));
+    if (request.command === "--status" && pendingStatus) {
+      return pendingStatus;
+    }
+    // The renderer and tray often request the same live status together. Share
+    // that observation, but never reuse it across an intervening operation.
+    pendingStatus = null;
+    const result = queue
+      .then(() => execute(request))
+      .catch(async (error) => {
+        lastError = error.message;
+        if (state) {
+          error.details = await status();
+        }
+        throw error;
+      });
     queue = result.catch(() => {});
-    return result.catch(async (error) => {
-      lastError = error.message;
-      if (state) {
-        error.details = await status();
-      }
-      throw error;
-    });
+    if (request.command === "--status") {
+      pendingStatus = result;
+      const clear = () => {
+        if (pendingStatus === result) {
+          pendingStatus = null;
+        }
+      };
+      void result.then(clear, clear);
+    }
+    return result;
   };
   return { commandRunner };
 }

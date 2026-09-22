@@ -92,7 +92,6 @@ export function createCuratedVariantInstaller({
         throw error;
       }
       committed = true;
-      await bridge.invalidateManifests();
     } catch (error) {
       failure = error;
     } finally {
@@ -106,6 +105,10 @@ export function createCuratedVariantInstaller({
         } else {
           failure = error;
         }
+      } finally {
+        // Also revoke any provisional inventory a concurrent reader built
+        // while a failed promotion was being rolled back.
+        await bridge.invalidateManifests();
       }
     }
     if (failure) {

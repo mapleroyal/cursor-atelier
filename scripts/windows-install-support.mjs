@@ -296,6 +296,7 @@ export async function activateWindowsUpdate({
   relaunchPrevious,
   wasRunning = false,
   log = () => {},
+  prepareIncoming = () => {},
 }) {
   const build = verifyPackage(staged);
   const previous = fs.existsSync(installed)
@@ -314,6 +315,7 @@ export async function activateWindowsUpdate({
     stopped = false;
   try {
     fs.cpSync(staged, incoming, { recursive: true, dereference: false });
+    await prepareIncoming(incoming);
     const copied = verifyPackage(incoming);
     if (copied.buildVersion !== build.buildVersion) {
       throw new Error("The staged build changed while it was being copied.");

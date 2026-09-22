@@ -145,6 +145,13 @@ function verifyWindowsConverter(executable, arch = process.arch) {
   }
   return result;
 }
+function sameInventory(expected, actual) {
+  const names = Object.keys(actual);
+  return (
+    names.length === Object.keys(expected).length &&
+    names.every((name) => expected[name]?.sha256 === actual[name].sha256)
+  );
+}
 function verifyWindowsPackage(
   directory,
   { checkManifest = true, selfTest = true } = {},
@@ -199,9 +206,7 @@ function verifyWindowsPackage(
     const expected = JSON.parse(
       fs.readFileSync(path.join(resources, "install-manifest.json"), "utf8"),
     );
-    if (
-      JSON.stringify(expected) !== JSON.stringify(packageInventory(directory))
-    ) {
+    if (!sameInventory(expected, packageInventory(directory))) {
       throw new Error(`Package verification failed: ${directory}`);
     }
   }

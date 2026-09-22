@@ -43,6 +43,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.3.0",
+    "electron-builder": "26.16.1",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.9.0",

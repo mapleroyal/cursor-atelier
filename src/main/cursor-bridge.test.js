@@ -1383,6 +1383,58 @@ describe("cursor bridge imported manifests", () => {
     );
   });
 
+  it.skipIf(!["linux", "win32"].includes(process.platform))(
+    "reuses desktop inventory between reads and discovers changes after invalidation",
+    async () => {
+      const root = temporaryDirectory();
+      const importedPacksRoot = path.join(root, "ImportedPacks");
+      const first = writeImportedPack(importedPacksRoot);
+      const bridge = createCursorBridge({
+        discover: false,
+        importedPacksRoot,
+        [process.platform === "win32"
+          ? "windowsStateDirectory"
+          : "linuxStateDirectory"]: path.join(root, "native-state"),
+      });
+      const initial = await bridge.listThemes();
+      expect(initial).toHaveLength(1);
+      const readDirectory = vi.spyOn(fs, "readdirSync");
+      const openFile = vi.spyOn(fs, "openSync");
+      for (let index = 0; index < 3; index += 1) {
+        expect(await bridge.listThemes()).toEqual(initial);
+      }
+      expect(readDirectory).not.toHaveBeenCalled();
+      expect(openFile).not.toHaveBeenCalled();
+      readDirectory.mockRestore();
+      openFile.mockRestore();
+
+      writeImportedPack(importedPacksRoot, {
+        packName: "imported-new",
+        nativeThemeId: "ImportedNew",
+        catalogId: "imported-new",
+      });
+      // A promoted import is validated before the caller invalidates the
+      // committed library. Its invalid fixture must be read, not mistaken for
+      // an unavailable theme from the previous inventory.
+      await expect(
+        bridge.validateImportedThemes(["ImportedNew"]),
+      ).rejects.toThrow();
+      const rejected = await bridge
+        .validateImportedThemes(["ImportedNew"])
+        .catch((error) => error);
+      expect(rejected.message).not.toContain("unavailable");
+      await bridge.invalidateManifests();
+      expect(await bridge.listThemes()).toHaveLength(2);
+      // Invalidation must still revalidate files, even when the manifest did
+      // not change. Cached browsing must not weaken the import boundary.
+      fs.writeFileSync(first.resourcePath, "tampered resource");
+      await bridge.invalidateManifests();
+      expect((await bridge.listThemes()).map((theme) => theme.id)).toEqual([
+        "imported-new",
+      ]);
+    },
+  );
+
   it("invalidates manifest caches and permanently revokes stale preview tokens", async () => {
     const importedPacksRoot = temporaryDirectory();
     const pack = writeImportedPack(importedPacksRoot);

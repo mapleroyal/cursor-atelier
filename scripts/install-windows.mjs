@@ -303,6 +303,25 @@ const result = await activateWindowsUpdate({
   staged,
   installed,
   verifyPackage: verifyWindowsPackage,
+  prepareIncoming: (incoming) => {
+    for (const filename of [
+      "Uninstall cursor-atelier.exe",
+      "uninstallerIcon.ico",
+    ]) {
+      const source = path.join(installed, filename);
+      if (fs.existsSync(source)) {
+        const stat = fs.lstatSync(source);
+        if (!stat.isFile() || stat.isSymbolicLink()) {
+          throw new Error("Unexpected installer-owned file: " + source);
+        }
+        fs.copyFileSync(source, path.join(incoming, filename));
+      }
+    }
+    fs.writeFileSync(
+      path.join(incoming, "resources", "install-manifest.json"),
+      JSON.stringify(packageTools.packageInventory(incoming), null, 2) + "\n",
+    );
+  },
   stopInstalled,
   wasRunning: runningBefore.length > 0,
   activateInstalled: async (build) => {

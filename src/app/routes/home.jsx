@@ -421,6 +421,50 @@ function getAssignedAppearanceModes(preferences, preferenceId) {
   );
 }
 
+// A preview belongs to a visible rail entry. Library/preference changes can
+// move or remove that entry without another navigation click.
+function resolveSelectionSource(
+  pack,
+  source,
+  preferences,
+  effectiveId,
+  verifiedActive,
+) {
+  if (!pack || !source) {
+    return null;
+  }
+  if (source.startsWith("family:")) {
+    return `family:${pack.family}`;
+  }
+  if (source === "current") {
+    return verifiedActive && matchesCursorPack(pack, effectiveId)
+      ? source
+      : null;
+  }
+  const preferenceId = getCursorPreferenceId(pack);
+  if (source.startsWith("favorite:")) {
+    return preferences.favorites.cursorIds.includes(preferenceId)
+      ? source
+      : null;
+  }
+  if (source.startsWith("default:")) {
+    const roles = getAssignedAppearanceModes(preferences, preferenceId);
+    const role = source.slice("default:".length);
+    if (!roles.length || (role !== "both" && !roles.includes(role))) {
+      return null;
+    }
+    return `default:${roles.length === 2 ? "both" : roles[0]}`;
+  }
+  if (source.startsWith("pool:")) {
+    return preferences.randomization.pools[source.slice("pool:".length)]?.some(
+      (id) => matchesCursorPack(pack, id),
+    )
+      ? source
+      : null;
+  }
+  return null;
+}
+
 function isManagementDisabled(managementDisabled, family) {
   return typeof managementDisabled === "function"
     ? managementDisabled(family)
@@ -643,6 +687,7 @@ function PackRailShortcut({
   pack,
   label,
   active,
+  selected,
   favorite,
   appearanceRoles,
   libraryActions,
@@ -662,7 +707,11 @@ function PackRailShortcut({
       <button
         type="button"
         onClick={() => onSelect(pack.id)}
-        className="group flex min-w-0 w-full items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60"
+        aria-current={selected ? "true" : undefined}
+        className={cn(
+          "group flex min-w-0 w-full items-center gap-2.5 rounded-2xl px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
+          selected ? "bg-accent text-accent-foreground" : "hover:bg-muted/60",
+        )}
       >
         <PackPreview pack={pack} active={active} />
         <span className="min-w-0 flex-1">
@@ -719,6 +768,9 @@ function PackRail({
   packs,
   allPacks = packs,
   selectedId,
+  selectionSource,
+  expandedSection,
+  onSectionChange,
   effectiveId,
   verifiedActive,
   engineAvailable,
@@ -756,10 +808,6 @@ function PackRail({
       });
     }
   };
-  const [expandedFamilies, setExpandedFamilies] = useState(() => new Set());
-  const [expandedPools, setExpandedPools] = useState(
-    () => new Set(["light", "dark"]),
-  );
   const searchActive = Boolean(search.trim());
   const groups = useMemo(
     () => groupCursorFamilies(packs, familyJobs, search),
@@ -768,9 +816,9 @@ function PackRail({
   const visiblePacks = useMemo(
     () =>
       groups.flatMap(({ family, familyPacks }) =>
-        searchActive || expandedFamilies.has(family) ? familyPacks : [],
+        expandedSection === `family:${family}` ? familyPacks : [],
       ),
-    [expandedFamilies, groups, searchActive],
+    [expandedSection, groups],
   );
   const rovingId = visiblePacks.some((pack) => pack.id === selectedId)
     ? selectedId
@@ -824,13 +872,13 @@ function PackRail({
           {
             appearance: "both",
             pack: assignedCurrentPacks[0].pack,
-            label: `Light & Dark Â· ${assignedCurrentPacks[0].pack.family}`,
+            label: `Light & Dark \u00b7 ${assignedCurrentPacks[0].pack.family}`,
           },
         ]
       : assignedCurrentPacks.map(({ appearance, pack }) => ({
           appearance,
           pack,
-          label: `${appearance === "light" ? "Light" : "Dark"} Â· ${pack.family}`,
+          label: `${appearance === "light" ? "Light" : "Dark"} \u00b7 ${pack.family}`,
         }));
   const favoritePacks = allPacks.filter((pack) =>
     favoriteCursorIds.has(getCursorPreferenceId(pack)),
@@ -846,50 +894,40 @@ function PackRail({
   });
   const implicitPoolLabel = getRandomizationPoolSourceLabel(preferences);
 
-  const setFamilyExpanded = useCallback((family, expanded) => {
-    setExpandedFamilies((current) => {
-      const next = new Set(current);
-      if (expanded) {
-        next.add(family);
-      } else {
-        next.delete(family);
-      }
-      return next;
-    });
-  }, []);
+  const setFamilyExpanded = useCallback(
+    (family, expanded, firstPackId) => {
+      const familyPacks = groups.find(
+        (group) => group.family === family,
+      )?.familyPacks;
+      onSectionChange(
+        `family:${family}`,
+        expanded,
+        firstPackId ?? familyPacks?.[0]?.id,
+      );
+    },
+    [groups, onSectionChange],
+  );
 
   const revealFavoriteFamily = useCallback(
     (family) => {
       onClearSearch();
-      setFamilyExpanded(family, true);
+      setFamilyExpanded(family, true, allPacksByFamily.get(family)?.[0]?.id);
       window.setTimeout(() => {
         familyRefs.current
           .get(family)
           ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }, 0);
     },
-    [onClearSearch, setFamilyExpanded],
+    [allPacksByFamily, onClearSearch, setFamilyExpanded],
   );
 
   const selectShortcut = useCallback(
-    (packId) => {
-      onSelect(packId);
+    (packId, source) => {
+      onSelect(packId, source);
       onClose?.();
     },
     [onClose, onSelect],
   );
-
-  const setPoolExpanded = useCallback((appearance, expanded) => {
-    setExpandedPools((current) => {
-      const next = new Set(current);
-      if (expanded) {
-        next.add(appearance);
-      } else {
-        next.delete(appearance);
-      }
-      return next;
-    });
-  }, []);
 
   const handleOptionKeyDown = useCallback(
     (event, packId) => {
@@ -908,9 +946,7 @@ function PackRail({
       if (!nextPack) {
         return;
       }
-      if (nextPack.id !== packId) {
-        onSelect(nextPack.id);
-      }
+      onSelect(nextPack.id, `family:${nextPack.family}`);
       optionRefs.current.get(nextPack.id)?.focus({ preventScroll: true });
       optionRefs.current.get(nextPack.id)?.scrollIntoView({ block: "nearest" });
     },
@@ -1033,7 +1069,10 @@ function PackRail({
                         getCursorPreferenceId(pack),
                       )}
                       libraryActions={packLibraryActions}
-                      onSelect={selectShortcut}
+                      selected={
+                        selectedId === pack.id && selectionSource === "current"
+                      }
+                      onSelect={(id) => selectShortcut(id, "current")}
                       onToggleFavorite={onToggleCursorFavorite}
                       onAssignAppearanceCursor={onAssignAppearanceCursor}
                     />
@@ -1068,7 +1107,13 @@ function PackRail({
                         getCursorPreferenceId(pack),
                       )}
                       libraryActions={packLibraryActions}
-                      onSelect={selectShortcut}
+                      selected={
+                        selectedId === pack.id &&
+                        selectionSource === `default:${appearance}`
+                      }
+                      onSelect={(id) =>
+                        selectShortcut(id, `default:${appearance}`)
+                      }
                       onToggleFavorite={onToggleCursorFavorite}
                       onAssignAppearanceCursor={onAssignAppearanceCursor}
                     />
@@ -1142,7 +1187,13 @@ function PackRail({
                         getCursorPreferenceId(pack),
                       )}
                       libraryActions={packLibraryActions}
-                      onSelect={selectShortcut}
+                      selected={
+                        selectedId === pack.id &&
+                        selectionSource === `favorite:${pack.id}`
+                      }
+                      onSelect={(id) =>
+                        selectShortcut(id, `favorite:${pack.id}`)
+                      }
                       onToggleFavorite={onToggleCursorFavorite}
                       onAssignAppearanceCursor={onAssignAppearanceCursor}
                     />
@@ -1166,7 +1217,7 @@ function PackRail({
                 {randomizationPools.map(
                   ({ appearance, includesAll, packs: poolPacks }) => {
                     const label = appearance === "light" ? "Light" : "Dark";
-                    const expanded = expandedPools.has(appearance);
+                    const expanded = expandedSection === `pool:${appearance}`;
                     const poolHeader = (
                       <>
                         <HugeiconsIcon
@@ -1193,7 +1244,11 @@ function PackRail({
                         key={appearance}
                         open={expanded}
                         onOpenChange={(open) =>
-                          setPoolExpanded(appearance, open)
+                          onSectionChange(
+                            `pool:${appearance}`,
+                            open,
+                            poolPacks[0]?.id,
+                          )
                         }
                         asChild
                       >
@@ -1244,7 +1299,13 @@ function PackRail({
                                         getCursorPreferenceId(pack),
                                       )}
                                       libraryActions={packLibraryActions}
-                                      onSelect={selectShortcut}
+                                      selected={
+                                        selectedId === pack.id &&
+                                        selectionSource === `pool:${appearance}`
+                                      }
+                                      onSelect={(id) =>
+                                        selectShortcut(id, `pool:${appearance}`)
+                                      }
                                       onToggleFavorite={onToggleCursorFavorite}
                                       onAssignAppearanceCursor={
                                         onAssignAppearanceCursor
@@ -1280,7 +1341,7 @@ function PackRail({
         ) : groups.length ? (
           <nav aria-label="Cursor packs">
             {groups.map(({ family, familyPacks, job }) => {
-              const expanded = searchActive || expandedFamilies.has(family);
+              const expanded = expandedSection === `family:${family}`;
               const familyFailed = job?.status === "failed";
               const familyActive = familyPacks.some(
                 (pack) =>
@@ -1289,17 +1350,15 @@ function PackRail({
               const familyFavorite = favoriteFamilies.has(family);
               const familyHeading = (
                 <>
-                  {!searchActive ? (
-                    <HugeiconsIcon
-                      icon={ArrowRight01Icon}
-                      strokeWidth={2}
-                      className={cn(
-                        "size-3.5 shrink-0 transition-transform",
-                        expanded && "rotate-90",
-                      )}
-                      aria-hidden="true"
-                    />
-                  ) : null}
+                  <HugeiconsIcon
+                    icon={ArrowRight01Icon}
+                    strokeWidth={2}
+                    className={cn(
+                      "size-3.5 shrink-0 transition-transform",
+                      expanded && "rotate-90",
+                    )}
+                    aria-hidden="true"
+                  />
                   <span className="min-w-0 flex-1 truncate">{family}</span>
                   {familyFavorite ? (
                     <HugeiconsIcon
@@ -1330,11 +1389,7 @@ function PackRail({
                 <Collapsible
                   key={family}
                   open={expanded}
-                  onOpenChange={(open) => {
-                    if (!searchActive) {
-                      setFamilyExpanded(family, open);
-                    }
-                  }}
+                  onOpenChange={(open) => setFamilyExpanded(family, open)}
                   asChild
                 >
                   <section
@@ -1357,30 +1412,18 @@ function PackRail({
                       onToggleFavorite={onToggleFamilyFavorite}
                     >
                       <div className="flex min-w-0 items-center">
-                        {searchActive ? (
-                          <div
+                        <CollapsibleTrigger asChild>
+                          <button
+                            type="button"
                             className={cn(
-                              "flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-label-sm text-muted-foreground",
+                              "group flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
                               job && !familyFailed && "opacity-60",
                               familyFailed && "text-destructive",
                             )}
                           >
                             {familyHeading}
-                          </div>
-                        ) : (
-                          <CollapsibleTrigger asChild>
-                            <button
-                              type="button"
-                              className={cn(
-                                "group flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-label-sm text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
-                                job && !familyFailed && "opacity-60",
-                                familyFailed && "text-destructive",
-                              )}
-                            >
-                              {familyHeading}
-                            </button>
-                          </CollapsibleTrigger>
-                        )}
+                          </button>
+                        </CollapsibleTrigger>
                         {canRetryOnboardingJob(job) ? (
                           <Button
                             type="button"
@@ -1439,7 +1482,9 @@ function PackRail({
                           </p>
                         ) : null}
                         {familyPacks.map((pack) => {
-                          const selected = pack.id === selectedId;
+                          const selected =
+                            pack.id === selectedId &&
+                            selectionSource === `family:${family}`;
                           const active =
                             verifiedActive &&
                             matchesCursorPack(pack, effectiveId);
@@ -1471,7 +1516,9 @@ function PackRail({
                                     optionRefs.current.delete(pack.id);
                                   }
                                 }}
-                                onClick={() => selectShortcut(pack.id)}
+                                onClick={() =>
+                                  selectShortcut(pack.id, `family:${family}`)
+                                }
                                 onKeyDown={(event) =>
                                   handleOptionKeyDown(event, pack.id)
                                 }
@@ -1529,7 +1576,7 @@ function CursorRolePreview({ role }) {
   );
   const animation =
     role.frameCount > 1
-      ? `${role.frameCount} frames${cycleDuration ? ` Â· ${cycleDuration}` : ""}`
+      ? `${role.frameCount} frames${cycleDuration ? ` \u00b7 ${cycleDuration}` : ""}`
       : null;
 
   return (
@@ -1566,7 +1613,6 @@ function PackDetails({
   operation,
   operationTargetPackId,
   preferencesSaving,
-  onApply,
   onSizeCommit,
   onToggleFavorite,
   onAssignAppearanceCursor,
@@ -1983,21 +2029,6 @@ function PackDetails({
                   disabled={cursorBusy || !canApply}
                   className="min-w-0 flex-1"
                 />
-                {engineAvailable ? (
-                  <Button
-                    type="button"
-                    variant={active ? "outline" : "default"}
-                    size="sm"
-                    disabled={cursorBusy || !canApply}
-                    onClick={onApply}
-                  >
-                    {packOperation === "applying"
-                      ? "Applying…"
-                      : active
-                        ? "Reapply"
-                        : "Apply"}
-                  </Button>
-                ) : null}
               </div>
             </div>
           </div>
@@ -2189,6 +2220,8 @@ export function HomeRoute() {
   const syncOnboarding = useAppStore((state) => state.syncOnboarding);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState("");
+  const [selectionSource, setSelectionSource] = useState(null);
+  const [expandedSection, setExpandedSection] = useState(undefined);
   const [search, setSearch] = useState("");
   const [operation, setOperation] = useState("idle");
   const [operationTargetPackId, setOperationTargetPackId] = useState(null);
@@ -2509,7 +2542,9 @@ export function HomeRoute() {
     filteredPacks,
     baseSelectedId,
   );
-  const displayedSelectedId = automaticSelectedId ?? baseSelectedId;
+  const displayedSelectedId = selectionWasChanged
+    ? selectedId
+    : (automaticSelectedId ?? baseSelectedId);
 
   useEffect(() => {
     let delayedRefresh;
@@ -2530,22 +2565,66 @@ export function HomeRoute() {
     };
   }, [queryClient]);
 
-  const selectedPack =
-    packs.find((pack) => pack.id === displayedSelectedId) ??
-    filteredPacks[0] ??
-    packs[0] ??
-    null;
+  const selectionCandidate =
+    packs.find((pack) => pack.id === displayedSelectedId) ?? null;
+  const requestedSelectionSource = selectionWasChanged
+    ? selectionSource
+    : selectionCandidate
+      ? `family:${selectionCandidate.family}`
+      : null;
+  const displayedSelectionSource = resolveSelectionSource(
+    requestedSelectionSource?.startsWith("family:") &&
+      !filteredPacks.includes(selectionCandidate)
+      ? null
+      : selectionCandidate,
+    requestedSelectionSource,
+    preferences,
+    effectiveId,
+    verifiedActive,
+  );
+  const selectedPack = displayedSelectionSource ? selectionCandidate : null;
+  const selectedFamilyMoved =
+    requestedSelectionSource?.startsWith("family:") &&
+    displayedSelectionSource !== requestedSelectionSource;
+  const displayedExpandedSection =
+    expandedSection === undefined || selectedFamilyMoved
+      ? displayedSelectionSource
+      : expandedSection;
 
-  const handleSelect = useCallback((id) => {
+  const handleSelect = useCallback((id, source) => {
     setSelectionWasChanged(true);
-    setSelectedId(id);
+    setSelectedId(id ?? "");
+    setSelectionSource(source ?? null);
     setFeedback(null);
   }, []);
 
-  const handleSearchChange = useCallback((value) => {
-    setSearch(value);
-    setFeedback(null);
-  }, []);
+  const handleSectionChange = (section, open, firstPackId) => {
+    setExpandedSection(open ? section : null);
+    if (open) {
+      handleSelect(firstPackId, section);
+    } else if (displayedSelectionSource === section) {
+      handleSelect(null, null);
+    }
+  };
+
+  const handleSearchChange = useCallback(
+    (value) => {
+      setSearch(value);
+      setFeedback(null);
+      if (value.trim()) {
+        const matches = catalog.filterCursorCatalog(
+          packs,
+          value.trim().toLowerCase(),
+        );
+        const nextPack =
+          matches.find((pack) => pack.id === selectedId) ?? matches[0];
+        const source = nextPack ? `family:${nextPack.family}` : null;
+        setExpandedSection(source);
+        handleSelect(nextPack?.id, source);
+      }
+    },
+    [selectedId, handleSelect, packs],
+  );
 
   const refreshStatus = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["cursor-status"] });
@@ -2898,6 +2977,8 @@ export function HomeRoute() {
       if (randomizedPack) {
         setSelectionWasChanged(true);
         setSelectedId(randomizedPack.id);
+        setSearch("");
+        setSelectionSource("current");
       }
       queryClient.setQueryData(["cursor-status"], result.status);
       setFeedback({
@@ -3136,6 +3217,8 @@ export function HomeRoute() {
           setSelectionWasChanged(true);
           setSearch("");
           setSelectedId(importedPack.id);
+          setSelectionSource(`family:${importedPack.family}`);
+          setExpandedSection(`family:${importedPack.family}`);
         }
 
         const importedCount = Number(result?.importedCount ?? identifiers.size);
@@ -3306,6 +3389,9 @@ export function HomeRoute() {
         setSelectionWasChanged(true);
         setSearch("");
         setSelectedId(nextPack?.id ?? "");
+        const source = nextPack ? `family:${nextPack.family}` : null;
+        setSelectionSource(source);
+        setExpandedSection(source);
       }
       await refreshLibraryQueries();
       const cleanupPending = Boolean(
@@ -3399,6 +3485,7 @@ export function HomeRoute() {
   const addingCursorPacks = onboardingFamilyJobs.some(
     (job) => job.status !== "failed",
   );
+  const applyingCursor = operation === "applying";
   const libraryActions = useMemo(
     () => ({
       familyNames,
@@ -3458,6 +3545,9 @@ export function HomeRoute() {
       packs={filteredPacks}
       allPacks={packs}
       selectedId={displayedSelectedId}
+      selectionSource={displayedSelectionSource}
+      expandedSection={displayedExpandedSection}
+      onSectionChange={handleSectionChange}
       effectiveId={effectiveId}
       verifiedActive={verifiedActive}
       engineAvailable={engineAvailable}
@@ -3520,7 +3610,58 @@ export function HomeRoute() {
             </SheetContent>
           </Sheet>
         ) : null}
-        <div className="titlebar-no-drag ml-auto flex shrink-0 items-center gap-2">
+        <div className="titlebar-no-drag flex shrink-0 items-center gap-2">
+          <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Settings"
+                onClick={() => {
+                  setFeedback(null);
+                  setRailOpen(false);
+                }}
+              >
+                <HugeiconsIcon
+                  icon={Settings02Icon}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="right"
+              showCloseButton={false}
+              aria-describedby={undefined}
+              className="overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl"
+            >
+              <SettingsScreen
+                packs={catalogueLoadError ? [] : packs}
+                preferences={preferences}
+                appearanceMode={themeMode}
+                onAppearanceModeChange={setThemeMode}
+                onChange={handlePreferenceChange}
+                onRandomize={() => void handleRandomize()}
+                randomizing={operation === "randomizing"}
+                cursorOperationBusy={operation !== "idle"}
+                saving={pendingPreferenceCount > 0}
+                canRandomize={canRandomize}
+                canScheduleRandomization={canScheduleRandomization}
+                scheduleUnavailableMessage={scheduleUnavailableMessage}
+                randomizationAvailable={engineAvailable}
+                randomizationPoolSize={randomizationPoolSizes[systemAppearance]}
+                systemAppearance={systemAppearance}
+                preferencesAvailable={preferencesAvailable}
+                preferencesError={preferencesQuery.isError}
+                preferencesErrorMessage={preferencesErrorMessage}
+                preferencesRetrying={preferencesQuery.isFetching}
+                onRetryPreferences={() => void preferencesQuery.refetch()}
+                themeError={themeError}
+                feedback={feedback}
+              />
+            </SheetContent>
+          </Sheet>
           <TooltipProvider>
             <div className="flex items-center gap-0.5">
               <ImportButton
@@ -3581,58 +3722,51 @@ export function HomeRoute() {
               </Button>
             </div>
           </TooltipProvider>
-          <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <SheetTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Settings"
-                onClick={() => {
-                  setFeedback(null);
-                  setRailOpen(false);
-                }}
-              >
+        </div>
+        {engineAvailable ? (
+          <Button
+            type="button"
+            variant={active ? "outline" : "default"}
+            size="sm"
+            className="titlebar-no-drag ml-auto w-10 min-w-0 shrink-0 px-1 sm:w-[6.5rem] sm:px-3"
+            disabled={operation !== "idle" || !selectedPack?.canApply}
+            aria-busy={applyingCursor || undefined}
+            onClick={() => void handleApply()}
+          >
+            {applyingCursor ? (
+              <>
+                <span
+                  aria-hidden="true"
+                  data-corner-shape="round"
+                  className="size-3.5 animate-spin rounded-full border-2 border-current/30 border-t-current motion-reduce:animate-none"
+                />
+                <span className="max-sm:sr-only">{"Applying\u2026"}</span>
+              </>
+            ) : active ? (
+              <>
                 <HugeiconsIcon
-                  icon={Settings02Icon}
+                  icon={ArrowReloadHorizontalIcon}
                   strokeWidth={2}
+                  className="sm:hidden"
                   aria-hidden="true"
                 />
-              </Button>
-            </SheetTrigger>
-            <SheetContent
-              side="right"
-              showCloseButton={false}
-              aria-describedby={undefined}
-              className="overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl"
-            >
-              <SettingsScreen
-                packs={catalogueLoadError ? [] : packs}
-                preferences={preferences}
-                appearanceMode={themeMode}
-                onAppearanceModeChange={setThemeMode}
-                onChange={handlePreferenceChange}
-                onRandomize={() => void handleRandomize()}
-                randomizing={operation === "randomizing"}
-                cursorOperationBusy={operation !== "idle"}
-                saving={pendingPreferenceCount > 0}
-                canRandomize={canRandomize}
-                canScheduleRandomization={canScheduleRandomization}
-                scheduleUnavailableMessage={scheduleUnavailableMessage}
-                randomizationAvailable={engineAvailable}
-                randomizationPoolSize={randomizationPoolSizes[systemAppearance]}
-                systemAppearance={systemAppearance}
-                preferencesAvailable={preferencesAvailable}
-                preferencesError={preferencesQuery.isError}
-                preferencesErrorMessage={preferencesErrorMessage}
-                preferencesRetrying={preferencesQuery.isFetching}
-                onRetryPreferences={() => void preferencesQuery.refetch()}
-                themeError={themeError}
-                feedback={feedback}
-              />
-            </SheetContent>
-          </Sheet>
-        </div>
+                <span className="sr-only sm:hidden">Reapply</span>
+                <span className="hidden sm:inline">Reapply</span>
+              </>
+            ) : (
+              <>
+                <HugeiconsIcon
+                  icon={Cursor01Icon}
+                  strokeWidth={2}
+                  className="sm:hidden"
+                  aria-hidden="true"
+                />
+                <span className="sr-only sm:hidden">Apply</span>
+                <span className="hidden sm:inline">Apply</span>
+              </>
+            )}
+          </Button>
+        ) : null}
       </header>
 
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -3660,7 +3794,6 @@ export function HomeRoute() {
             operation={operation}
             operationTargetPackId={operationTargetPackId}
             preferencesSaving={pendingPreferenceCount > 0}
-            onApply={() => void handleApply()}
             onSizeCommit={handleSizeCommit}
             onToggleFavorite={() =>
               handleToggleCursorFavorite(
@@ -3691,6 +3824,11 @@ export function HomeRoute() {
             statusErrorMessage={statusErrorMessage}
             onRetryStatus={() => void statusQuery.refetch()}
             statusRetrying={statusQuery.isFetching}
+          />
+        ) : packs.length ? (
+          <section
+            aria-label="Cursor preview"
+            className="min-h-0 min-w-0 flex-1"
           />
         ) : (
           <EmptyLibrary adding={addingCursorPacks} feedback={feedback} />

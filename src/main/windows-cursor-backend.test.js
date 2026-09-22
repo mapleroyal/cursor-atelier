@@ -21,8 +21,15 @@ async function fixture() {
   const desktop = {
     kind: "windows",
     session: 1,
-    requireSupported() {},
-    read: vi.fn(async () => ({ ...current, supported: true, cursorSize: 32 })),
+    requireSupported() {
+      return this.read();
+    },
+    read: vi.fn(async (theme = null) => ({
+      ...current,
+      supported: true,
+      cursorSize: 32,
+      matches: theme ? await desktop.matches(theme) : false,
+    })),
     capture: vi.fn(async () => ({
       kind: "windows",
       session: desktop.session,
@@ -43,6 +50,7 @@ async function fixture() {
     })),
     apply: vi.fn(async ({ name, size }) => {
       current = { theme: name, size };
+      return { ...current, supported: true, cursorSize: 32, matches: true };
     }),
     restore: vi.fn(async ({ theme, size }) => {
       current = { theme, size };
@@ -94,6 +102,16 @@ async function fixture() {
 }
 
 describe("Windows cursor state transactions", () => {
+  it("uses the native apply attestation without repeating desktop reads", async () => {
+    const { run, desktop } = await fixture();
+    const applied = await run("--apply-theme", "Test");
+    expect(applied.currentSentinelsMatchTheme).toBe(true);
+    expect(desktop.read).toHaveBeenCalledOnce();
+    expect(desktop.capture).toHaveBeenCalledOnce();
+    expect(desktop.apply).toHaveBeenCalledOnce();
+    expect(desktop.matches).not.toHaveBeenCalled();
+  });
+
   it("preserves the original cursor across multiple applies and saves size until reapplied", async () => {
     const { run, current, installTheme } = await fixture();
     await run("--apply-theme", "Test");
@@ -197,6 +215,17 @@ describe("Windows cursor state transactions", () => {
       desiredEnabled: true,
       effectiveApplied: true,
       currentSentinelsMatchTheme: false,
+    });
+    desktop.read.mockResolvedValueOnce({
+      supported: true,
+      cursorSize: 32,
+      matches: false,
+      matchError: "Windows could not decode the cursor",
+    });
+    expect(await run("--status")).toMatchObject({
+      supported: true,
+      currentSentinelsMatchTheme: false,
+      actionError: "Windows could not decode the cursor",
     });
     desktop.read.mockResolvedValue({ supported: false, cursorSize: 32 });
     expect(await run("--status")).toMatchObject({ supported: false });
@@ -323,5 +352,48 @@ describe("Windows cursor persisted metadata", () => {
     expect(desktop.apply).not.toHaveBeenCalled();
     expect(desktop.read).not.toHaveBeenCalled();
     expect(await fs.readFile(statePath, "utf8")).toBe(damaged);
+  });
+});
+
+describe("windows live status request coalescing", () => {
+  it("shares a concurrent desktop observation and refreshes after completion", async () => {
+    const { run, desktop } = await fixture();
+    await run("--apply-theme", "Test");
+    desktop.read.mockClear();
+    const first = run("--status");
+    const duplicate = run("--status");
+    expect(duplicate).toBe(first);
+    await first;
+    expect(desktop.read).toHaveBeenCalledOnce();
+    await run("--status");
+    expect(desktop.read).toHaveBeenCalledTimes(2);
+  });
+  it("does not reuse pre-mutation status for a request after a queued mutation", async () => {
+    const { run } = await fixture();
+    await run("--apply-theme", "Test");
+    const before = run("--status");
+    const change = run("--set-theme-size", "Test", "125");
+    const after = run("--status");
+    expect(after).not.toBe(before);
+    expect(await before).toMatchObject({ themeSizePercentage: 100 });
+    await change;
+    expect(await after).toMatchObject({ themeSizePercentage: 125 });
+  });
+  it("clears a failed shared request so the next observation can recover", async () => {
+    const { options } = await fixture();
+    const failure = new Error("Library temporarily unavailable");
+    const getThemes = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw failure;
+      })
+      .mockImplementation(options.getThemes);
+    const backend = createWindowsCursorBackend({ ...options, getThemes });
+    const first = backend.commandRunner({ command: "--status" });
+    expect(backend.commandRunner({ command: "--status" })).toBe(first);
+    await expect(first).rejects.toBe(failure);
+    await expect(
+      backend.commandRunner({ command: "--status" }),
+    ).resolves.toMatchObject({ supported: true });
   });
 });

@@ -1248,7 +1248,10 @@ export function createCursorBridge({
           : "curated-cursor-converter",
       ),
       getThemes: () => {
-        resetManifestIndex();
+        // Library mutations explicitly invalidate this index. Rebuilding it on
+        // every status/read synchronously rechecks every preview and freezes
+        // the main process as the library grows. Applying a theme still reads
+        // and validates its resource against the indexed hash.
         return ensureManifestIndex()
           .filter((theme) => theme.resourceInstalled && theme.resourcePath)
           .map((theme) => ({
@@ -2435,25 +2438,33 @@ export function createCursorBridge({
       ) {
         throw new TypeError("Valid imported cursor identifiers are required.");
       }
-      for (const identifier of identifiers) {
-        const validation = await runNative(
-          "--validate-theme",
-          [identifier],
-          [2],
-        );
-        if (!firstBoolean(validation, ["valid", "Valid"], false)) {
-          const error = new Error(
-            String(
-              firstThemeValue(validation, ["actionError", "ActionError"]) ??
-                `The imported cursor ${identifier} failed native validation.`,
-            ),
+      // Import validation runs after promotion, before the transaction commits.
+      // Discover the promoted batch once, then discard that provisional index
+      // whether validation succeeds or rollback removes the new files.
+      resetManifestIndex();
+      try {
+        for (const identifier of identifiers) {
+          const validation = await runNative(
+            "--validate-theme",
+            [identifier],
+            [2],
           );
-          error.name = "NativeCursorError";
-          error.code = "INVALID_IMPORTED_CURSOR";
-          error.command = "--validate-theme";
-          error.details = validation;
-          throw error;
+          if (!firstBoolean(validation, ["valid", "Valid"], false)) {
+            const error = new Error(
+              String(
+                firstThemeValue(validation, ["actionError", "ActionError"]) ??
+                  `The imported cursor ${identifier} failed native validation.`,
+              ),
+            );
+            error.name = "NativeCursorError";
+            error.code = "INVALID_IMPORTED_CURSOR";
+            error.command = "--validate-theme";
+            error.details = validation;
+            throw error;
+          }
         }
+      } finally {
+        resetManifestIndex();
       }
     });
 

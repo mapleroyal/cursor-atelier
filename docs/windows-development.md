@@ -45,6 +45,15 @@ interactive token when invoked over SSH. Cleanup runs in the desktop and
 verifies the resulting Recycle Bin item; recycling from session 0 can
 silently ignore the requested recycle option.
 
+`npm.cmd run make` also creates an assisted per-user NSIS setup executable.
+Forge builds and verifies the payload; electron-builder packages that exact
+payload with a welcome screen, visible installation progress, and an optional
+launch on completion. Setup keeps the authoritative installation at
+`%LOCALAPPDATA%/Programs/Cursor Atelier`, verifies the new renderer before
+committing, and retains the previous installation for recovery. It migrates
+the earlier one-off Squirrel installation only after the new build verifies.
+The developer installer preserves NSIS uninstall ownership on later updates.
+
 ## Verification
 
 Run unit tests and lint in the Windows checkout:
@@ -114,3 +123,52 @@ if restoration cannot be verified. These results establish this development
 milestone; they do not establish native Windows pack import, ARM64 behavior,
 or signed release distribution. Actual reboot/sign-in and mixed-DPI
 wake/unlock/display-event combinations still need broader desktop testing.
+
+## Family-test fixes, 2026-09-21
+
+The repeated native library inventory was invalidating and synchronously
+rechecking every cursor resource and preview. With 120 fixture themes and
+5,640 distinct PNG previews, repeated reads previously took 4.7–5.0 seconds
+and starved a 25 ms main-process timer. After retaining the inventory until
+an explicit library mutation, repeated reads took 4–8 ms. A 500-read run
+remained at 3–4 ms on average with a stable 16 MB heap after collection.
+Cold inventory validation remains proportional to library size.
+
+Windows status now combines registry and live-cursor checks into one native
+observation, reuses apply verification, and shares concurrent status requests.
+Linux shares concurrent status requests with the same mutation boundaries.
+Final build 1790027921254 passed three actual Windows appearance transitions:
+dark with system app appearance in 8.048 seconds, light with dark app appearance
+in 7.494 seconds, and dark with light app appearance in 7.385 seconds. Each
+result verified the live cursors. The test restored the original cursor state
+and both Windows appearance registry values, then removed its temporary profile.
+PowerShell startup and native verification still account for several seconds;
+these timings do not establish instant switching or native behavior on other OSes.
+
+Validation on the Windows VM:
+
+- The final full unit run passed 527 tests, skipped 46, and timed out one existing
+  filesystem test at its five-second limit while packaging ran concurrently.
+  That exact test passed when rerun alone: 528 active tests passed in total.
+- ESLint, Prettier, and Git whitespace checks passed.
+- Packaged UI automation passed 100 browsing interactions plus rail ownership,
+  collapse/first-entry behavior, search, keyboard selection, source removal and
+  movement, toolbar geometry, mobile drawer remount, and 320 px layout checks.
+- The packaged native suite imported all 19 Oreo variants and passed actual
+  apply, resize, default assignment, randomization, restore, and system-mode
+  changes; the other two packaged launch/converter checks also passed.
+- The replacement NSIS installer upgraded the running original Squirrel build
+  1790007903967 to interim build 1790027051555 with visible progress. It retired
+  the old installer and processes, preserved preferences and onboarding bytes,
+  and repaired the Start Menu shortcut to the authoritative installation.
+- The final NSIS-to-NSIS upgrade replaced running build 1790027051555 with
+  build 1790027921254. Welcome appeared at 6.7 seconds, progress at 7.3 seconds,
+  and completion at 46.8 seconds. The sole running main process used the
+  authoritative Programs path and the complete installed manifest verified.
+- A subsequent developer installation of the final build preserved the NSIS
+  uninstaller hashes and registration. Original preferences and onboarding data
+  remained byte-identical; the final build ran as the sole main process.
+- Cleanup dry-run and execution recycled the staging tree, all three superseded
+  recovery installations, and validated retired Squirrel residue. Final inventory
+  contained only the authoritative installation; the final renderer was ready,
+  user data remained unchanged, and temporary native-test tasks were removed.

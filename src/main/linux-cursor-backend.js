@@ -406,16 +406,34 @@ export function createLinuxCursorBackend({
         throw new Error(`Unknown Linux cursor operation: ${command}`);
     }
   };
+  let pendingStatus = null;
   const commandRunner = (request) => {
-    const result = queue.then(() => execute(request));
+    if (request.command === "--status" && pendingStatus) {
+      return pendingStatus;
+    }
+    // The renderer and tray often request the same live status together. Share
+    // that observation, but never reuse it across an intervening operation.
+    pendingStatus = null;
+    const result = queue
+      .then(() => execute(request))
+      .catch(async (error) => {
+        lastError = error.message;
+        if (state) {
+          error.details = await status();
+        }
+        throw error;
+      });
     queue = result.catch(() => {});
-    return result.catch(async (error) => {
-      lastError = error.message;
-      if (state) {
-        error.details = await status();
-      }
-      throw error;
-    });
+    if (request.command === "--status") {
+      pendingStatus = result;
+      const clear = () => {
+        if (pendingStatus === result) {
+          pendingStatus = null;
+        }
+      };
+      void result.then(clear, clear);
+    }
+    return result;
   };
   return { commandRunner };
 }

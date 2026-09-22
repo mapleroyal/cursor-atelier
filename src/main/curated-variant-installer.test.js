@@ -70,6 +70,42 @@ describe("curated variant installer", () => {
     expect(removeStaging).toHaveBeenCalled();
   });
 
+  it("revokes provisional inventory after rollback and staging cleanup", async () => {
+    const { workRoot, importedPacksRoot, artifactDirectory } = await fixture();
+    const events = [];
+    const failure = new Error("Native validation failed");
+    const install = createCuratedVariantInstaller({
+      workRoot,
+      importedPacksRoot,
+      bridge: {
+        validateImportedThemes: async () => {
+          throw failure;
+        },
+        invalidateManifests: async () => {
+          events.push("invalidated");
+        },
+      },
+      createStaging: () =>
+        fs.promises.mkdtemp(path.join(importedPacksRoot, ".import-")),
+      removeStaging: async () => {
+        events.push("cleaned");
+      },
+      installArtifacts: async ({ validateInstalled }) => {
+        try {
+          await validateInstalled({ identifiers: ["Future"] });
+        } finally {
+          events.push("rolled-back");
+        }
+      },
+    });
+    await expect(
+      install({
+        variants: [{ artifactDirectory, expectedIdentifier: "Future" }],
+      }),
+    ).rejects.toBe(failure);
+    expect(events).toEqual(["rolled-back", "cleaned", "invalidated"]);
+  });
+
   it("rejects a converter/install identifier mismatch", async () => {
     const { workRoot, importedPacksRoot, artifactDirectory } = await fixture();
     const install = createCuratedVariantInstaller({

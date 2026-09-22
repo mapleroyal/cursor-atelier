@@ -105,8 +105,13 @@ npm run package:clean -- --dry-run
 npm run package:clean
 ```
 
-`npm run make` produces a ZIP. These are local development builds: executable
-signing, an installer download, and automatic updates are not provided yet.
+`npm run make` produces a ZIP and a shareable Windows `Setup.exe` under
+`out.noindex/make/nsis/<arch>`. The installer has a welcome page, real extraction
+progress, a completion page, and an option to launch the app. It installs for
+the current user without administrator privileges and preserves user data on
+updates and uninstall. Its filename includes the unique packaged build identity.
+These local builds are unsigned; Windows may display SmartScreen. Automatic
+updates and a hosted installer download are not provided yet.
 `npm start` runs the development app; `npm run native:build` rebuilds its
 converter and icons.
 
