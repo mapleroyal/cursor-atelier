@@ -96,6 +96,31 @@ export function createLinuxCursorDesktop({
 } = {}) {
   const kind = detectLinuxCursorDesktop(env);
   const command = (name, args) => runCommand(name, args, { env });
+  const waitForHyprStartup = async () => {
+    if (kind !== "hyprland") {
+      return;
+    }
+    // Omarchy briefly replaces the pointer during login, then restores the
+    // cursor it captured before XDG autostart. Applying before that restoration
+    // succeeds momentarily but is overwritten after the background app quits.
+    // Wait before taking a Restore snapshot or changing any cursor settings.
+    const deadline = Date.now() + 20_000;
+    while (true) {
+      const pending = await command("hyprctl", [
+        "repl",
+        "return tostring(omarchy_startup_cursor_pending == true)",
+      ]);
+      if (pending === "false") {
+        return;
+      }
+      if (pending !== "true" || Date.now() >= deadline) {
+        throw new Error(
+          "Hyprland's startup cursor restoration did not finish.",
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  };
   const requireSupported = () => {
     if (!kind) {
       const error = new Error(
@@ -227,6 +252,7 @@ export function createLinuxCursorDesktop({
     }
   };
   const capture = async () => {
+    await waitForHyprStartup();
     const current = await read();
     const cursorEnvironment =
       kind === "hyprland" ? await readHyprEnvironment() : null;
@@ -268,6 +294,7 @@ export function createLinuxCursorDesktop({
   };
   const apply = async ({ name, size }) => {
     requireSupported();
+    await waitForHyprStartup();
     if (kind === "kde") {
       // KConfig's native CLI preserves unrelated settings. Writing the size also
       // covers Plasma releases where apply-cursortheme ignores its --size option.
@@ -314,6 +341,7 @@ export function createLinuxCursorDesktop({
         "Restore the cursor in the desktop session where it was applied before switching desktop environments.",
       );
     }
+    await waitForHyprStartup();
     if (kind === "kde") {
       await apply({ name: snapshot.theme, size: snapshot.size });
     } else {

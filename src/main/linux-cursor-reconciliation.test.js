@@ -35,6 +35,9 @@ it("recovers a directly selected cursor after reload races without shrinking it 
     }
     if (program === "hyprctl") {
       if (args[0] === "repl") {
+        if (args[1].includes("omarchy_startup_cursor_pending")) {
+          return "false";
+        }
         return Object.entries(live)
           .map(([k, v]) => `${k}=${v}`)
           .join("\n");

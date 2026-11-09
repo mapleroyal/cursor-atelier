@@ -218,7 +218,10 @@ cursor also keeps the startup registration. At login it selects the cursor
 assigned to the current desktop light/dark appearance, falling back to the
 selected cursor when that assignment is absent or unavailable, even when the
 separate background-startup preference is off. Restore removes that
-cursor-persistence requirement. Linux application data normally lives in
+cursor-persistence requirement.
+On Omarchy, login application waits until the desktop has restored its temporary
+startup pointer before capturing the previous cursor and applying the selection.
+Linux application data normally lives in
 `~/.config/Cursor Atelier`; XDG base
 directory overrides are respected. Cursor application state is stored in
 `linux-cursors/state.json`, and generated themes use owned `~/.icons/cursor-atelier-*`
